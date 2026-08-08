@@ -1,0 +1,15 @@
+# Minimal Supabase CLI config.
+#
+# This exists only so `supabase link` / `supabase db push` know which project
+# directory they are in. Set project_id to your project ref (the subdomain of
+# your project URL: https://<ref>.supabase.co), or just run:
+#
+#   supabase link --project-ref <ref>
+#
+# ...which will rewrite this value for you.
+#
+# Kalos does not depend on `supabase start` (the local Docker stack). If you
+# want to use it, run `supabase init` in a scratch directory to generate a full,
+# version-matched config and copy the sections you need.
+
+project_id = "kalos"

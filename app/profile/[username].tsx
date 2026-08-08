@@ -1,0 +1,40 @@
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import { ProfileView } from '../../components/ProfileView';
+import { EmptyState } from '../../components/EmptyState';
+import { useProfile } from '../../lib/queries';
+import { useUserId } from '../../lib/auth';
+
+export default function ProfileScreen() {
+  const { username } = useLocalSearchParams<{ username: string }>();
+  const { data: profile, isLoading, isError } = useProfile(username);
+  const userId = useUserId();
+
+  if (isLoading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  if (isError || !profile) {
+    return (
+      <View style={styles.center}>
+        <EmptyState icon="user-x" title="No such account" body={`Couldn't find @${username}.`} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.root}>
+      <Stack.Screen options={{ title: profile.username }} />
+      <ProfileView profile={profile} isSelf={profile.id === userId} />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#fff' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+});

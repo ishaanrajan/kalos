@@ -1,0 +1,260 @@
+/**
+ * Retrogram design tokens.
+ *
+ * The palette and type scale target Instagram circa 2015–2016: near-white
+ * chrome, thin hairline dividers, Helvetica-ish type, and exactly two accent
+ * colours (the classic blue and the heart red). Dark mode is a modern
+ * addition — it keeps the same structure and only swaps surfaces.
+ *
+ * This module is pure tokens plus a `useTheme()` hook. It imports nothing from
+ * the app, so components and screens can both depend on it freely.
+ */
+
+import { Platform, StyleSheet, useColorScheme } from 'react-native';
+import type { TextStyle, ViewStyle } from 'react-native';
+
+// ---------------------------------------------------------------------------
+// Raw palette
+// ---------------------------------------------------------------------------
+
+/**
+ * The literal colour values. Prefer `useTheme().colors` in components — these
+ * are exported for the rare case where a scheme-independent value is needed
+ * (e.g. the white heart burst that always sits on top of a photo).
+ */
+export const palette = {
+  white: '#ffffff',
+  offWhite: '#fafafa',
+  /** Primary text. */
+  ink: '#262626',
+  /** Secondary text, timestamps, placeholder glyphs. */
+  grey: '#8e8e8e',
+  /** Hairline dividers and outline-button borders. */
+  divider: '#dbdbdb',
+  /** Inert fill: image placeholders, secondary buttons. */
+  fill: '#efefef',
+  /** The classic Instagram blue. */
+  blue: '#3897f0',
+  bluePressed: '#2d7dc9',
+  /** Heart red. */
+  red: '#ed4956',
+  black: '#000000',
+  darkFill: '#1a1a1a',
+  darkPlaceholder: '#1c1c1c',
+  darkDivider: '#262626',
+  darkInk: '#fafafa',
+} as const;
+
+// ---------------------------------------------------------------------------
+// Colours
+// ---------------------------------------------------------------------------
+
+export interface ThemeColors {
+  /** Screen background — very slightly off-white in the 2015 style. */
+  background: string;
+  /** Card / row background. */
+  surface: string;
+  /** Inert fill for secondary buttons and pressed states. */
+  surfaceAlt: string;
+  /** Shown underneath a photo while it loads. */
+  imagePlaceholder: string;
+  text: string;
+  textSecondary: string;
+  /** Text that sits on top of `accent` or a photo. */
+  textInverse: string;
+  border: string;
+  accent: string;
+  accentPressed: string;
+  /** Liked-heart red. */
+  heart: string;
+  /** Translucent black for overlays. */
+  scrim: string;
+}
+
+export const lightColors: ThemeColors = {
+  background: palette.offWhite,
+  surface: palette.white,
+  surfaceAlt: palette.fill,
+  imagePlaceholder: palette.fill,
+  text: palette.ink,
+  textSecondary: palette.grey,
+  textInverse: palette.white,
+  border: palette.divider,
+  accent: palette.blue,
+  accentPressed: palette.bluePressed,
+  heart: palette.red,
+  scrim: 'rgba(0, 0, 0, 0.45)',
+};
+
+export const darkColors: ThemeColors = {
+  background: palette.black,
+  surface: palette.black,
+  surfaceAlt: palette.darkFill,
+  imagePlaceholder: palette.darkPlaceholder,
+  text: palette.darkInk,
+  textSecondary: palette.grey,
+  textInverse: palette.black,
+  border: palette.darkDivider,
+  accent: palette.blue,
+  accentPressed: palette.bluePressed,
+  heart: palette.red,
+  scrim: 'rgba(0, 0, 0, 0.6)',
+};
+
+// ---------------------------------------------------------------------------
+// Spacing / radii
+// ---------------------------------------------------------------------------
+
+/** 4pt scale. `md` (12) is the standard horizontal gutter for post chrome. */
+export const spacing = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+  xxl: 32,
+} as const;
+
+export type Spacing = typeof spacing;
+
+export const radius = {
+  /** Buttons and chips — 2015 corners were barely rounded. */
+  sm: 3,
+  md: 6,
+  lg: 12,
+  pill: 999,
+} as const;
+
+export type Radius = typeof radius;
+
+// ---------------------------------------------------------------------------
+// Type scale
+// ---------------------------------------------------------------------------
+
+/**
+ * iOS gets Helvetica Neue (what the era actually shipped). Android is left to
+ * the system face, because pinning `sans-serif` there breaks synthetic weights
+ * like `600`. Web gets an explicit Helvetica stack.
+ */
+export const fontFamily: string | undefined = Platform.select({
+  ios: 'Helvetica Neue',
+  web: '"Helvetica Neue", Helvetica, Arial, sans-serif',
+  default: undefined,
+});
+
+export interface TypeScale {
+  /** Thin, large — empty states and "You're all caught up". */
+  display: TextStyle;
+  /** Section and screen headings. */
+  title: TextStyle;
+  /** Usernames in post headers and comment rows. */
+  username: TextStyle;
+  /** Captions and comment bodies. */
+  body: TextStyle;
+  /** Body weight-matched bold, for inline username prefixes and like counts. */
+  bodyStrong: TextStyle;
+  /** Slightly smaller supporting copy. */
+  caption: TextStyle;
+  /** Secondary UI text — "View all 12 comments". */
+  meta: TextStyle;
+  metaStrong: TextStyle;
+  /** The 2015 post timestamp: tiny, letterspaced, uppercase. */
+  timestamp: TextStyle;
+  button: TextStyle;
+}
+
+export const typography: TypeScale = {
+  display: { fontFamily, fontSize: 22, fontWeight: '300', letterSpacing: 0.2 },
+  title: { fontFamily, fontSize: 16, fontWeight: '600' },
+  username: { fontFamily, fontSize: 14, fontWeight: '600', letterSpacing: 0.1 },
+  body: { fontFamily, fontSize: 14, fontWeight: '400', lineHeight: 18 },
+  bodyStrong: { fontFamily, fontSize: 14, fontWeight: '600', lineHeight: 18 },
+  caption: { fontFamily, fontSize: 13, fontWeight: '400', lineHeight: 17 },
+  meta: { fontFamily, fontSize: 13, fontWeight: '400' },
+  metaStrong: { fontFamily, fontSize: 13, fontWeight: '600' },
+  timestamp: {
+    fontFamily,
+    fontSize: 10,
+    fontWeight: '400',
+    letterSpacing: 0.35,
+    textTransform: 'uppercase',
+  },
+  button: { fontFamily, fontSize: 14, fontWeight: '600' },
+};
+
+// ---------------------------------------------------------------------------
+// Hairlines
+// ---------------------------------------------------------------------------
+
+/** One physical pixel — the divider weight the 2015 UI used everywhere. */
+export const hairlineWidth = StyleSheet.hairlineWidth;
+
+export type HairlineSide = 'top' | 'bottom' | 'left' | 'right' | 'all';
+
+/**
+ * Build a one-pixel border style.
+ *
+ * @example
+ * <View style={[styles.header, hairline(colors.border, 'bottom')]} />
+ */
+export function hairline(color: string, side: HairlineSide = 'bottom'): ViewStyle {
+  switch (side) {
+    case 'top':
+      return { borderTopWidth: hairlineWidth, borderTopColor: color };
+    case 'bottom':
+      return { borderBottomWidth: hairlineWidth, borderBottomColor: color };
+    case 'left':
+      return { borderLeftWidth: hairlineWidth, borderLeftColor: color };
+    case 'right':
+      return { borderRightWidth: hairlineWidth, borderRightColor: color };
+    case 'all':
+      return { borderWidth: hairlineWidth, borderColor: color };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Theme
+// ---------------------------------------------------------------------------
+
+export type ColorSchemeName = 'light' | 'dark';
+
+export interface Theme {
+  scheme: ColorSchemeName;
+  colors: ThemeColors;
+  spacing: Spacing;
+  radius: Radius;
+  typography: TypeScale;
+  hairlineWidth: number;
+  fontFamily: string | undefined;
+}
+
+export const lightTheme: Theme = {
+  scheme: 'light',
+  colors: lightColors,
+  spacing,
+  radius,
+  typography,
+  hairlineWidth,
+  fontFamily,
+};
+
+export const darkTheme: Theme = {
+  scheme: 'dark',
+  colors: darkColors,
+  spacing,
+  radius,
+  typography,
+  hairlineWidth,
+  fontFamily,
+};
+
+/**
+ * Resolve the active theme from the OS colour scheme.
+ *
+ * Returns one of two module-level constants, so the reference is stable across
+ * renders and safe to use in `useMemo`/`useCallback` dependency arrays.
+ */
+export function useTheme(): Theme {
+  const scheme = useColorScheme();
+  return scheme === 'dark' ? darkTheme : lightTheme;
+}
