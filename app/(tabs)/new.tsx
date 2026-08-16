@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import {
+  ActionSheetIOS,
   ActivityIndicator,
   Alert,
   Dimensions,
@@ -18,7 +19,6 @@ import { File } from 'expo-file-system';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
-import Slider from '@react-native-community/slider';
 import { FilterStrip } from '../../components/FilterStrip';
 import { FilterPreview } from '../../components/FilterPreview';
 import { EmptyState } from '../../components/EmptyState';
@@ -33,10 +33,37 @@ type Picked = { uri: string; previewUri: string; width: number; height: number }
 
 /**
  * Two steps, the way the app this imitates did it: choose the look, then write
- * the caption. Keeping them apart means the filter strip isn't competing with a
- * keyboard, and the photo gets the whole screen while you're judging it.
+ * the caption.
  */
 type Step = 'filter' | 'share';
+
+type Source = 'camera' | 'library';
+
+/**
+ * Camera or library, asked with the platform's own sheet so nothing of ours
+ * has to render first. The tab is a shutter button; putting a screen in front
+ * of the picker just to hold two buttons made it flash on the way past.
+ */
+function chooseSource(): Promise<Source | null> {
+  if (Platform.OS === 'ios') {
+    return new Promise((resolve) => {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ['Cancel', 'Take Photo', 'Choose from Library'],
+          cancelButtonIndex: 0,
+        },
+        (index) => resolve(index === 1 ? 'camera' : index === 2 ? 'library' : null)
+      );
+    });
+  }
+  return new Promise((resolve) => {
+    Alert.alert('New post', undefined, [
+      { text: 'Take Photo', onPress: () => resolve('camera') },
+      { text: 'Choose from Library', onPress: () => resolve('library') },
+      { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+    ]);
+  });
+}
 
 export default function NewPost() {
   const router = useRouter();
@@ -46,40 +73,61 @@ export default function NewPost() {
   const [picked, setPicked] = useState<Picked | null>(null);
   const [step, setStep] = useState<Step>('filter');
   const [filterName, setFilterName] = useState(FILTERS[0].name);
-  const [strength, setStrength] = useState(1);
   const [caption, setCaption] = useState('');
   const [posting, setPosting] = useState(false);
+  /** Set when a permission was refused, so there's something to retry from. */
+  const [blocked, setBlocked] = useState<string | null>(null);
 
   const filter = getFilter(filterName) ?? FILTERS[0];
   const isNormal = filter.name === 'Normal';
 
-  /** Guards against the focus effect re-entering while the picker is already up. */
+  /** Guards the focus effect against re-entering while a picker is already up. */
   const picking = useRef(false);
 
-  const pick = useCallback(async () => {
+  const launch = useCallback(async () => {
     if (picking.current) return;
     picking.current = true;
+    setBlocked(null);
     try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Photos access needed', 'Kalos needs access to your photo library to post.');
+      const source = await chooseSource();
+      if (!source) {
+        // Backing out of the sheet means backing out of posting.
+        router.replace('/(tabs)');
         return;
       }
-      const result = await ImagePicker.launchImageLibraryAsync({
+
+      const permission =
+        source === 'camera'
+          ? await ImagePicker.requestCameraPermissionsAsync()
+          : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        setBlocked(
+          source === 'camera'
+            ? 'Kalos needs camera access to take a photo.'
+            : 'Kalos needs photo library access to post.'
+        );
+        return;
+      }
+
+      const options: ImagePicker.ImagePickerOptions = {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1], // square-first, the way it was
         quality: 1,
-      });
+      };
+      const result =
+        source === 'camera'
+          ? await ImagePicker.launchCameraAsync(options)
+          : await ImagePicker.launchImageLibraryAsync(options);
+
       if (result.canceled || !result.assets[0]) {
-        // Backing out of the picker means backing out of posting.
         router.replace('/(tabs)');
         return;
       }
 
       const asset = result.assets[0];
-      // Filter previews run against a small copy so dragging the strength slider
-      // stays smooth; the full-resolution image is only touched once, at post time.
+      // Previews and thumbnails run against a small copy; the full-resolution
+      // image is only touched once, at post time.
       const preview = await downscaleForPreview(asset.uri, 600);
       setPicked({
         uri: asset.uri,
@@ -89,20 +137,20 @@ export default function NewPost() {
       });
       setStep('filter');
       setFilterName(FILTERS[0].name);
-      setStrength(1);
       setCaption('');
+    } catch (e) {
+      // The simulator has no camera, and that surfaces here rather than as a
+      // permission refusal.
+      setBlocked(e instanceof Error ? e.message : 'Could not open the camera.');
     } finally {
       picking.current = false;
     }
   }, [router]);
 
-  // The tab is a shutter button, not a screen: landing on it with nothing in
-  // hand opens the library straight away rather than showing a card that asks
-  // you to tap once more.
   useFocusEffect(
     useCallback(() => {
-      if (!picked) void pick();
-    }, [picked, pick])
+      if (!picked && !blocked) void launch();
+    }, [picked, blocked, launch])
   );
 
   const discard = useCallback(() => {
@@ -118,7 +166,7 @@ export default function NewPost() {
       const baked = await bakeFilteredImage({
         uri: picked.uri,
         filter,
-        strength,
+        strength: 1,
         maxEdge: 1440,
       });
 
@@ -152,23 +200,27 @@ export default function NewPost() {
     } finally {
       setPosting(false);
     }
-  }, [picked, session, filter, isNormal, strength, caption, qc, router]);
+  }, [picked, session, filter, isNormal, caption, qc, router]);
 
-  // Only reached when the picker was dismissed by a permission denial — the
-  // cancel path navigates away instead.
   if (!picked) {
+    // Nothing but a bare screen while the sheet and picker are up — anything
+    // drawn here would flash for the moment before they cover it.
     return (
       <SafeAreaView style={styles.root} edges={['top']}>
-        <View style={styles.header}>
-          <Text style={styles.title}>New post</Text>
-        </View>
-        <EmptyState
-          icon="image"
-          title="Pick a photo"
-          body="Square crop, one of eighteen filters, a caption. That's the whole thing."
-          actionLabel="Choose from library"
-          onAction={pick}
-        />
+        {blocked ? (
+          <>
+            <View style={styles.header}>
+              <Text style={styles.title}>New post</Text>
+            </View>
+            <EmptyState
+              icon="camera-off"
+              title="Can't open that"
+              body={blocked}
+              actionLabel="Try again"
+              onAction={launch}
+            />
+          </>
+        ) : null}
       </SafeAreaView>
     );
   }
@@ -190,41 +242,16 @@ export default function NewPost() {
           <FilterPreview
             uri={picked.previewUri}
             filter={filter}
-            strength={strength}
+            strength={1}
             size={SCREEN}
             style={styles.preview}
           />
-
-          {/* Always rendered, disabled on Normal. Showing it conditionally made
-              the strip jump every time you selected or cleared a filter. */}
-          <View style={styles.strengthRow}>
-            <Text style={[styles.strengthLabel, isNormal && styles.strengthMuted]}>
-              {filter.name}
-            </Text>
-            <Slider
-              style={styles.slider}
-              minimumValue={0}
-              maximumValue={1}
-              value={strength}
-              onValueChange={setStrength}
-              disabled={isNormal}
-              minimumTrackTintColor={isNormal ? '#dbdbdb' : '#3897f0'}
-              maximumTrackTintColor="#dbdbdb"
-              thumbTintColor={isNormal ? '#dbdbdb' : undefined}
-            />
-            <Text style={[styles.strengthValue, isNormal && styles.strengthMuted]}>
-              {isNormal ? '—' : Math.round(strength * 100)}
-            </Text>
-          </View>
 
           <FilterStrip
             uri={picked.previewUri}
             selectedFilterName={filterName}
             thumbSize={84}
-            onSelect={(name) => {
-              setFilterName(name);
-              setStrength(1);
-            }}
+            onSelect={setFilterName}
           />
         </ScrollView>
       </SafeAreaView>
@@ -255,7 +282,7 @@ export default function NewPost() {
           <FilterPreview
             uri={picked.previewUri}
             filter={filter}
-            strength={strength}
+            strength={1}
             size={72}
             style={styles.thumb}
           />
@@ -292,17 +319,6 @@ const styles = StyleSheet.create({
   forward: { fontWeight: '600', color: '#3897f0' },
   disabled: { opacity: 0.4 },
   preview: { backgroundColor: '#000' },
-  strengthRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  strengthLabel: { width: 78, fontSize: 13, fontWeight: '600', color: '#262626' },
-  strengthMuted: { color: '#c7c7c7' },
-  slider: { flex: 1 },
-  strengthValue: { width: 30, textAlign: 'right', fontSize: 13, color: '#8e8e8e' },
   shareBody: { flex: 1 },
   captionRow: { flexDirection: 'row', gap: 12, padding: 16 },
   thumb: { borderRadius: 3, overflow: 'hidden', backgroundColor: '#efefef' },

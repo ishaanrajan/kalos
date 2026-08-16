@@ -32,7 +32,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Kalos needs access to your photos so you can post them."
+          "photosPermission": "Kalos needs access to your photos so you can post them.",
+          "cameraPermission": "Kalos needs access to your camera so you can take a photo to post."
         }
       ]
     ],
