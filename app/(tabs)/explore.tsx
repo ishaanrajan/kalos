@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useMemo } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,18 +23,6 @@ export default function Explore() {
     useExploreFeed();
 
   const posts = useMemo(() => data?.pages.flat() ?? [], [data]);
-
-  const header = useCallback(
-    () => (
-      <View style={styles.intro}>
-        <Feather name="users" size={18} color="#8e8e8e" />
-        <Text style={styles.introText}>
-          Photos from friends of friends. No algorithm — just your circle, one step out.
-        </Text>
-      </View>
-    ),
-    []
-  );
 
   if (isLoading) {
     return (
@@ -85,7 +73,6 @@ export default function Explore() {
             </View>
           ) : null
         }
-        ListHeaderComponent={header}
         onEndReached={() => hasNextPage && !isFetchingNextPage && fetchNextPage()}
         ListEmptyComponent={
           <EmptyState
@@ -122,14 +109,6 @@ const styles = StyleSheet.create({
     borderBottomColor: '#dbdbdb',
   },
   title: { fontSize: 17, fontWeight: '600', color: '#262626' },
-  intro: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  introText: { flex: 1, color: '#8e8e8e', fontSize: 13, lineHeight: 18 },
   footerSpinner: { marginVertical: 24 },
   // Why this photo reached you — the thing that made 2015 Explore feel like a
   // place your friends had been, rather than a feed of strangers.
