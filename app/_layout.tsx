@@ -42,6 +42,8 @@ function RootNavigator() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="post/[id]" options={{ headerShown: true, title: 'Post' }} />
       <Stack.Screen name="profile/[username]" options={{ headerShown: true, title: '' }} />
+      <Stack.Screen name="follows/[username]" options={{ headerShown: true, title: '' }} />
+      <Stack.Screen name="edit-profile" options={{ headerShown: true, title: 'Edit profile' }} />
       <Stack.Screen name="search" options={{ headerShown: true, title: 'Search' }} />
     </Stack>
   );

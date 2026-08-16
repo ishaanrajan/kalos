@@ -1,4 +1,4 @@
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Avatar } from './Avatar';
 import { Button } from './Button';
@@ -27,8 +27,16 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
         <Avatar url={avatarUrl(profile.avatar_path)} username={profile.username} size={80} />
         <View style={styles.stats}>
           <Stat value={profile.post_count} label="posts" />
-          <Stat value={profile.follower_count} label="followers" />
-          <Stat value={profile.following_count} label="following" />
+          <Stat
+            value={profile.follower_count}
+            label="followers"
+            onPress={() => router.push(`/follows/${profile.username}?tab=followers`)}
+          />
+          <Stat
+            value={profile.following_count}
+            label="following"
+            onPress={() => router.push(`/follows/${profile.username}?tab=following`)}
+          />
         </View>
       </View>
 
@@ -41,11 +49,20 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
 
       <View style={styles.actions}>
         {isSelf ? (
-          // Reached via the profile tab, which supplies onSignOut. Viewing your
-          // own profile through a username link has nothing to offer here.
-          onSignOut && (
-            <Button variant="outline" label="Log out" onPress={onSignOut} style={styles.action} />
-          )
+          <>
+            <Button
+              variant="outline"
+              label="Edit profile"
+              onPress={() => router.push('/edit-profile')}
+              style={styles.action}
+            />
+            {/* Reached via the profile tab, which supplies onSignOut. Viewing
+                your own profile through a username link has nothing to log
+                out of. */}
+            {onSignOut && (
+              <Button variant="outline" label="Log out" onPress={onSignOut} style={styles.action} />
+            )}
+          </>
         ) : (
           <Button
             variant={following ? 'outline' : 'primary'}
@@ -86,12 +103,27 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
   );
 }
 
-function Stat({ value, label }: { value: number; label: string }) {
-  return (
-    <View style={styles.stat}>
+/** Tappable when there's a list behind it. Post count just scrolls the grid. */
+function Stat({ value, label, onPress }: { value: number; label: string; onPress?: () => void }) {
+  const body = (
+    <>
       <Text style={styles.statValue}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
-    </View>
+    </>
+  );
+
+  if (!onPress) return <View style={styles.stat}>{body}</View>;
+
+  return (
+    <Pressable
+      style={styles.stat}
+      onPress={onPress}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={`${value} ${label}`}
+    >
+      {body}
+    </Pressable>
   );
 }
 
@@ -106,6 +138,6 @@ const styles = StyleSheet.create({
   bioBlock: { marginTop: 14 },
   displayName: { fontSize: 14, fontWeight: '600', color: '#262626' },
   bio: { fontSize: 14, color: '#262626', marginTop: 2, lineHeight: 19 },
-  actions: { flexDirection: 'row', marginTop: 16, marginBottom: 16 },
+  actions: { flexDirection: 'row', gap: 8, marginTop: 16, marginBottom: 16 },
   action: { flex: 1 },
 });

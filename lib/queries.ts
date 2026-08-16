@@ -213,6 +213,76 @@ export function useIsFollowing(profileId: string | undefined) {
   });
 }
 
+/** The subset of a profile a list row needs. */
+export type ProfileSummary = Pick<Profile, 'id' | 'username' | 'display_name' | 'avatar_path'>;
+
+export type FollowListKind = 'followers' | 'following';
+
+/**
+ * The people behind the two counts on a profile.
+ *
+ * `follows` has two foreign keys into `profiles`, so which one to embed depends
+ * on the direction being asked for: a follower is the *other* end of a row
+ * pointing at you, someone you follow is the other end of a row pointing away.
+ * Ordered newest-first, like everything else here.
+ */
+export function useFollowList(profileId: string | undefined, kind: FollowListKind) {
+  return useQuery({
+    queryKey: ['follow-list', kind, profileId],
+    enabled: !!profileId,
+    queryFn: async () => {
+      const matchColumn = kind === 'followers' ? 'followee_id' : 'follower_id';
+      const embed = kind === 'followers' ? 'follows_follower_id_fkey' : 'follows_followee_id_fkey';
+
+      const { data, error } = await supabase
+        .from('follows')
+        .select(`created_at, profile:profiles!${embed}(id, username, display_name, avatar_path)`)
+        .eq(matchColumn, profileId!)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+
+      return (data ?? []).map((row) => row.profile) as unknown as ProfileSummary[];
+    },
+  });
+}
+
+/**
+ * Editing your own profile. Only the four columns the client is granted UPDATE
+ * on are writable here -- the counters are the database's business (see
+ * migration 0007).
+ */
+export interface ProfilePatch {
+  username?: string;
+  display_name?: string | null;
+  bio?: string | null;
+  avatar_path?: string | null;
+}
+
+export function useUpdateProfile() {
+  const qc = useQueryClient();
+  const userId = useUserId();
+
+  return useMutation({
+    mutationFn: async (patch: ProfilePatch) => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(patch)
+        .eq('id', userId!)
+        .select()
+        .single();
+      if (error) throw error;
+      return data as Profile;
+    },
+    onSuccess: () => {
+      // The username is part of the profile route, and shows up in search
+      // results and every comment row, so cast the net wide.
+      qc.invalidateQueries({ queryKey: ['profile'] });
+      qc.invalidateQueries({ queryKey: ['search'] });
+      qc.invalidateQueries({ queryKey: ['comments'] });
+    },
+  });
+}
+
 export function useToggleFollow() {
   const qc = useQueryClient();
   const userId = useUserId();
