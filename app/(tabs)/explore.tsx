@@ -75,20 +75,13 @@ export default function Explore() {
         }
         onEndReached={() => hasNextPage && !isFetchingNextPage && fetchNextPage()}
         ListEmptyComponent={
-          <EmptyState
-            icon="compass"
-            title="Nothing to explore yet"
-            body="Follow a few more people. Explore fills up with what they like and who they follow."
-          />
+          <EmptyState icon="compass" title="Nothing to explore yet" />
         }
         ListFooterComponent={
           isFetchingNextPage ? (
             <ActivityIndicator style={styles.footerSpinner} />
           ) : !hasNextPage && posts.length > 0 ? (
-            <EndOfFeed
-              title="That's everything"
-              body="You've seen all the recent photos from your extended circle."
-            />
+            <EndOfFeed title="That's everything" body="" />
           ) : null
         }
       />

@@ -44,7 +44,7 @@ export function EndOfFeed({
       testID={testID}
       accessible
       accessibilityRole="summary"
-      accessibilityLabel={`${title}. ${body}`}
+      accessibilityLabel={body ? `${title}. ${body}` : title}
     >
       <View style={[styles.circle, { borderWidth: hairlineWidth * 2, borderColor: colors.accent }]}>
         <Feather name="check" size={26} color={colors.accent} />
@@ -52,9 +52,10 @@ export function EndOfFeed({
 
       <Text style={[typography.display, styles.title, { color: colors.text }]}>{title}</Text>
 
-      <Text style={[typography.body, styles.body, { color: colors.textSecondary }]}>
-        {body}
-      </Text>
+      {/* Callers can pass "" to get just the title and the check mark. */}
+      {body ? (
+        <Text style={[typography.body, styles.body, { color: colors.textSecondary }]}>{body}</Text>
+      ) : null}
     </View>
   );
 }

@@ -1,7 +1,7 @@
 /**
  * The feed post card.
  *
- * Header (avatar, username, filter name) -> square-first photo -> action row ->
+ * Header (avatar, username) -> square-first photo -> action row ->
  * like count -> caption -> comment preview -> uppercase relative timestamp.
  *
  * Double-tapping the photo likes it and plays the white heart burst. A single
@@ -47,7 +47,7 @@ export interface PostCardComment {
 export interface PostCardProps {
   /**
    * The post, straight off the `home_feed` / `explore_feed` RPC. Supplies the
-   * author, counts, caption, filter name, viewer like state, and — on Explore —
+   * author, counts, caption, viewer like state, and — on Explore —
    * the `reason` / `reason_username` behind the chip.
    */
   post: FeedPost;
@@ -178,7 +178,6 @@ export function PostCard({
   const {
     id: postId,
     caption,
-    filter_name: filterName,
     like_count: likeCount,
     comment_count: commentCount,
     created_at: createdAt,
@@ -308,6 +307,8 @@ export function PostCard({
           onPress={onPressAuthor}
         />
 
+        {/* The line under the username is where a location would go, if this
+            ever grows one. It is deliberately not the filter name. */}
         <View style={styles.headerText}>
           <Text
             style={[typography.username, { color: colors.text }]}
@@ -317,14 +318,6 @@ export function PostCard({
           >
             {authorUsername}
           </Text>
-          {filterName ? (
-            <Text
-              style={[typography.timestamp, styles.filterName, { color: colors.textSecondary }]}
-              numberOfLines={1}
-            >
-              {filterName}
-            </Text>
-          ) : null}
         </View>
 
         {onPressOptions ? (
@@ -501,9 +494,6 @@ const styles = StyleSheet.create({
   headerText: {
     flex: 1,
     marginLeft: spacing.md - 2,
-  },
-  filterName: {
-    marginTop: 2,
   },
   photo: {
     width: '100%',
