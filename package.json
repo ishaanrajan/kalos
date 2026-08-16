@@ -32,6 +32,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "tsx": "^4.23.12",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -39,7 +40,9 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "preflight": "tsx scripts/preflight.ts",
     "verify:filters": "tsx scripts/verify-filters.ts",
+    "verify:rls": "tsx scripts/verify-rls.ts",
     "verify:explore": "tsx scripts/verify-explore.ts",
     "seed": "tsx scripts/seed.ts"
   },
