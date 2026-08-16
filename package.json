@@ -43,6 +43,7 @@
     "preflight": "tsx scripts/preflight.ts",
     "verify:filters": "tsx scripts/verify-filters.ts",
     "verify:rls": "tsx scripts/verify-rls.ts",
+    "verify:writes": "tsx scripts/verify-writes.ts",
     "verify:explore": "tsx scripts/verify-explore.ts",
     "seed": "tsx scripts/seed.ts"
   },
