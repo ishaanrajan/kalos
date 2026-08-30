@@ -33,12 +33,26 @@
         "expo-image-picker",
         {
           "photosPermission": "Kalos needs access to your photos so you can post them.",
-          "cameraPermission": "Kalos needs access to your camera so you can take a photo to post."
+          "cameraPermission": "Kalos needs access to your camera so you can take a photo to post.",
+          "microphonePermission": false
         }
       ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "2a684f6b-a87f-419c-994d-d048a97f96d1"
+      }
+    },
+    "owner": "ishaanr",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/2a684f6b-a87f-419c-994d-d048a97f96d1"
     }
   }
 }
