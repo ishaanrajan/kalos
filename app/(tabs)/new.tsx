@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -84,6 +84,19 @@ export default function NewPost() {
   /** Guards the focus effect against re-entering while a picker is already up. */
   const picking = useRef(false);
 
+  // useFocusEffect re-invokes its callback whenever the callback's identity
+  // changes while the screen is still focused, not just on real navigation
+  // transitions. Closing over `picked`/`blocked` directly meant clearing them
+  // after a successful post (still on this screen, mid-navigate-away) looked
+  // identical to a fresh focus and relaunched the picker. Refs keep the
+  // callback identity stable so only genuine focus events trigger it.
+  const pickedRef = useRef(picked);
+  const blockedRef = useRef(blocked);
+  useEffect(() => {
+    pickedRef.current = picked;
+    blockedRef.current = blocked;
+  }, [picked, blocked]);
+
   const launch = useCallback(async () => {
     if (picking.current) return;
     picking.current = true;
@@ -149,8 +162,8 @@ export default function NewPost() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!picked && !blocked) void launch();
-    }, [picked, blocked, launch])
+      if (!pickedRef.current && !blockedRef.current) void launch();
+    }, [launch])
   );
 
   const discard = useCallback(() => {

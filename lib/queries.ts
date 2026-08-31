@@ -5,7 +5,7 @@ import {
   useQueryClient,
   type InfiniteData,
 } from '@tanstack/react-query';
-import { supabase } from './supabase';
+import { PHOTOS_BUCKET, supabase } from './supabase';
 import { useUserId } from './auth';
 import { PAGE_SIZE, type ActivityEvent, type Comment, type FeedPost, type Profile } from './types';
 
@@ -310,6 +310,30 @@ export function useToggleFollow() {
       // drops them out of explore. Both lists have to be rebuilt.
       qc.invalidateQueries({ queryKey: ['home_feed'] });
       qc.invalidateQueries({ queryKey: ['explore_feed'] });
+    },
+  });
+}
+
+/**
+ * Deletes a post. RLS restricts the row delete to the post's own author, and
+ * comments/likes cascade with it. The storage object is removed best-effort
+ * afterward — the post is already gone from every list either way, so a
+ * failed cleanup just leaves an orphaned file rather than blocking anything.
+ */
+export function useDeletePost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (post: Pick<FeedPost, 'id' | 'image_path'>) => {
+      const { error } = await supabase.from('posts').delete().eq('id', post.id);
+      if (error) throw error;
+      await supabase.storage.from(PHOTOS_BUCKET).remove([post.image_path]);
+    },
+    onSuccess: (_d, post) => {
+      qc.invalidateQueries({ queryKey: ['home_feed'] });
+      qc.invalidateQueries({ queryKey: ['explore_feed'] });
+      qc.invalidateQueries({ queryKey: ['profile-posts'] });
+      qc.invalidateQueries({ queryKey: ['profile'] });
+      qc.invalidateQueries({ queryKey: ['post', post.id] });
     },
   });
 }

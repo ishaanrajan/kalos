@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -14,16 +15,20 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { PostCard } from '../../components/PostCard';
 import { CommentRow } from '../../components/CommentRow';
 import { EmptyState } from '../../components/EmptyState';
-import { useAddComment, useComments, usePost, useToggleLike } from '../../lib/queries';
+import { useAddComment, useComments, useDeletePost, usePost, useToggleLike } from '../../lib/queries';
 import { avatarUrl, photoUrl } from '../../lib/supabase';
+import { useUserId } from '../../lib/auth';
+import { confirmDestructive } from '../../lib/actionSheet';
 
 export default function PostScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const userId = useUserId();
   const { data: post, isLoading } = usePost(id);
   const { data: comments } = useComments(id);
   const addComment = useAddComment(id!);
   const toggleLike = useToggleLike();
+  const deletePost = useDeletePost();
   const [draft, setDraft] = useState('');
 
   if (isLoading || !post) {
@@ -43,6 +48,18 @@ export default function PostScreen() {
     if (!body) return;
     addComment.mutate(body);
     setDraft('');
+  }
+
+  function deleteThisPost() {
+    confirmDestructive('Delete post?', 'Delete Post', () => {
+      deletePost.mutate(
+        { id: post!.id, image_path: post!.image_path },
+        {
+          onSuccess: () => router.back(),
+          onError: (e) => Alert.alert('Could not delete post', e instanceof Error ? e.message : undefined),
+        }
+      );
+    });
   }
 
   return (
@@ -66,6 +83,7 @@ export default function PostScreen() {
             avatarUrl={avatarUrl(post.author.avatar_path)}
             onLike={() => toggleLike.mutate({ postId: post.id, liked: post.viewer_has_liked })}
             onPressAuthor={() => router.push(`/profile/${post.author.username}`)}
+            onPressOptions={post.author.id === userId ? deleteThisPost : undefined}
             showCommentPreview={false}
           />
         }

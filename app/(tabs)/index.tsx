@@ -1,16 +1,19 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PostCard } from '../../components/PostCard';
 import { EndOfFeed } from '../../components/EndOfFeed';
 import { EmptyState } from '../../components/EmptyState';
-import { useHomeFeed, useToggleLike } from '../../lib/queries';
+import { useDeletePost, useHomeFeed, useToggleLike } from '../../lib/queries';
 import { photoUrl, avatarUrl } from '../../lib/supabase';
+import { useUserId } from '../../lib/auth';
+import { confirmDestructive } from '../../lib/actionSheet';
 import type { FeedPost } from '../../lib/types';
 
 export default function Feed() {
   const router = useRouter();
+  const userId = useUserId();
   const {
     data,
     isLoading,
@@ -22,6 +25,7 @@ export default function Feed() {
     isFetchingNextPage,
   } = useHomeFeed();
   const toggleLike = useToggleLike();
+  const deletePost = useDeletePost();
   const [refreshing, setRefreshing] = useState(false);
 
   const posts = useMemo(() => data?.pages.flat() ?? [], [data]);
@@ -32,6 +36,17 @@ export default function Feed() {
     setRefreshing(false);
   }, [refetch]);
 
+  const deleteOwnPost = useCallback(
+    (post: FeedPost) => {
+      confirmDestructive('Delete post?', 'Delete Post', () => {
+        deletePost.mutate(post, {
+          onError: (e) => Alert.alert('Could not delete post', e instanceof Error ? e.message : undefined),
+        });
+      });
+    },
+    [deletePost]
+  );
+
   const renderItem = useCallback(
     ({ item }: { item: FeedPost }) => (
       <PostCard
@@ -41,9 +56,10 @@ export default function Feed() {
         onLike={() => toggleLike.mutate({ postId: item.id, liked: item.viewer_has_liked })}
         onPressAuthor={() => router.push(`/profile/${item.author_username}`)}
         onPressComments={() => router.push(`/post/${item.id}`)}
+        onPressOptions={item.author_id === userId ? () => deleteOwnPost(item) : undefined}
       />
     ),
-    [router, toggleLike]
+    [router, toggleLike, userId, deleteOwnPost]
   );
 
   if (isLoading) {
