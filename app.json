@@ -10,10 +10,13 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.kalos.app"
+      "bundleIdentifier": "com.ishaanrajan.kalos",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
-      "package": "com.kalos.app",
+      "package": "com.ishaanrajan.kalos",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
