@@ -78,14 +78,6 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
     </View>
   );
 
-  if (isLoading) {
-    return (
-      <View style={styles.center}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
-
   return (
     <PhotoGrid
       posts={posts ?? []}
@@ -93,11 +85,20 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
       onPressPost={(p) => router.push(`/post/${p.id}`)}
       ListHeaderComponent={() => header}
       ListEmptyComponent={
-        <EmptyState
-          icon="camera"
-          title={isSelf ? 'No posts yet' : 'No posts'}
-          body={isSelf ? 'Your photos will show up here.' : `${profile.username} hasn't posted yet.`}
-        />
+        // The header (avatar, counts, bio) is already in memory and has
+        // nothing to wait on — only the grid below it depends on the posts
+        // query, so that's the only part allowed to show a spinner.
+        isLoading ? (
+          <View style={styles.gridLoading}>
+            <ActivityIndicator />
+          </View>
+        ) : (
+          <EmptyState
+            icon="camera"
+            title={isSelf ? 'No posts yet' : 'No posts'}
+            body={isSelf ? 'Your photos will show up here.' : `${profile.username} hasn't posted yet.`}
+          />
+        )
       }
     />
   );
@@ -128,7 +129,7 @@ function Stat({ value, label, onPress }: { value: number; label: string; onPress
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  gridLoading: { alignItems: 'center', paddingVertical: 48 },
   header: { paddingHorizontal: 16, paddingTop: 16, backgroundColor: '#fff' },
   topRow: { flexDirection: 'row', alignItems: 'center' },
   stats: { flex: 1, flexDirection: 'row', justifyContent: 'space-around', marginLeft: 16 },
