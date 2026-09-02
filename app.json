@@ -39,7 +39,8 @@
           "cameraPermission": "Kalos needs access to your camera so you can take a photo to post.",
           "microphonePermission": false
         }
-      ]
+      ],
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true

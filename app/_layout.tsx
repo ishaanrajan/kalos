@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
+import * as Notifications from 'expo-notifications';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -27,6 +28,16 @@ function RootNavigator() {
       router.replace('/(tabs)');
     }
   }, [session, loading, segments, router]);
+
+  // The notify Edge Function attaches { url } to every push it sends;
+  // tapping one just needs to hand that straight to the router.
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const url = response.notification.request.content.data?.url;
+      if (typeof url === 'string') router.push(url as never);
+    });
+    return () => sub.remove();
+  }, [router]);
 
   if (loading) {
     return (

@@ -6,7 +6,7 @@ import { Feather } from '@expo/vector-icons';
 import { PostCard } from '../../components/PostCard';
 import { EndOfFeed } from '../../components/EndOfFeed';
 import { EmptyState } from '../../components/EmptyState';
-import { useDeletePost, useHomeFeed, useToggleLike } from '../../lib/queries';
+import { useDeletePost, useHasUnreadDMs, useHomeFeed, useToggleLike } from '../../lib/queries';
 import { photoUrl, avatarUrl } from '../../lib/supabase';
 import { useAuth, useUserId } from '../../lib/auth';
 import { confirmDestructive } from '../../lib/actionSheet';
@@ -19,6 +19,7 @@ export default function Feed() {
   // Everyone's one DM thread is with "ishaan" specifically; ishaan gets the
   // inbox listing every thread instead of a single one.
   const dmHref = profile?.username === 'ishaan' ? '/dm' : '/dm/ishaan';
+  const { data: hasUnreadDMs } = useHasUnreadDMs();
   const {
     data,
     isLoading,
@@ -100,9 +101,10 @@ export default function Feed() {
             onPress={() => router.push(dmHref)}
             hitSlop={12}
             accessibilityRole="button"
-            accessibilityLabel="Messages"
+            accessibilityLabel={hasUnreadDMs ? 'Messages, unread' : 'Messages'}
           >
             <Feather name="send" size={22} color="#262626" />
+            {hasUnreadDMs ? <View style={styles.dot} /> : null}
           </Pressable>
         </View>
       </View>
@@ -149,5 +151,16 @@ const styles = StyleSheet.create({
   },
   headerSpacer: { width: 24, alignItems: 'flex-end' },
   wordmark: { fontSize: 24, fontWeight: '300', color: '#262626', letterSpacing: 0.5 },
+  dot: {
+    position: 'absolute',
+    top: -1,
+    right: -1,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#ed4956',
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
   footerSpinner: { marginVertical: 24 },
 });

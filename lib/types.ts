@@ -21,6 +21,8 @@ export interface Profile {
   follower_count: number;
   following_count: number;
   created_at: Timestamp;
+  /** Last time the Activity tab was opened — drives its unread red dot. */
+  activity_read_at: Timestamp | null;
 }
 
 export interface Post {
@@ -93,6 +95,8 @@ export interface DMMessage {
   sender_id: UUID;
   body: string;
   created_at: Timestamp;
+  /** Set by the recipient when they open the thread — drives read receipts. */
+  read_at: Timestamp | null;
 }
 
 /** One row of ishaan's inbox: a thread plus its most recent message. */

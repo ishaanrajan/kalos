@@ -1,5 +1,17 @@
+import { StyleSheet, View, type ColorValue } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import { useHasUnreadActivity } from '../../lib/queries';
+
+function ActivityTabIcon({ color, size }: { color: ColorValue; size: number }) {
+  const hasUnread = useHasUnreadActivity();
+  return (
+    <View>
+      <Feather name="heart" size={size} color={color} />
+      {hasUnread ? <View style={styles.dot} /> : null}
+    </View>
+  );
+}
 
 export default function TabsLayout() {
   return (
@@ -25,7 +37,7 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="activity"
-        options={{ tabBarIcon: ({ color, size }) => <Feather name="heart" size={size} color={color} /> }}
+        options={{ tabBarIcon: ({ color, size }) => <ActivityTabIcon color={color} size={size} /> }}
       />
       <Tabs.Screen
         name="profile"
@@ -34,3 +46,15 @@ export default function TabsLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  dot: {
+    position: 'absolute',
+    top: -1,
+    right: -3,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ed4956',
+  },
+});

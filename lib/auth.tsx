@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from './supabase';
+import { registerForPushNotificationsAsync } from './push';
 import type { Profile } from './types';
 
 interface AuthValue {
@@ -47,6 +48,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
+  }, [userId]);
+
+  useEffect(() => {
+    if (userId) void registerForPushNotificationsAsync(userId);
   }, [userId]);
 
   const value = useMemo<AuthValue>(

@@ -6,7 +6,7 @@ import {
   type InfiniteData,
 } from '@tanstack/react-query';
 import { PHOTOS_BUCKET, supabase } from './supabase';
-import { useUserId } from './auth';
+import { useAuth, useUserId } from './auth';
 import {
   PAGE_SIZE,
   type ActivityEvent,
@@ -423,6 +423,79 @@ export function useDMInbox() {
       const { data, error } = await supabase.rpc('dm_inbox', { lim: 50 });
       if (error) throw error;
       return (data ?? []) as DMThreadSummary[];
+    },
+  });
+}
+
+/**
+ * Red-dot state for the DM icon. RLS already scopes visible rows to "my
+ * thread" for a regular user or "every thread" for ishaan, so a plain
+ * unread-and-not-from-me count is correct for both without branching here.
+ */
+export function useHasUnreadDMs() {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: ['dm-unread', userId],
+    enabled: !!userId,
+    queryFn: async () => {
+      const { count, error } = await supabase
+        .from('dm_messages')
+        .select('*', { count: 'exact', head: true })
+        .is('read_at', null)
+        .neq('sender_id', userId!);
+      if (error) throw error;
+      return (count ?? 0) > 0;
+    },
+  });
+}
+
+/** Marks every unread incoming message in a thread as read. */
+export function useMarkDMRead(threadUserId: string | undefined) {
+  const qc = useQueryClient();
+  const userId = useUserId();
+  return useMutation({
+    mutationFn: async () => {
+      if (!threadUserId) return;
+      const { error } = await supabase
+        .from('dm_messages')
+        .update({ read_at: new Date().toISOString() })
+        .eq('thread_user_id', threadUserId)
+        .neq('sender_id', userId!)
+        .is('read_at', null);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dm-unread'] });
+      qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId] });
+      qc.invalidateQueries({ queryKey: ['dm-inbox'] });
+    },
+  });
+}
+
+/** Red-dot state for the Activity tab: anything newer than the last visit? */
+export function useHasUnreadActivity() {
+  const { profile } = useAuth();
+  const { data: events } = useActivity();
+  const newest = events?.[0]?.created_at;
+  if (!newest) return false;
+  if (!profile?.activity_read_at) return true;
+  return new Date(newest).getTime() > new Date(profile.activity_read_at).getTime();
+}
+
+/** Call when the Activity tab is opened, to clear its red dot. */
+export function useMarkActivityRead() {
+  const qc = useQueryClient();
+  const userId = useUserId();
+  return useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ activity_read_at: new Date().toISOString() })
+        .eq('id', userId!);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['profile'] });
     },
   });
 }

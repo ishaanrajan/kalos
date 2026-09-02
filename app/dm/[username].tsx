@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -13,7 +13,7 @@ import {
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { formatCommentAge } from '../../components/CommentRow';
 import { EmptyState } from '../../components/EmptyState';
-import { useDMThread, useProfile, useSendDM } from '../../lib/queries';
+import { useDMThread, useMarkDMRead, useProfile, useSendDM } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import type { DMMessage } from '../../lib/types';
 
@@ -34,6 +34,12 @@ export default function DMThread() {
 
   const { data: messages, isLoading: messagesLoading } = useDMThread(threadUserId);
   const sendDM = useSendDM(threadUserId);
+  const markRead = useMarkDMRead(threadUserId);
+
+  // Opening the thread is what "read" means -- mark whatever's here now.
+  useEffect(() => {
+    if (threadUserId) markRead.mutate();
+  }, [threadUserId]);
 
   function submit() {
     const body = draft.trim();
@@ -74,7 +80,15 @@ export default function DMThread() {
             />
           )
         }
-        renderItem={({ item }) => <Bubble message={item} mine={item.sender_id === me.id} />}
+        renderItem={({ item, index }) => (
+          <Bubble
+            message={item}
+            mine={item.sender_id === me.id}
+            showSeen={
+              index === (messages?.length ?? 0) - 1 && item.sender_id === me.id && !!item.read_at
+            }
+          />
+        )}
       />
 
       <View style={styles.composer}>
@@ -96,13 +110,24 @@ export default function DMThread() {
   );
 }
 
-function Bubble({ message, mine }: { message: DMMessage; mine: boolean }) {
+function Bubble({
+  message,
+  mine,
+  showSeen,
+}: {
+  message: DMMessage;
+  mine: boolean;
+  showSeen: boolean;
+}) {
   return (
     <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
       <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
         <Text style={[styles.bubbleText, mine && styles.bubbleTextMine]}>{message.body}</Text>
       </View>
       <Text style={[styles.age, mine && styles.ageMine]}>{formatCommentAge(message.created_at)}</Text>
+      {/* Only ever under the very last message, like iMessage -- not one
+          per read message, which would just be noise. */}
+      {showSeen ? <Text style={styles.seen}>Seen</Text> : null}
     </View>
   );
 }
@@ -126,6 +151,7 @@ const styles = StyleSheet.create({
   bubbleTextMine: { color: '#fff' },
   age: { fontSize: 11, color: '#8e8e8e', marginTop: 3, marginHorizontal: 4 },
   ageMine: { alignSelf: 'flex-end' },
+  seen: { fontSize: 11, color: '#8e8e8e', marginTop: 1, marginHorizontal: 4, alignSelf: 'flex-end' },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',

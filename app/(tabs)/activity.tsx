@@ -1,10 +1,11 @@
+import { useEffect } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Avatar } from '../../components/Avatar';
 import { EmptyState } from '../../components/EmptyState';
-import { useActivity } from '../../lib/queries';
+import { useActivity, useMarkActivityRead } from '../../lib/queries';
 import { avatarUrl, photoUrl } from '../../lib/supabase';
 import type { ActivityEvent } from '../../lib/types';
 
@@ -16,6 +17,13 @@ import type { ActivityEvent } from '../../lib/types';
 export default function Activity() {
   const router = useRouter();
   const { data, isLoading } = useActivity();
+  const markRead = useMarkActivityRead();
+
+  // Opening this tab is what "read" means here — once per mount is enough,
+  // deliberately not reacting to markRead's own identity.
+  useEffect(() => {
+    markRead.mutate();
+  }, []);
 
   if (isLoading) {
     return (
