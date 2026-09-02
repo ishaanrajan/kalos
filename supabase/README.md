@@ -58,6 +58,9 @@ so re-applying a file after a tweak is safe.
 | `0004_rls.sql` | RLS enable + every policy |
 | `0005_storage.sql` | `photos` / `avatars` buckets + object policies |
 | `0006_feed_functions.sql` | `home_feed`, `explore_feed`, `activity_feed`, `search_profiles` |
+| `0007_revoke_default_grants.sql` | closes the default-privilege gap that let a client forge `like_count` |
+| `0008_dm.sql` | `dm_messages`, `dm_inbox()` — every thread is with "ishaan" |
+| `0009_notifications.sql` | `push_tokens`, `dm_messages.read_at`, `profiles.activity_read_at` — see [Push notifications](#5-push-notifications) below for the Edge Function + webhooks this depends on |
 
 ### Option A — SQL editor (no tooling required)
 
@@ -166,6 +169,35 @@ It is therefore simultaneously the most recent and the most "engaging" content
 in the database. `explore_feed()` must never return it for `ishaan`. That is the
 regression test for the whole thesis — if ranking ever leaks in, this post is
 what surfaces first. The seed prints its post id for the test to assert against.
+
+---
+
+## 5. Push notifications
+
+`0009_notifications.sql` sets up the tables and RLS this depends on, but not
+the delivery mechanism itself — that's two more pieces, both Dashboard-driven
+rather than SQL, since a fresh project doesn't have the `supabase_functions`
+schema that raw webhook-trigger SQL needs until you've created a webhook
+through the UI at least once.
+
+1. **Deploy the Edge Function.** Dashboard → **Edge Functions** → **New
+   Function**, name it exactly `notify`, paste in
+   `supabase/functions/notify/index.ts`. If it asks about **"Enforce JWT
+   verification,"** turn that **off** — the webhook below calls it directly,
+   with no user JWT to verify.
+2. **Create four Database Webhooks.** Dashboard → **Database** → **Webhooks**
+   → **Create a new hook**, once each for `dm_messages`, `likes`, `comments`,
+   `follows`:
+   - Events: **Insert** only
+   - Type: **Supabase Edge Functions**
+   - Edge Function: `notify`
+
+That's it — no URL or auth header to fill in by hand, the Dashboard wires
+those up for you. This is also why the four triggers don't live in
+`0009_notifications.sql` itself: they were originally written as raw
+`supabase_functions.http_request` SQL, but that fails with
+`schema "supabase_functions" does not exist` on any project that has never
+created a webhook through the UI before.
 
 ---
 

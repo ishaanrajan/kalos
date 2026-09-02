@@ -7,9 +7,16 @@
 --   2. dm_messages.read_at -- per-message read state, recipient-writable only
 --   3. profiles.activity_read_at -- one timestamp is enough for Activity,
 --                                    since it's a single feed, not per-thread
---   4. Database Webhooks -- fire the notify Edge Function on the four event
---      tables. The Edge Function itself is deployed separately (Dashboard ->
---      Functions or `supabase functions deploy`), not part of this file.
+--
+-- The four Database Webhooks (dm_messages/likes/comments/follows -> the
+-- notify Edge Function) are NOT in this file. They were originally written
+-- as raw `supabase_functions.http_request` trigger SQL, but that schema only
+-- exists once a project has created its first webhook -- so on a project
+-- that never has, running that SQL directly fails with
+-- `schema "supabase_functions" does not exist`. Simpler and more robust to
+-- create them in Dashboard -> Database -> Webhooks instead: it provisions
+-- that schema itself and handles the Edge Function's auth header for you.
+-- See supabase/README.md for the exact steps.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -79,45 +86,3 @@ alter table public.profiles add column if not exists activity_read_at timestampt
 
 grant update (username, display_name, bio, avatar_path, activity_read_at)
   on public.profiles to authenticated;
-
--- -----------------------------------------------------------------------------
--- Database Webhooks -- fire-and-forget POSTs to the notify Edge Function.
--- Requires the Edge Function at .../functions/v1/notify to already be
--- deployed; these triggers will queue successfully either way, they just
--- won't have anything useful to call until it exists.
--- -----------------------------------------------------------------------------
-drop trigger if exists notify_on_dm on public.dm_messages;
-create trigger notify_on_dm
-  after insert on public.dm_messages
-  for each row
-  execute function supabase_functions.http_request(
-    'https://snmnhlxletlgeorzwbvt.supabase.co/functions/v1/notify',
-    'POST', '{"Content-type":"application/json"}', '{}', '5000'
-  );
-
-drop trigger if exists notify_on_like on public.likes;
-create trigger notify_on_like
-  after insert on public.likes
-  for each row
-  execute function supabase_functions.http_request(
-    'https://snmnhlxletlgeorzwbvt.supabase.co/functions/v1/notify',
-    'POST', '{"Content-type":"application/json"}', '{}', '5000'
-  );
-
-drop trigger if exists notify_on_comment on public.comments;
-create trigger notify_on_comment
-  after insert on public.comments
-  for each row
-  execute function supabase_functions.http_request(
-    'https://snmnhlxletlgeorzwbvt.supabase.co/functions/v1/notify',
-    'POST', '{"Content-type":"application/json"}', '{}', '5000'
-  );
-
-drop trigger if exists notify_on_follow on public.follows;
-create trigger notify_on_follow
-  after insert on public.follows
-  for each row
-  execute function supabase_functions.http_request(
-    'https://snmnhlxletlgeorzwbvt.supabase.co/functions/v1/notify',
-    'POST', '{"Content-type":"application/json"}', '{}', '5000'
-  );
