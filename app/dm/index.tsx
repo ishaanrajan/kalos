@@ -1,5 +1,6 @@
-import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
-import { Redirect, useRouter } from 'expo-router';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Redirect, Stack, useRouter } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
 import { EmptyState } from '../../components/EmptyState';
 import { UserRow } from '../../components/UserRow';
 import { formatCommentAge } from '../../components/CommentRow';
@@ -29,34 +30,50 @@ export default function DMInbox() {
   }
 
   return (
-    <FlatList
-      style={styles.root}
-      data={threads ?? []}
-      keyExtractor={(t) => t.thread_user_id}
-      ListEmptyComponent={
-        <EmptyState icon="send" title="No messages yet" body="Threads people start with you show up here." />
-      }
-      renderItem={({ item }) => (
-        <UserRow
-          profile={{
-            id: item.thread_user_id,
-            username: item.username,
-            display_name: item.display_name,
-            avatar_path: item.avatar_path,
-          }}
-          onPress={() => router.push(`/dm/${item.username}`)}
-          accessory={
-            <View style={styles.preview}>
-              <Text style={styles.previewBody} numberOfLines={1}>
-                {item.last_sender_id === me?.id ? 'You: ' : ''}
-                {item.last_body}
-              </Text>
-              <Text style={styles.previewAge}>{formatCommentAge(item.last_created_at)}</Text>
-            </View>
-          }
-        />
-      )}
-    />
+    <>
+      <Stack.Screen
+        options={{
+          headerRight: () => (
+            <Pressable
+              onPress={() => router.push('/search?intent=dm')}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel="New message"
+            >
+              <Feather name="edit" size={20} color="#262626" />
+            </Pressable>
+          ),
+        }}
+      />
+      <FlatList
+        style={styles.root}
+        data={threads ?? []}
+        keyExtractor={(t) => t.thread_user_id}
+        ListEmptyComponent={
+          <EmptyState icon="send" title="No messages yet" body="Threads people start with you show up here." />
+        }
+        renderItem={({ item }) => (
+          <UserRow
+            profile={{
+              id: item.thread_user_id,
+              username: item.username,
+              display_name: item.display_name,
+              avatar_path: item.avatar_path,
+            }}
+            onPress={() => router.push(`/dm/${item.username}`)}
+            accessory={
+              <View style={styles.preview}>
+                <Text style={styles.previewBody} numberOfLines={1}>
+                  {item.last_sender_id === me?.id ? 'You: ' : ''}
+                  {item.last_body}
+                </Text>
+                <Text style={styles.previewAge}>{formatCommentAge(item.last_created_at)}</Text>
+              </View>
+            }
+          />
+        )}
+      />
+    </>
   );
 }
 

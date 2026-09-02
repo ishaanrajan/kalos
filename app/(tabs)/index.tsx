@@ -61,6 +61,7 @@ export default function Feed() {
         onLike={() => toggleLike.mutate({ postId: item.id, liked: item.viewer_has_liked })}
         onPressAuthor={() => router.push(`/profile/${item.author_username}`)}
         onPressComments={() => router.push(`/post/${item.id}`)}
+        onPressLikes={() => router.push(`/likes/${item.id}`)}
         onPressOptions={item.author_id === userId ? () => deleteOwnPost(item) : undefined}
       />
     ),

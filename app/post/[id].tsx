@@ -83,6 +83,7 @@ export default function PostScreen() {
             avatarUrl={avatarUrl(post.author.avatar_path)}
             onLike={() => toggleLike.mutate({ postId: post.id, liked: post.viewer_has_liked })}
             onPressAuthor={() => router.push(`/profile/${post.author.username}`)}
+            onPressLikes={() => router.push(`/likes/${post.id}`)}
             onPressOptions={post.author.id === userId ? deleteThisPost : undefined}
             showCommentPreview={false}
           />

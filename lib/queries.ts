@@ -254,6 +254,23 @@ export function useFollowList(profileId: string | undefined, kind: FollowListKin
   });
 }
 
+/** Everyone who's liked a post, newest first. */
+export function useLikers(postId: string | undefined) {
+  return useQuery({
+    queryKey: ['likers', postId],
+    enabled: !!postId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('likes')
+        .select('created_at, profile:profiles!likes_user_id_fkey(id, username, display_name, avatar_path)')
+        .eq('post_id', postId!)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data ?? []).map((row) => row.profile) as unknown as ProfileSummary[];
+    },
+  });
+}
+
 /**
  * Editing your own profile. Only the four columns the client is granted UPDATE
  * on are writable here -- the counters are the database's business (see
