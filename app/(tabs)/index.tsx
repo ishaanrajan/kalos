@@ -1,19 +1,24 @@
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { PostCard } from '../../components/PostCard';
 import { EndOfFeed } from '../../components/EndOfFeed';
 import { EmptyState } from '../../components/EmptyState';
 import { useDeletePost, useHomeFeed, useToggleLike } from '../../lib/queries';
 import { photoUrl, avatarUrl } from '../../lib/supabase';
-import { useUserId } from '../../lib/auth';
+import { useAuth, useUserId } from '../../lib/auth';
 import { confirmDestructive } from '../../lib/actionSheet';
 import type { FeedPost } from '../../lib/types';
 
 export default function Feed() {
   const router = useRouter();
   const userId = useUserId();
+  const { profile } = useAuth();
+  // Everyone's one DM thread is with "ishaan" specifically; ishaan gets the
+  // inbox listing every thread instead of a single one.
+  const dmHref = profile?.username === 'ishaan' ? '/dm' : '/dm/ishaan';
   const {
     data,
     isLoading,
@@ -87,7 +92,18 @@ export default function Feed() {
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
       <View style={styles.header}>
+        <View style={styles.headerSpacer} />
         <Text style={styles.wordmark}>Kalos</Text>
+        <View style={styles.headerSpacer}>
+          <Pressable
+            onPress={() => router.push(dmHref)}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="Messages"
+          >
+            <Feather name="send" size={22} color="#262626" />
+          </Pressable>
+        </View>
       </View>
 
       <FlatList
@@ -123,11 +139,14 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   header: {
     height: 44,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#dbdbdb',
   },
+  headerSpacer: { width: 24, alignItems: 'flex-end' },
   wordmark: { fontSize: 24, fontWeight: '300', color: '#262626', letterSpacing: 0.5 },
   footerSpinner: { marginVertical: 24 },
 });

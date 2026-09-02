@@ -45,6 +45,8 @@ function RootNavigator() {
       <Stack.Screen name="follows/[username]" options={{ headerShown: true, title: '' }} />
       <Stack.Screen name="edit-profile" options={{ headerShown: true, title: 'Edit profile' }} />
       <Stack.Screen name="search" options={{ headerShown: true, title: 'Search' }} />
+      <Stack.Screen name="dm/index" options={{ headerShown: true, title: 'Messages' }} />
+      <Stack.Screen name="dm/[username]" options={{ headerShown: true, title: '' }} />
     </Stack>
   );
 }

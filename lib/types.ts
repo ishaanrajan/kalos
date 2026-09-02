@@ -83,6 +83,29 @@ export type ActivityEvent =
   | { kind: 'comment'; actor: Profile; post_id: UUID; image_path: string; body: string; created_at: Timestamp }
   | { kind: 'follow'; actor: Profile; created_at: Timestamp };
 
+/**
+ * A single DM. Every thread is with "ishaan" — thread_user_id is always the
+ * non-ishaan participant, so it IS the thread's identity.
+ */
+export interface DMMessage {
+  id: UUID;
+  thread_user_id: UUID;
+  sender_id: UUID;
+  body: string;
+  created_at: Timestamp;
+}
+
+/** One row of ishaan's inbox: a thread plus its most recent message. */
+export interface DMThreadSummary {
+  thread_user_id: UUID;
+  username: string;
+  display_name: string | null;
+  avatar_path: string | null;
+  last_body: string;
+  last_sender_id: UUID;
+  last_created_at: Timestamp;
+}
+
 // ---------------------------------------------------------------------------
 // Filter engine contract
 // ---------------------------------------------------------------------------

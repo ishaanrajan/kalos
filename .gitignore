@@ -43,3 +43,6 @@ yarn-error.*
 # local env
 .env
 .env.local
+
+# Supabase CLI
+supabase/.temp/

@@ -7,7 +7,15 @@ import {
 } from '@tanstack/react-query';
 import { PHOTOS_BUCKET, supabase } from './supabase';
 import { useUserId } from './auth';
-import { PAGE_SIZE, type ActivityEvent, type Comment, type FeedPost, type Profile } from './types';
+import {
+  PAGE_SIZE,
+  type ActivityEvent,
+  type Comment,
+  type DMMessage,
+  type DMThreadSummary,
+  type FeedPost,
+  type Profile,
+} from './types';
 
 /**
  * Every list in this app is strictly reverse-chronological and paginated by
@@ -346,6 +354,58 @@ export function useSearchProfiles(q: string) {
       const { data, error } = await supabase.rpc('search_profiles', { q: q.trim(), lim: 20 });
       if (error) throw error;
       return (data ?? []) as Profile[];
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// DMs — every thread is with "ishaan". thread_user_id is always the
+// non-ishaan participant, so it doubles as the thread's identity: there is
+// nothing to look up or create, a user's thread is just "my own id."
+// ---------------------------------------------------------------------------
+
+export function useDMThread(threadUserId: string | undefined) {
+  return useQuery({
+    queryKey: ['dm-thread', threadUserId],
+    enabled: !!threadUserId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('dm_messages')
+        .select('*')
+        .eq('thread_user_id', threadUserId!)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return data as DMMessage[];
+    },
+  });
+}
+
+export function useSendDM(threadUserId: string | undefined) {
+  const qc = useQueryClient();
+  const userId = useUserId();
+  return useMutation({
+    mutationFn: async (body: string) => {
+      const { error } = await supabase
+        .from('dm_messages')
+        .insert({ thread_user_id: threadUserId!, sender_id: userId!, body });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId] });
+      qc.invalidateQueries({ queryKey: ['dm-inbox'] });
+    },
+  });
+}
+
+/** ishaan's inbox: one row per thread, most recently active first. Empty for
+ *  anyone else — enforced independently by the dm_inbox() function itself. */
+export function useDMInbox() {
+  return useQuery({
+    queryKey: ['dm-inbox'],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('dm_inbox', { lim: 50 });
+      if (error) throw error;
+      return (data ?? []) as DMThreadSummary[];
     },
   });
 }
