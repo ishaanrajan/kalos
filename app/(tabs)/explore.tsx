@@ -50,10 +50,17 @@ export default function Explore() {
     <SafeAreaView style={styles.root} edges={['top']}>
       <View style={styles.header}>
         <Text style={styles.title}>Explore</Text>
-        <Pressable onPress={() => router.push('/search')} hitSlop={12}>
-          <Feather name="search" size={20} color="#262626" />
-        </Pressable>
       </View>
+
+      <Pressable
+        style={styles.searchBar}
+        onPress={() => router.push('/search')}
+        accessibilityRole="search"
+        accessibilityLabel="Search accounts"
+      >
+        <Feather name="search" size={17} color="#8e8e8e" />
+        <Text style={styles.searchPlaceholder}>Search accounts</Text>
+      </Pressable>
 
       <PhotoGrid
         posts={posts}
@@ -96,11 +103,20 @@ const styles = StyleSheet.create({
     height: 44,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#dbdbdb',
   },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: '#efefef',
+    borderRadius: 10,
+  },
+  searchPlaceholder: { fontSize: 15, color: '#8e8e8e' },
   title: { fontSize: 17, fontWeight: '600', color: '#262626' },
   footerSpinner: { marginVertical: 24 },
   // Why this photo reached you — the thing that made 2015 Explore feel like a

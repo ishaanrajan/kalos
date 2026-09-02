@@ -63,7 +63,6 @@ export interface PostCardProps {
   onLike: () => void;
   onPressAuthor?: () => void;
   onPressComments?: () => void;
-  onPressShare?: () => void;
   onPressLikes?: () => void;
   onPressImage?: () => void;
   onPressOptions?: () => void;
@@ -162,7 +161,6 @@ export function PostCard({
   onLike,
   onPressAuthor,
   onPressComments,
-  onPressShare,
   onPressLikes,
   onPressImage,
   onPressOptions,
@@ -369,17 +367,6 @@ export function PostCard({
           style={styles.action}
         >
           <Feather name="message-circle" size={24} color={colors.text} />
-        </Pressable>
-
-        <Pressable
-          onPress={onPressShare}
-          disabled={!onPressShare}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel="Share"
-          style={styles.action}
-        >
-          <Feather name="send" size={22} color={colors.text} />
         </Pressable>
       </View>
 
