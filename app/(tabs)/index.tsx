@@ -10,12 +10,14 @@ import { useDeletePost, useHasUnreadDMs, useHomeFeed, useToggleLike } from '../.
 import { photoUrl, avatarUrl } from '../../lib/supabase';
 import { useAuth, useUserId } from '../../lib/auth';
 import { confirmDestructive } from '../../lib/actionSheet';
+import { useTheme } from '../../lib/theme';
 import type { FeedPost } from '../../lib/types';
 
 export default function Feed() {
   const router = useRouter();
   const userId = useUserId();
   const { profile } = useAuth();
+  const { colors } = useTheme();
   // Everyone's one DM thread is with "ishaan" specifically; ishaan gets the
   // inbox listing every thread instead of a single one.
   const dmHref = profile?.username === 'ishaan' ? '/dm' : '/dm/ishaan';
@@ -71,7 +73,7 @@ export default function Feed() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.center} edges={['top']}>
+      <SafeAreaView style={[styles.center, { backgroundColor: colors.surface }]} edges={['top']}>
         <ActivityIndicator />
       </SafeAreaView>
     );
@@ -79,7 +81,7 @@ export default function Feed() {
 
   if (isError) {
     return (
-      <SafeAreaView style={styles.center} edges={['top']}>
+      <SafeAreaView style={[styles.center, { backgroundColor: colors.surface }]} edges={['top']}>
         <EmptyState
           icon="alert-circle"
           title="Couldn't load your feed"
@@ -92,10 +94,10 @@ export default function Feed() {
   }
 
   return (
-    <SafeAreaView style={styles.root} edges={['top']}>
-      <View style={styles.header}>
+    <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <View style={styles.headerSpacer} />
-        <Text style={styles.wordmark}>Kalos</Text>
+        <Text style={[styles.wordmark, { color: colors.text }]}>Kalos</Text>
         <View style={styles.headerSpacer}>
           <Pressable
             onPress={() => router.push(dmHref)}
@@ -103,8 +105,8 @@ export default function Feed() {
             accessibilityRole="button"
             accessibilityLabel={hasUnreadDMs ? 'Messages, unread' : 'Messages'}
           >
-            <Feather name="send" size={22} color="#262626" />
-            {hasUnreadDMs ? <View style={styles.dot} /> : null}
+            <Feather name="send" size={22} color={colors.text} />
+            {hasUnreadDMs ? <View style={[styles.dot, { backgroundColor: colors.heart, borderColor: colors.surface }]} /> : null}
           </Pressable>
         </View>
       </View>
@@ -138,8 +140,8 @@ export default function Feed() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#fff' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  root: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: {
     height: 44,
     flexDirection: 'row',
@@ -147,10 +149,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#dbdbdb',
   },
   headerSpacer: { width: 24, alignItems: 'flex-end' },
-  wordmark: { fontSize: 24, fontWeight: '300', color: '#262626', letterSpacing: 0.5 },
+  wordmark: { fontSize: 24, fontWeight: '300', letterSpacing: 0.5 },
   dot: {
     position: 'absolute',
     top: -1,
@@ -158,9 +159,7 @@ const styles = StyleSheet.create({
     width: 9,
     height: 9,
     borderRadius: 5,
-    backgroundColor: '#ed4956',
     borderWidth: 1.5,
-    borderColor: '#fff',
   },
   footerSpinner: { marginVertical: 24 },
 });

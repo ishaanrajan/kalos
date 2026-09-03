@@ -10,7 +10,7 @@
  * the app, so components and screens can both depend on it freely.
  */
 
-import { Platform, StyleSheet } from 'react-native';
+import { Platform, StyleSheet, useColorScheme } from 'react-native';
 import type { TextStyle, ViewStyle } from 'react-native';
 
 // ---------------------------------------------------------------------------
@@ -249,22 +249,26 @@ export const darkTheme: Theme = {
 };
 
 /**
- * Resolve the active theme.
+ * Resolve the active theme from the OS colour scheme.
  *
- * Always light, deliberately, even though darkTheme exists and is fully
- * built out: only the shared components in components/ ever adopted
- * useTheme() to begin with, while every screen under app/ hardcodes light
- * colors (`#fff`, `#262626`, ...) directly in its own StyleSheet and never
- * asked the OS for its color scheme at all. Following useColorScheme() here
- * means a phone in Dark Mode gets components and screens disagreeing with
- * each other on the same screen -- a dark background behind hardcoded-light
- * text, or a hardcoded-light button behind theme-driven dark text -- which is
- * exactly the bug this was: white-on-white "Edit profile"/"Log out" buttons
- * sitting above a black grid. Finishing real dark mode means auditing every
- * screen to use these tokens instead of literals, which is a real project,
- * not a one-line fix -- until that happens, staying always-light is what
- * keeps every screen consistent with itself.
+ * Every screen under app/ was audited to pull its colors from here instead
+ * of hardcoding light-mode literals (`#fff`, `#262626`, ...) -- that
+ * mismatch, not a flaw in the palette itself, was the entire cause of the
+ * bug this once shipped as a stopgap for: components and screens
+ * disagreeing with each other on a phone in Dark Mode, producing
+ * white-on-white "Edit profile"/"Log out" buttons above a black grid.
+ *
+ * A few spots stay intentionally hardcoded rather than theme-driven, and
+ * should stay that way: content sitting on top of a photo (the heart burst,
+ * the Explore "reason" chip) or on the fixed-blue accent color (button
+ * labels/icons on a primary button) -- neither one is meant to follow the
+ * screen's own light/dark state.
+ *
+ * Returns one of two module-level constants, so the reference is stable
+ * across renders and safe to use in `useMemo`/`useCallback` dependency
+ * arrays.
  */
 export function useTheme(): Theme {
-  return lightTheme;
+  const scheme = useColorScheme();
+  return scheme === 'dark' ? darkTheme : lightTheme;
 }

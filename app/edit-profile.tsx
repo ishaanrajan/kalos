@@ -20,6 +20,7 @@ import { downscaleForPreview } from '../lib/bake';
 import { useUpdateProfile, type ProfilePatch } from '../lib/queries';
 import { avatarUrl, supabase, AVATARS_BUCKET } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
+import { useTheme } from '../lib/theme';
 
 const USERNAME_RULE = /^[a-z0-9._]{3,30}$/;
 
@@ -27,6 +28,7 @@ export default function EditProfile() {
   const router = useRouter();
   const { profile, session, refreshProfile } = useAuth();
   const updateProfile = useUpdateProfile();
+  const { colors } = useTheme();
 
   const [username, setUsername] = useState(profile?.username ?? '');
   const [displayName, setDisplayName] = useState(profile?.display_name ?? '');
@@ -104,7 +106,7 @@ export default function EditProfile() {
 
   if (!profile) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.center, { backgroundColor: colors.surface }]}>
         <ActivityIndicator />
       </View>
     );
@@ -112,7 +114,7 @@ export default function EditProfile() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.root}
+      style={[styles.root, { backgroundColor: colors.surface }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <Stack.Screen
@@ -123,7 +125,7 @@ export default function EditProfile() {
               <ActivityIndicator size="small" />
             ) : (
               <Pressable onPress={save} hitSlop={12}>
-                <Text style={styles.done}>Done</Text>
+                <Text style={[styles.done, { color: colors.accent }]}>Done</Text>
               </Pressable>
             ),
         }}
@@ -137,79 +139,79 @@ export default function EditProfile() {
             size={88}
           />
           <Pressable onPress={pickAvatar} hitSlop={8}>
-            <Text style={styles.changePhoto}>Change profile photo</Text>
+            <Text style={[styles.changePhoto, { color: colors.accent }]}>Change profile photo</Text>
           </Pressable>
         </View>
 
         <Field label="Username">
           <TextInput
-            style={styles.input}
+            style={[styles.input, { color: colors.text }]}
             value={username}
             onChangeText={setUsername}
             autoCapitalize="none"
             autoCorrect={false}
             maxLength={30}
             placeholder="username"
-            placeholderTextColor="#c7c7c7"
+            placeholderTextColor={colors.textSecondary}
           />
         </Field>
 
         <Field label="Name">
           <TextInput
-            style={styles.input}
+            style={[styles.input, { color: colors.text }]}
             value={displayName}
             onChangeText={setDisplayName}
             maxLength={60}
             placeholder="Your name"
-            placeholderTextColor="#c7c7c7"
+            placeholderTextColor={colors.textSecondary}
           />
         </Field>
 
         <Field label="Bio">
           <TextInput
-            style={[styles.input, styles.bioInput]}
+            style={[styles.input, styles.bioInput, { color: colors.text }]}
             value={bio}
             onChangeText={setBio}
             multiline
             maxLength={160}
             placeholder="Say something about yourself"
-            placeholderTextColor="#c7c7c7"
+            placeholderTextColor={colors.textSecondary}
           />
         </Field>
 
-        <Text style={styles.counter}>{bio.length}/160</Text>
+        <Text style={[styles.counter, { color: colors.textSecondary }]}>{bio.length}/160</Text>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  const { colors } = useTheme();
   return (
-    <View style={styles.field}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+    <View style={[styles.field, { borderBottomColor: colors.border }]}>
+      <Text style={[styles.fieldLabel, { color: colors.text }]}>{label}</Text>
       <View style={styles.fieldControl}>{children}</View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#fff' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  root: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   content: { paddingBottom: 40 },
-  done: { fontSize: 15, fontWeight: '600', color: '#3897f0' },
+  done: { fontSize: 15, fontWeight: '600' },
   avatarBlock: { alignItems: 'center', paddingVertical: 24, gap: 12 },
-  changePhoto: { fontSize: 14, fontWeight: '600', color: '#3897f0' },
+  changePhoto: { fontSize: 14, fontWeight: '600' },
   field: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#dbdbdb',
   },
-  fieldLabel: { width: 92, fontSize: 14, color: '#262626', paddingTop: 10 },
+  fieldLabel: { width: 92, fontSize: 14, paddingTop: 10 },
   fieldControl: { flex: 1 },
-  input: { fontSize: 15, color: '#262626', paddingVertical: 10 },
+  input: { fontSize: 15, paddingVertical: 10 },
   bioInput: { minHeight: 72, textAlignVertical: 'top' },
-  counter: { alignSelf: 'flex-end', paddingHorizontal: 16, paddingTop: 8, fontSize: 12, color: '#8e8e8e' },
+  counter: { alignSelf: 'flex-end', paddingHorizontal: 16, paddingTop: 8, fontSize: 12 },
 });

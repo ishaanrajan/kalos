@@ -4,6 +4,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { EmptyState } from '../../components/EmptyState';
 import { UserRow } from '../../components/UserRow';
 import { useFollowList, useProfile, type FollowListKind } from '../../lib/queries';
+import { useTheme } from '../../lib/theme';
 
 /**
  * The people behind the two numbers on a profile. One screen with a segmented
@@ -13,6 +14,7 @@ import { useFollowList, useProfile, type FollowListKind } from '../../lib/querie
 export default function Follows() {
   const router = useRouter();
   const { username, tab } = useLocalSearchParams<{ username: string; tab?: string }>();
+  const { colors } = useTheme();
 
   const [kind, setKind] = useState<FollowListKind>(
     tab === 'following' ? 'following' : 'followers'
@@ -23,7 +25,7 @@ export default function Follows() {
 
   if (loadingProfile) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.center, { backgroundColor: colors.surface }]}>
         <ActivityIndicator />
       </View>
     );
@@ -31,17 +33,17 @@ export default function Follows() {
 
   if (!profile) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.center, { backgroundColor: colors.surface }]}>
         <EmptyState icon="user-x" title="No such account" body={`Couldn't find @${username}.`} />
       </View>
     );
   }
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { backgroundColor: colors.surface }]}>
       <Stack.Screen options={{ title: profile.username }} />
 
-      <View style={styles.tabs}>
+      <View style={[styles.tabs, { borderBottomColor: colors.border }]}>
         <Tab
           label="Followers"
           count={profile.follower_count}
@@ -57,7 +59,7 @@ export default function Follows() {
       </View>
 
       {loadingList ? (
-        <View style={styles.center}>
+        <View style={[styles.center, { backgroundColor: colors.surface }]}>
           <ActivityIndicator />
         </View>
       ) : (
@@ -100,9 +102,19 @@ function Tab({
   active: boolean;
   onPress: () => void;
 }) {
+  const { colors } = useTheme();
   return (
-    <Pressable style={[styles.tab, active && styles.tabActive]} onPress={onPress}>
-      <Text style={[styles.tabText, active && styles.tabTextActive]}>
+    <Pressable
+      style={[styles.tab, { borderBottomColor: active ? colors.text : 'transparent' }]}
+      onPress={onPress}
+    >
+      <Text
+        style={[
+          styles.tabText,
+          { color: active ? colors.text : colors.textSecondary },
+          active && styles.tabTextActive,
+        ]}
+      >
         {count} {label}
       </Text>
     </Pressable>
@@ -110,22 +122,19 @@ function Tab({
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#fff' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  root: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   tabs: {
     flexDirection: 'row',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#dbdbdb',
   },
   tab: {
     flex: 1,
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'transparent',
   },
-  tabActive: { borderBottomColor: '#262626' },
-  tabText: { fontSize: 14, color: '#8e8e8e' },
-  tabTextActive: { color: '#262626', fontWeight: '600' },
+  tabText: { fontSize: 14 },
+  tabTextActive: { fontWeight: '600' },
   list: { paddingVertical: 8 },
 });

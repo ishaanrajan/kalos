@@ -27,6 +27,7 @@ import { bakeFilteredImage, downscaleForPreview } from '../../lib/bake';
 import { supabase, PHOTOS_BUCKET } from '../../lib/supabase';
 import { useUpdateProfile } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
+import { useTheme } from '../../lib/theme';
 
 const SCREEN = Dimensions.get('window').width;
 
@@ -71,6 +72,7 @@ export default function NewPost() {
   const qc = useQueryClient();
   const { session, profile, refreshProfile } = useAuth();
   const updateProfile = useUpdateProfile();
+  const { colors } = useTheme();
   // A brand-new account is forced here for its first post (see the redirect
   // in app/_layout.tsx); the tab bar has nowhere useful to go until then.
   const isForcedFirstPost = !!profile && !profile.onboarded;
@@ -249,12 +251,12 @@ export default function NewPost() {
     // Nothing but a bare screen while the sheet and picker are up — anything
     // drawn here would flash for the moment before they cover it.
     return (
-      <SafeAreaView style={styles.root} edges={['top']}>
+      <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         {hideTabBar}
         {blocked ? (
           <>
-            <View style={styles.header}>
-              <Text style={styles.title}>New post</Text>
+            <View style={[styles.header, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.title, { color: colors.text }]}>New post</Text>
             </View>
             <EmptyState
               icon="camera-off"
@@ -271,15 +273,15 @@ export default function NewPost() {
 
   if (step === 'filter') {
     return (
-      <SafeAreaView style={styles.root} edges={['top']}>
+      <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         {hideTabBar}
-        <View style={styles.header}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <Pressable onPress={discard} hitSlop={12}>
-            <Text style={styles.headerAction}>Cancel</Text>
+            <Text style={[styles.headerAction, { color: colors.text }]}>Cancel</Text>
           </Pressable>
-          <Text style={styles.title}>New post</Text>
+          <Text style={[styles.title, { color: colors.text }]}>New post</Text>
           <Pressable onPress={() => setStep('share')} hitSlop={12}>
-            <Text style={[styles.headerAction, styles.forward]}>Next</Text>
+            <Text style={[styles.headerAction, styles.forward, { color: colors.accent }]}>Next</Text>
           </Pressable>
         </View>
 
@@ -304,18 +306,20 @@ export default function NewPost() {
   }
 
   return (
-    <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+    <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
       {hideTabBar}
-      <View style={styles.header}>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
         <Pressable onPress={() => setStep('filter')} hitSlop={12} disabled={posting}>
-          <Text style={[styles.headerAction, posting && styles.disabled]}>Back</Text>
+          <Text style={[styles.headerAction, { color: colors.text }, posting && styles.disabled]}>
+            Back
+          </Text>
         </Pressable>
-        <Text style={styles.title}>New post</Text>
+        <Text style={[styles.title, { color: colors.text }]}>New post</Text>
         <Pressable onPress={share} hitSlop={12} disabled={posting}>
           {posting ? (
             <ActivityIndicator size="small" />
           ) : (
-            <Text style={[styles.headerAction, styles.forward]}>Share</Text>
+            <Text style={[styles.headerAction, styles.forward, { color: colors.accent }]}>Share</Text>
           )}
         </Pressable>
       </View>
@@ -330,12 +334,12 @@ export default function NewPost() {
             filter={filter}
             strength={1}
             size={72}
-            style={styles.thumb}
+            style={[styles.thumb, { backgroundColor: colors.imagePlaceholder }]}
           />
           <TextInput
-            style={styles.caption}
+            style={[styles.caption, { color: colors.text }]}
             placeholder="Write a caption…"
-            placeholderTextColor="#8e8e8e"
+            placeholderTextColor={colors.textSecondary}
             value={caption}
             onChangeText={setCaption}
             multiline
@@ -343,14 +347,16 @@ export default function NewPost() {
             maxLength={2200}
           />
         </View>
-        {!isNormal && <Text style={styles.appliedFilter}>{filter.name}</Text>}
+        {!isNormal && (
+          <Text style={[styles.appliedFilter, { color: colors.textSecondary }]}>{filter.name}</Text>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#fff' },
+  root: { flex: 1 },
   header: {
     height: 44,
     flexDirection: 'row',
@@ -358,21 +364,21 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#dbdbdb',
   },
-  title: { fontSize: 17, fontWeight: '600', color: '#262626' },
-  headerAction: { fontSize: 15, color: '#262626' },
-  forward: { fontWeight: '600', color: '#3897f0' },
+  title: { fontSize: 17, fontWeight: '600' },
+  headerAction: { fontSize: 15 },
+  forward: { fontWeight: '600' },
   disabled: { opacity: 0.4 },
+  // Always black, not theme-driven -- this is photo letterboxing, the same
+  // way a photo/video viewer's background stays black regardless of theme.
   preview: { backgroundColor: '#000' },
   shareBody: { flex: 1 },
   captionRow: { flexDirection: 'row', gap: 12, padding: 16 },
-  thumb: { borderRadius: 3, overflow: 'hidden', backgroundColor: '#efefef' },
-  caption: { flex: 1, fontSize: 15, color: '#262626', paddingTop: 2, minHeight: 72 },
+  thumb: { borderRadius: 3, overflow: 'hidden' },
+  caption: { flex: 1, fontSize: 15, paddingTop: 2, minHeight: 72 },
   appliedFilter: {
     paddingHorizontal: 16,
     fontSize: 12,
-    color: '#8e8e8e',
     textTransform: 'uppercase',
     letterSpacing: 0.4,
   },

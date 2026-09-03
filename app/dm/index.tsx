@@ -6,6 +6,7 @@ import { UserRow } from '../../components/UserRow';
 import { formatCommentAge } from '../../components/CommentRow';
 import { useDMInbox } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
+import { useTheme } from '../../lib/theme';
 
 /**
  * ishaan's inbox — every thread that's messaged him, most recent first.
@@ -16,6 +17,7 @@ export default function DMInbox() {
   const { profile: me } = useAuth();
   const router = useRouter();
   const { data: threads, isLoading } = useDMInbox();
+  const { colors } = useTheme();
 
   if (me && me.username !== 'ishaan') {
     return <Redirect href="/dm/ishaan" />;
@@ -23,7 +25,7 @@ export default function DMInbox() {
 
   if (isLoading) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.center, { backgroundColor: colors.surface }]}>
         <ActivityIndicator />
       </View>
     );
@@ -40,13 +42,13 @@ export default function DMInbox() {
               accessibilityRole="button"
               accessibilityLabel="New message"
             >
-              <Feather name="edit" size={20} color="#262626" />
+              <Feather name="edit" size={20} color={colors.text} />
             </Pressable>
           ),
         }}
       />
       <FlatList
-        style={styles.root}
+        style={[styles.root, { backgroundColor: colors.surface }]}
         data={threads ?? []}
         keyExtractor={(t) => t.thread_user_id}
         ListEmptyComponent={
@@ -63,11 +65,13 @@ export default function DMInbox() {
             onPress={() => router.push(`/dm/${item.username}`)}
             accessory={
               <View style={styles.preview}>
-                <Text style={styles.previewBody} numberOfLines={1}>
+                <Text style={[styles.previewBody, { color: colors.textSecondary }]} numberOfLines={1}>
                   {item.last_sender_id === me?.id ? 'You: ' : ''}
                   {item.last_body}
                 </Text>
-                <Text style={styles.previewAge}>{formatCommentAge(item.last_created_at)}</Text>
+                <Text style={[styles.previewAge, { color: colors.textSecondary }]}>
+                  {formatCommentAge(item.last_created_at)}
+                </Text>
               </View>
             }
           />
@@ -78,9 +82,9 @@ export default function DMInbox() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#fff' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  root: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   preview: { alignItems: 'flex-end', maxWidth: 110 },
-  previewBody: { fontSize: 12, color: '#8e8e8e' },
-  previewAge: { fontSize: 11, color: '#c7c7c7', marginTop: 2 },
+  previewBody: { fontSize: 12 },
+  previewAge: { fontSize: 11, marginTop: 2 },
 });

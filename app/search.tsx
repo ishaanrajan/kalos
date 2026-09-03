@@ -4,6 +4,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { EmptyState } from '../components/EmptyState';
 import { UserRow } from '../components/UserRow';
 import { useSearchProfiles } from '../lib/queries';
+import { useTheme } from '../lib/theme';
 
 /**
  * The only surface in the app that isn't graph-driven — you can look someone
@@ -19,14 +20,15 @@ export default function Search() {
   const isDmIntent = intent === 'dm';
   const [q, setQ] = useState('');
   const { data: results } = useSearchProfiles(q);
+  const { colors } = useTheme();
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { backgroundColor: colors.surface }]}>
       {isDmIntent && <Stack.Screen options={{ title: 'New message' }} />}
       <TextInput
-        style={styles.input}
+        style={[styles.input, { backgroundColor: colors.surfaceAlt, color: colors.text }]}
         placeholder={isDmIntent ? 'Search people to message' : 'Search accounts'}
-        placeholderTextColor="#8e8e8e"
+        placeholderTextColor={colors.textSecondary}
         autoCapitalize="none"
         autoCorrect={false}
         autoFocus
@@ -57,14 +59,12 @@ export default function Search() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#fff' },
+  root: { flex: 1 },
   input: {
     margin: 12,
-    backgroundColor: '#efefef',
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
-    color: '#262626',
   },
 });

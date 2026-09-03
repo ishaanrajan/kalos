@@ -22,6 +22,7 @@ import {
 
 import { downscaleForPreview } from '../lib/bake';
 import { FILTERS } from '../lib/filters';
+import { useTheme } from '../lib/theme';
 import type { Filter } from '../lib/types';
 import { FilterPreview, type FilterPreviewSource } from './FilterPreview';
 
@@ -57,6 +58,7 @@ const FilterThumb = React.memo(function FilterThumb({
   onSelect,
 }: ThumbProps): React.JSX.Element {
   const handlePress = useCallback(() => onSelect(filter.name, filter), [onSelect, filter]);
+  const { colors } = useTheme();
 
   return (
     <Pressable
@@ -69,8 +71,8 @@ const FilterThumb = React.memo(function FilterThumb({
       <View
         style={[
           styles.thumbFrame,
-          { width: size, height: size },
-          selected && styles.thumbFrameSelected,
+          { width: size, height: size, backgroundColor: colors.imagePlaceholder },
+          { borderColor: selected ? colors.accent : 'transparent' },
         ]}
       >
         <FilterPreview
@@ -83,7 +85,11 @@ const FilterThumb = React.memo(function FilterThumb({
       </View>
       <Text
         numberOfLines={1}
-        style={[styles.label, selected && styles.labelSelected]}
+        style={[
+          styles.label,
+          { color: selected ? colors.accent : colors.textSecondary },
+          selected && styles.labelSelected,
+        ]}
         allowFontScaling={false}
       >
         {filter.name}
@@ -100,6 +106,7 @@ export function FilterStrip({
   thumbSize = DEFAULT_THUMB_SIZE,
   style,
 }: FilterStripProps): React.JSX.Element {
+  const { colors } = useTheme();
   const source: FilterPreviewSource = image ?? uri ?? null;
 
   // When handed a URI, make our own tiny copy first. When handed an SkImage we
@@ -169,7 +176,7 @@ export function FilterStrip({
       maxToRenderPerBatch={4}
       windowSize={5}
       removeClippedSubviews
-      style={[styles.list, style]}
+      style={[styles.list, { backgroundColor: colors.background }, style]}
       contentContainerStyle={styles.content}
     />
   );
@@ -178,7 +185,6 @@ export function FilterStrip({
 const styles = StyleSheet.create({
   list: {
     flexGrow: 0,
-    backgroundColor: '#FAFAFA',
   },
   content: {
     paddingVertical: 10,
@@ -192,21 +198,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderRadius: 3,
     borderWidth: 2,
-    borderColor: 'transparent',
-    backgroundColor: '#EFEFEF',
-  },
-  thumbFrameSelected: {
-    borderColor: '#3897F0',
   },
   label: {
     marginTop: 6,
     fontSize: 10,
     letterSpacing: 0.4,
-    color: '#8E8E8E',
     textTransform: 'uppercase',
   },
   labelSelected: {
-    color: '#3897F0',
     fontWeight: '600',
   },
 });

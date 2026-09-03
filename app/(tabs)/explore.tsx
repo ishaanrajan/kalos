@@ -9,6 +9,7 @@ import { EndOfFeed } from '../../components/EndOfFeed';
 import { useExploreFeed } from '../../lib/queries';
 import { photoUrl } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
+import { useTheme } from '../../lib/theme';
 
 /** Posts of your own required before Explore unlocks. */
 const POSTS_TO_UNLOCK = 5;
@@ -24,6 +25,7 @@ const POSTS_TO_UNLOCK = 5;
 export default function Explore() {
   const router = useRouter();
   const { profile } = useAuth();
+  const { colors } = useTheme();
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useExploreFeed();
 
@@ -32,9 +34,9 @@ export default function Explore() {
   if (profile && profile.post_count < POSTS_TO_UNLOCK) {
     const remaining = POSTS_TO_UNLOCK - profile.post_count;
     return (
-      <SafeAreaView style={styles.root} edges={['top']}>
+      <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         <View style={styles.header}>
-          <Text style={styles.title}>Explore</Text>
+          <Text style={[styles.title, { color: colors.text }]}>Explore</Text>
         </View>
         <EmptyState
           icon="lock"
@@ -49,7 +51,7 @@ export default function Explore() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.center} edges={['top']}>
+      <SafeAreaView style={[styles.center, { backgroundColor: colors.surface }]} edges={['top']}>
         <ActivityIndicator />
       </SafeAreaView>
     );
@@ -57,7 +59,7 @@ export default function Explore() {
 
   if (isError) {
     return (
-      <SafeAreaView style={styles.center} edges={['top']}>
+      <SafeAreaView style={[styles.center, { backgroundColor: colors.surface }]} edges={['top']}>
         <EmptyState
           icon="alert-circle"
           title="Couldn't load Explore"
@@ -70,19 +72,19 @@ export default function Explore() {
   }
 
   return (
-    <SafeAreaView style={styles.root} edges={['top']}>
+    <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
       <View style={styles.header}>
-        <Text style={styles.title}>Explore</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Explore</Text>
       </View>
 
       <Pressable
-        style={styles.searchBar}
+        style={[styles.searchBar, { backgroundColor: colors.surfaceAlt }]}
         onPress={() => router.push('/search')}
         accessibilityRole="search"
         accessibilityLabel="Search accounts"
       >
-        <Feather name="search" size={17} color="#8e8e8e" />
-        <Text style={styles.searchPlaceholder}>Search accounts</Text>
+        <Feather name="search" size={17} color={colors.textSecondary} />
+        <Text style={[styles.searchPlaceholder, { color: colors.textSecondary }]}>Search accounts</Text>
       </Pressable>
 
       <PhotoGrid
@@ -120,8 +122,8 @@ export default function Explore() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#fff' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  root: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: {
     height: 44,
     flexDirection: 'row',
@@ -136,14 +138,15 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     paddingHorizontal: 12,
     paddingVertical: 9,
-    backgroundColor: '#efefef',
     borderRadius: 10,
   },
-  searchPlaceholder: { fontSize: 15, color: '#8e8e8e' },
-  title: { fontSize: 17, fontWeight: '600', color: '#262626' },
+  searchPlaceholder: { fontSize: 15 },
+  title: { fontSize: 17, fontWeight: '600' },
   footerSpinner: { marginVertical: 24 },
   // Why this photo reached you — the thing that made 2015 Explore feel like a
-  // place your friends had been, rather than a feed of strangers.
+  // place your friends had been, rather than a feed of strangers. Always a
+  // dark scrim with white text/icon: it sits on top of an arbitrary photo,
+  // not the app's own chrome, so it doesn't follow the theme.
   reason: {
     position: 'absolute',
     left: 4,

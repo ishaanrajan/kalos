@@ -20,6 +20,7 @@ import { useAddComment, useComments, useDeletePost, usePost, useToggleLike } fro
 import { avatarUrl, photoUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
 import { confirmDestructive } from '../../lib/actionSheet';
+import { useTheme } from '../../lib/theme';
 
 export default function PostScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -32,10 +33,11 @@ export default function PostScreen() {
   const deletePost = useDeletePost();
   const [draft, setDraft] = useState('');
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
 
   if (isLoading || !post) {
     return (
-      <View style={styles.center}>
+      <View style={[styles.center, { backgroundColor: colors.surface }]}>
         {isLoading ? (
           <ActivityIndicator />
         ) : (
@@ -66,7 +68,7 @@ export default function PostScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.root}
+      style={[styles.root, { backgroundColor: colors.surface }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       // See the same fix in app/dm/[username].tsx -- 90 was a hardcoded
       // guess at the native header's height, wrong on devices whose
@@ -102,18 +104,25 @@ export default function PostScreen() {
         )}
       />
 
-      <View style={[styles.composer, { paddingBottom: Math.max(10, insets.bottom) }]}>
+      <View
+        style={[
+          styles.composer,
+          { paddingBottom: Math.max(10, insets.bottom), borderTopColor: colors.border },
+        ]}
+      >
         <TextInput
-          style={styles.input}
+          style={[styles.input, { color: colors.text }]}
           placeholder="Add a comment…"
-          placeholderTextColor="#8e8e8e"
+          placeholderTextColor={colors.textSecondary}
           value={draft}
           onChangeText={setDraft}
           onSubmitEditing={submit}
           returnKeyType="send"
         />
         <Pressable onPress={submit} disabled={!draft.trim() || addComment.isPending} hitSlop={10}>
-          <Text style={[styles.post, !draft.trim() && styles.postDisabled]}>Post</Text>
+          <Text style={[styles.post, { color: colors.accent }, !draft.trim() && styles.postDisabled]}>
+            Post
+          </Text>
         </Pressable>
       </View>
     </KeyboardAvoidingView>
@@ -121,8 +130,8 @@ export default function PostScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#fff' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
+  root: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   composer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -130,9 +139,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#dbdbdb',
   },
-  input: { flex: 1, fontSize: 14, color: '#262626', paddingVertical: 6 },
-  post: { color: '#3897f0', fontWeight: '600', fontSize: 14 },
+  input: { flex: 1, fontSize: 14, paddingVertical: 6 },
+  post: { fontWeight: '600', fontSize: 14 },
   postDisabled: { opacity: 0.4 },
 });

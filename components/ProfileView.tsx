@@ -6,6 +6,7 @@ import { PhotoGrid } from './PhotoGrid';
 import { EmptyState } from './EmptyState';
 import { useIsFollowing, useProfilePosts, useToggleFollow } from '../lib/queries';
 import { avatarUrl, photoUrl } from '../lib/supabase';
+import { useTheme } from '../lib/theme';
 import type { Profile } from '../lib/types';
 
 interface Props {
@@ -20,9 +21,10 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
   const { data: posts, isLoading } = useProfilePosts(profile.id);
   const { data: following } = useIsFollowing(isSelf ? undefined : profile.id);
   const toggleFollow = useToggleFollow();
+  const { colors } = useTheme();
 
   const header = (
-    <View style={styles.header}>
+    <View style={[styles.header, { backgroundColor: colors.surface }]}>
       <View style={styles.topRow}>
         <Avatar url={avatarUrl(profile.avatar_path)} username={profile.username} size={80} />
         <View style={styles.stats}>
@@ -42,8 +44,10 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
 
       {(profile.display_name || profile.bio) && (
         <View style={styles.bioBlock}>
-          {profile.display_name && <Text style={styles.displayName}>{profile.display_name}</Text>}
-          {profile.bio && <Text style={styles.bio}>{profile.bio}</Text>}
+          {profile.display_name && (
+            <Text style={[styles.displayName, { color: colors.text }]}>{profile.display_name}</Text>
+          )}
+          {profile.bio && <Text style={[styles.bio, { color: colors.text }]}>{profile.bio}</Text>}
         </View>
       )}
 
@@ -106,10 +110,11 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
 
 /** Tappable when there's a list behind it. Post count just scrolls the grid. */
 function Stat({ value, label, onPress }: { value: number; label: string; onPress?: () => void }) {
+  const { colors } = useTheme();
   const body = (
     <>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={[styles.statValue, { color: colors.text }]}>{value}</Text>
+      <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{label}</Text>
     </>
   );
 
@@ -130,15 +135,15 @@ function Stat({ value, label, onPress }: { value: number; label: string; onPress
 
 const styles = StyleSheet.create({
   gridLoading: { alignItems: 'center', paddingVertical: 48 },
-  header: { paddingHorizontal: 16, paddingTop: 16, backgroundColor: '#fff' },
+  header: { paddingHorizontal: 16, paddingTop: 16 },
   topRow: { flexDirection: 'row', alignItems: 'center' },
   stats: { flex: 1, flexDirection: 'row', justifyContent: 'space-around', marginLeft: 16 },
   stat: { alignItems: 'center' },
-  statValue: { fontSize: 17, fontWeight: '600', color: '#262626' },
-  statLabel: { fontSize: 13, color: '#8e8e8e', marginTop: 2 },
+  statValue: { fontSize: 17, fontWeight: '600' },
+  statLabel: { fontSize: 13, marginTop: 2 },
   bioBlock: { marginTop: 14 },
-  displayName: { fontSize: 14, fontWeight: '600', color: '#262626' },
-  bio: { fontSize: 14, color: '#262626', marginTop: 2, lineHeight: 19 },
+  displayName: { fontSize: 14, fontWeight: '600' },
+  bio: { fontSize: 14, marginTop: 2, lineHeight: 19 },
   actions: { flexDirection: 'row', gap: 8, marginTop: 16, marginBottom: 16 },
   action: { flex: 1 },
 });

@@ -10,6 +10,7 @@ import { downscaleForPreview } from '../lib/bake';
 import { useUpdateProfile } from '../lib/queries';
 import { supabase, AVATARS_BUCKET } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
+import { useTheme } from '../lib/theme';
 
 /**
  * Step one of forced onboarding for a new account — see app/_layout.tsx for
@@ -21,6 +22,7 @@ export default function OnboardingAvatar() {
   const updateProfile = useUpdateProfile();
   const [pendingAvatar, setPendingAvatar] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const { colors } = useTheme();
 
   const pick = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -62,10 +64,10 @@ export default function OnboardingAvatar() {
   }, [pendingAvatar, session, updateProfile, refreshProfile]);
 
   return (
-    <SafeAreaView style={styles.root}>
+    <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]}>
       <View style={styles.content}>
-        <Text style={styles.title}>Add a profile photo</Text>
-        <Text style={styles.body}>
+        <Text style={[styles.title, { color: colors.text }]}>Add a profile photo</Text>
+        <Text style={[styles.body, { color: colors.textSecondary }]}>
           So people know it's really you. This is the one thing on Kalos everyone has.
         </Text>
 
@@ -73,38 +75,47 @@ export default function OnboardingAvatar() {
           {pendingAvatar ? (
             <Avatar url={pendingAvatar} username={profile?.username ?? ''} size={140} />
           ) : (
-            <View style={styles.placeholder}>
-              <Feather name="camera" size={32} color="#8e8e8e" />
+            <View style={[styles.placeholder, { backgroundColor: colors.surfaceAlt }]}>
+              <Feather name="camera" size={32} color={colors.textSecondary} />
             </View>
           )}
-          <View style={styles.badge}>
-            <Feather name="edit-2" size={14} color="#fff" />
+          <View style={[styles.badge, { backgroundColor: colors.accent, borderColor: colors.surface }]}>
+            <Feather name="edit-2" size={14} color={'#ffffff'} />
           </View>
         </Pressable>
 
         <Pressable onPress={pick} hitSlop={8}>
-          <Text style={styles.pickText}>{pendingAvatar ? 'Choose a different photo' : 'Choose a photo'}</Text>
+          <Text style={[styles.pickText, { color: colors.accent }]}>
+            {pendingAvatar ? 'Choose a different photo' : 'Choose a photo'}
+          </Text>
         </Pressable>
       </View>
 
       <Pressable
-        style={[styles.continueButton, !pendingAvatar && styles.continueDisabled]}
+        style={[
+          styles.continueButton,
+          { backgroundColor: colors.accent },
+          !pendingAvatar && styles.continueDisabled,
+        ]}
         onPress={save}
         disabled={!pendingAvatar || saving}
       >
-        {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.continueText}>Continue</Text>}
+        {saving ? (
+          <ActivityIndicator color={'#ffffff'} />
+        ) : (
+          <Text style={[styles.continueText, { color: '#ffffff' }]}>Continue</Text>
+        )}
       </Pressable>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#fff', justifyContent: 'space-between' },
+  root: { flex: 1, justifyContent: 'space-between' },
   content: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
-  title: { fontSize: 22, fontWeight: '600', color: '#262626', textAlign: 'center' },
+  title: { fontSize: 22, fontWeight: '600', textAlign: 'center' },
   body: {
     fontSize: 14,
-    color: '#8e8e8e',
     textAlign: 'center',
     marginTop: 8,
     marginBottom: 32,
@@ -115,7 +126,6 @@ const styles = StyleSheet.create({
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: '#efefef',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -126,15 +136,12 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#3897f0',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#fff',
   },
-  pickText: { fontSize: 14, fontWeight: '600', color: '#3897f0', marginTop: 20 },
+  pickText: { fontSize: 14, fontWeight: '600', marginTop: 20 },
   continueButton: {
-    backgroundColor: '#3897f0',
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',
@@ -142,5 +149,5 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   continueDisabled: { opacity: 0.4 },
-  continueText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  continueText: { fontWeight: '600', fontSize: 15 },
 });
