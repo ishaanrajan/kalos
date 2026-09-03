@@ -35,7 +35,10 @@ function RootNavigator() {
     // Forced onboarding for a brand-new account (0010_onboarding.sql) --
     // never true for an existing account, since onboarded defaults to true
     // for every row that isn't freshly created by handle_new_user().
-    if (session && profile && !profile.onboarded) {
+    // Checked as `=== false`, not `!profile.onboarded`: if the migration
+    // hasn't run yet, the column is simply absent from the row and reads as
+    // undefined, which must NOT be treated the same as false here.
+    if (session && profile && profile.onboarded === false) {
       if (!profile.avatar_path) {
         if (segments[0] !== 'onboarding-avatar') router.replace('/onboarding-avatar');
         return;
