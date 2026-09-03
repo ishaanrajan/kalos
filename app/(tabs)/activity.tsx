@@ -7,6 +7,7 @@ import { Avatar } from '../../components/Avatar';
 import { EmptyState } from '../../components/EmptyState';
 import { useActivity, useMarkActivityRead } from '../../lib/queries';
 import { avatarUrl, photoUrl } from '../../lib/supabase';
+import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
 import type { ActivityEvent } from '../../lib/types';
 
@@ -18,13 +19,17 @@ import type { ActivityEvent } from '../../lib/types';
 export default function Activity() {
   const router = useRouter();
   const { data, isLoading } = useActivity();
+  const { refreshProfile } = useAuth();
   const markRead = useMarkActivityRead();
   const { colors } = useTheme();
 
   // Opening this tab is what "read" means here — once per mount is enough,
-  // deliberately not reacting to markRead's own identity.
+  // deliberately not reacting to markRead's own identity. AuthContext's
+  // profile is separate state from react-query's cache, so the mutation's
+  // own invalidation doesn't touch it -- refresh it explicitly or the red
+  // dot (driven by profile.activity_read_at) never clears.
   useEffect(() => {
-    markRead.mutate();
+    markRead.mutate(undefined, { onSuccess: () => refreshProfile() });
   }, []);
 
   if (isLoading) {

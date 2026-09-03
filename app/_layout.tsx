@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '../lib/auth';
+import { useTheme } from '../lib/theme';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,6 +27,7 @@ function RootNavigator() {
   const { session, profile, loading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const { colors } = useTheme();
 
   useEffect(() => {
     if (loading) return;
@@ -95,7 +97,15 @@ function RootNavigator() {
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false, headerBackButtonDisplayMode: 'minimal' }}>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        headerBackButtonDisplayMode: 'minimal',
+        headerStyle: { backgroundColor: colors.surface },
+        headerTintColor: colors.text,
+        headerTitleStyle: { color: colors.text },
+      }}
+    >
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="onboarding-avatar" />

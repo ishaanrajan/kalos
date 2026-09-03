@@ -105,6 +105,7 @@ const styles = StyleSheet.create({
   },
   action: {
     marginTop: spacing.xl,
+    alignSelf: 'center',
   },
 });
 
