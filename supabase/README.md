@@ -61,6 +61,7 @@ so re-applying a file after a tweak is safe.
 | `0007_revoke_default_grants.sql` | closes the default-privilege gap that let a client forge `like_count` |
 | `0008_dm.sql` | `dm_messages`, `dm_inbox()` — every thread is with "ishaan" |
 | `0009_notifications.sql` | `push_tokens`, `dm_messages.read_at`, `profiles.activity_read_at` — see [Push notifications](#5-push-notifications) below for the Edge Function + webhooks this depends on |
+| `0011_drake_bot.sql` | `pg_cron` schedule that calls the `daily-drake` Edge Function once a day — see [Drake bot](#6-drake-bot) below |
 
 ### Option A — SQL editor (no tooling required)
 
@@ -198,6 +199,33 @@ those up for you. This is also why the four triggers don't live in
 `supabase_functions.http_request` SQL, but that fails with
 `schema "supabase_functions" does not exist` on any project that has never
 created a webhook through the UI before.
+
+---
+
+## 6. Drake bot
+
+A joke account, `@prosecco_daddy`, that posts a random Drake photo and swaps
+its own avatar once a day. Same shape as push notifications: an Edge Function
+plus a piece of Dashboard-only setup, here `pg_cron` instead of a Database
+Webhook, since this fires on a timer rather than a table insert.
+
+1. **Deploy the Edge Function.** Dashboard → **Edge Functions** → **New
+   Function**, name it exactly `daily-drake`, paste in
+   `supabase/functions/daily-drake/index.ts`. Turn **off** "Enforce JWT
+   verification" — `pg_cron` calls it the same way a Database Webhook does,
+   with no user JWT to verify.
+2. **Enable `pg_cron`.** Dashboard → **Database** → **Extensions** → search
+   `pg_cron` → enable. (`pg_net` should already be on from step 5 above.)
+3. **Run `0011_drake_bot.sql`** in the SQL editor. It schedules the function
+   to run daily at 15:30 UTC (~9:30am Mountain).
+4. **Test it once by hand** before trusting the schedule: SQL editor →
+   `select net.http_post(url := 'https://snmnhlxletlgeorzwbvt.supabase.co/functions/v1/daily-drake', headers := '{"Content-Type": "application/json"}'::jsonb);`
+   — then check `@prosecco_daddy`'s profile in the app for a new post and a
+   changed avatar.
+
+To change the daily time, edit the cron expression in
+`0011_drake_bot.sql` and re-run the file — `cron.schedule` upserts by job
+name, so this updates the existing schedule rather than creating a second one.
 
 ---
 
