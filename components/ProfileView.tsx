@@ -1,4 +1,4 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Avatar } from './Avatar';
 import { Button } from './Button';
@@ -72,7 +72,16 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
             variant={following ? 'outline' : 'primary'}
             label={following ? 'Following' : 'Follow'}
             onPress={() =>
-              toggleFollow.mutate({ profileId: profile.id, following: following ?? false })
+              toggleFollow.mutate(
+                { profileId: profile.id, following: following ?? false },
+                {
+                  onError: (e) =>
+                    Alert.alert(
+                      following ? 'Could not unfollow' : 'Could not follow',
+                      e instanceof Error ? e.message : undefined
+                    ),
+                }
+              )
             }
             disabled={toggleFollow.isPending}
             style={styles.action}

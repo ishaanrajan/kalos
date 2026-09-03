@@ -99,7 +99,10 @@ export default function NewPost() {
   const { colors } = useTheme();
   // A brand-new account is forced here for its first post (see the redirect
   // in app/_layout.tsx); the tab bar has nowhere useful to go until then.
-  const isForcedFirstPost = !!profile && !profile.onboarded;
+  // === false, not !profile.onboarded -- an undefined column (migration not
+  // yet run) must not be treated as forced-onboarding, same reasoning as
+  // the redirect in app/_layout.tsx.
+  const isForcedFirstPost = !!profile && profile.onboarded === false;
 
   const [picked, setPicked] = useState<Picked | null>(null);
   const [step, setStep] = useState<Step>('filter');
@@ -203,6 +206,12 @@ export default function NewPost() {
   const share = useCallback(async () => {
     if (!picked || !session) return;
     setPosting(true);
+
+    // The post itself lives or dies here. Once the insert succeeds, the post
+    // is real and done -- nothing after this point is allowed to make it
+    // look like posting failed, because a user told "could not post" will
+    // reasonably retry, and retrying re-runs this whole function, which
+    // would upload a second copy and insert a second row.
     try {
       const baked = await bakeFilteredImage({
         uri: picked.uri,
@@ -228,27 +237,38 @@ export default function NewPost() {
         filter_name: isNormal ? null : filter.name,
       });
       if (insertError) throw insertError;
-
-      qc.invalidateQueries({ queryKey: ['home_feed'] });
-      qc.invalidateQueries({ queryKey: ['profile-posts'] });
-      qc.invalidateQueries({ queryKey: ['profile'] });
-
-      if (isForcedFirstPost) {
-        await updateProfile.mutateAsync({ onboarded: true });
-      }
-      // AuthProvider's profile is separate state from the react-query cache
-      // above -- the redirect in app/_layout.tsx reads post_count and
-      // onboarded off of it, so it needs its own explicit refresh.
-      await refreshProfile();
-
-      setPicked(null);
-      setCaption('');
-      router.replace('/(tabs)');
     } catch (e) {
       Alert.alert('Could not post', e instanceof Error ? e.message : 'Something went wrong.');
-    } finally {
       setPosting(false);
+      return;
     }
+
+    qc.invalidateQueries({ queryKey: ['home_feed'] });
+    qc.invalidateQueries({ queryKey: ['profile-posts'] });
+    qc.invalidateQueries({ queryKey: ['profile'] });
+    setPicked(null);
+    setCaption('');
+    router.replace('/(tabs)');
+
+    // Best-effort cleanup from here on -- a failure here must never be
+    // reported as "could not post" (it already did) and must never block
+    // leaving this screen. If the flag flip below fails, the final
+    // refreshProfile() still picks up the real post_count from the DB, and
+    // app/_layout.tsx's redirect only re-forces this screen while
+    // post_count is 0 -- so a failed flag flip alone can no longer strand
+    // anyone here, it just retries itself next time onboarding-gated code runs.
+    if (isForcedFirstPost) {
+      try {
+        await updateProfile.mutateAsync({ onboarded: true });
+      } catch (e) {
+        console.warn('onboarding flag flip failed, will self-heal on next post', e);
+      }
+    }
+    // AuthProvider's profile is separate state from the react-query cache
+    // above -- the redirect in app/_layout.tsx reads post_count and
+    // onboarded off of it, so it needs its own explicit refresh.
+    await refreshProfile();
+    setPosting(false);
   }, [
     picked,
     session,

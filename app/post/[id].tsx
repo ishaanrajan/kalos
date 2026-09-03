@@ -50,8 +50,14 @@ export default function PostScreen() {
   function submit() {
     const body = draft.trim();
     if (!body) return;
-    addComment.mutate(body);
     setDraft('');
+    addComment.mutate(body, {
+      onError: (e) => {
+        // Give the typed comment back instead of silently losing it.
+        setDraft(body);
+        Alert.alert('Could not post comment', e instanceof Error ? e.message : undefined);
+      },
+    });
   }
 
   function deleteThisPost() {

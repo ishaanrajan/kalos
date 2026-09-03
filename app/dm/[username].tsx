@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -48,8 +49,14 @@ export default function DMThread() {
   function submit() {
     const body = draft.trim();
     if (!body) return;
-    sendDM.mutate(body);
     setDraft('');
+    sendDM.mutate(body, {
+      onError: (e) => {
+        // Give the typed message back instead of silently losing it.
+        setDraft(body);
+        Alert.alert('Could not send message', e instanceof Error ? e.message : undefined);
+      },
+    });
   }
 
   if (otherLoading || !me || !other) {
