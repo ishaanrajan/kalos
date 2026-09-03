@@ -62,7 +62,13 @@ export default function DMThread() {
     <KeyboardAvoidingView
       style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={90}
+      // The native header sits above this view and isn't part of its own
+      // layout box, so KeyboardAvoidingView has no way to know its height on
+      // its own. 44 is the iOS nav bar's fixed content height; insets.top
+      // covers the rest (status bar / Dynamic Island), and varies by device
+      // -- a hardcoded offset here was previously too short on some phones,
+      // leaving the composer cramped against the keyboard.
+      keyboardVerticalOffset={insets.top + 44}
     >
       <Stack.Screen options={{ title: other.username }} />
 

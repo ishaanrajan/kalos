@@ -68,7 +68,10 @@ export default function PostScreen() {
     <KeyboardAvoidingView
       style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={90}
+      // See the same fix in app/dm/[username].tsx -- 90 was a hardcoded
+      // guess at the native header's height, wrong on devices whose
+      // safe-area-top differs (Dynamic Island vs. notch vs. none).
+      keyboardVerticalOffset={insets.top + 44}
     >
       <FlatList
         data={comments ?? []}
