@@ -1,5 +1,6 @@
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Updates from 'expo-updates';
 import { ProfileView } from '../../components/ProfileView';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
@@ -22,6 +23,14 @@ export default function MyProfile() {
         <Text style={[styles.title, { color: colors.text }]}>{profile.username}</Text>
       </View>
       <ProfileView profile={profile} isSelf onSignOut={signOut} />
+      {/* Purely diagnostic -- what update this exact device is running, since
+          "did the update land" was otherwise unanswerable without a device
+          log. Safe to remove once OTA delivery is trusted again. */}
+      <Text style={[styles.buildTag, { color: colors.textSecondary }]}>
+        {Updates.isEmbeddedLaunch ? 'embedded build' : `update ${Updates.updateId?.slice(0, 8) ?? '?'}`}
+        {' · '}
+        {Updates.createdAt ? Updates.createdAt.toLocaleString() : 'no update timestamp'}
+      </Text>
     </SafeAreaView>
   );
 }
@@ -36,4 +45,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   title: { fontSize: 17, fontWeight: '600' },
+  buildTag: {
+    position: 'absolute',
+    bottom: 6,
+    alignSelf: 'center',
+    fontSize: 10,
+  },
 });
