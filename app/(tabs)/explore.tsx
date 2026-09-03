@@ -30,14 +30,32 @@ export default function Explore() {
     useExploreFeed();
 
   const posts = useMemo(() => data?.pages.flat() ?? [], [data]);
+  const locked = !!profile && profile.post_count < POSTS_TO_UNLOCK;
 
-  if (profile && profile.post_count < POSTS_TO_UNLOCK) {
+  // The search bar is the only way into /search that isn't the DM compose
+  // button -- it stays reachable even while the photo grid itself is locked,
+  // so a new account can still find and follow people during the 5-post
+  // ramp-up instead of being cut off from the rest of the app entirely.
+  const searchBar = (
+    <Pressable
+      style={[styles.searchBar, { backgroundColor: colors.surfaceAlt }]}
+      onPress={() => router.push('/search')}
+      accessibilityRole="search"
+      accessibilityLabel="Search accounts"
+    >
+      <Feather name="search" size={17} color={colors.textSecondary} />
+      <Text style={[styles.searchPlaceholder, { color: colors.textSecondary }]}>Search accounts</Text>
+    </Pressable>
+  );
+
+  if (locked) {
     const remaining = POSTS_TO_UNLOCK - profile.post_count;
     return (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.text }]}>Explore</Text>
         </View>
+        {searchBar}
         <EmptyState
           icon="lock"
           title="Explore is locked"
@@ -77,15 +95,7 @@ export default function Explore() {
         <Text style={[styles.title, { color: colors.text }]}>Explore</Text>
       </View>
 
-      <Pressable
-        style={[styles.searchBar, { backgroundColor: colors.surfaceAlt }]}
-        onPress={() => router.push('/search')}
-        accessibilityRole="search"
-        accessibilityLabel="Search accounts"
-      >
-        <Feather name="search" size={17} color={colors.textSecondary} />
-        <Text style={[styles.searchPlaceholder, { color: colors.textSecondary }]}>Search accounts</Text>
-      </Pressable>
+      {searchBar}
 
       <PhotoGrid
         posts={posts}
