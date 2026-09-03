@@ -69,6 +69,9 @@ export function useActivity() {
       if (error) throw error;
       return (data ?? []) as ActivityEvent[];
     },
+    // useHasUnreadActivity() derives its badge from this -- it needs to
+    // catch up the moment you return to the app, not wait out staleTime.
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -447,6 +450,10 @@ export function useHasUnreadDMs() {
       if (error) throw error;
       return (count ?? 0) > 0;
     },
+    // The app-wide default disables this, but the badge needs to catch
+    // "someone messaged me while I was on another app" the moment you come
+    // back, not on some arbitrary staleTime window.
+    refetchOnWindowFocus: true,
   });
 }
 

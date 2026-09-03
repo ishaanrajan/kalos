@@ -1,11 +1,12 @@
 import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, AppState, View } from 'react-native';
+import type { AppStateStatus } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '../lib/auth';
 
 const queryClient = new QueryClient({
@@ -13,6 +14,13 @@ const queryClient = new QueryClient({
     queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false },
   },
 });
+
+// React Query's focus manager has no idea what "foreground" means on native
+// until it's told -- without this, refetchOnWindowFocus is silently a no-op
+// on iOS/Android, unlike on web where it's automatic.
+function onAppStateChange(status: AppStateStatus) {
+  focusManager.setFocused(status === 'active');
+}
 
 function RootNavigator() {
   const { session, profile, loading } = useAuth();
@@ -60,6 +68,23 @@ function RootNavigator() {
     });
     return () => sub.remove();
   }, [router]);
+
+  // A push arriving while the app is already open is the one case AppState
+  // focus can't catch on its own -- nothing "returns to foreground" if you
+  // never left. Refresh the badge-driving queries directly when that happens.
+  useEffect(() => {
+    const sub = Notifications.addNotificationReceivedListener(() => {
+      queryClient.invalidateQueries({ queryKey: ['dm-unread'] });
+      queryClient.invalidateQueries({ queryKey: ['dm-inbox'] });
+      queryClient.invalidateQueries({ queryKey: ['activity'] });
+    });
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', onAppStateChange);
+    return () => sub.remove();
+  }, []);
 
   if (loading) {
     return (
