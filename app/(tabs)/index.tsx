@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useScrollToTop } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { PostCard } from '../../components/PostCard';
@@ -35,6 +35,11 @@ export default function Feed() {
   const toggleLike = useToggleLike();
   const deletePost = useDeletePost();
   const [refreshing, setRefreshing] = useState(false);
+  const listRef = useRef<FlatList<FeedPost>>(null);
+  // Tapping the Home tab while already on it should jump the feed to the
+  // top, matching standard tab-bar behavior -- this hook listens for that
+  // "already focused" tab press itself, no manual wiring in _layout.tsx.
+  useScrollToTop(listRef);
 
   const posts = useMemo(() => data?.pages.flat() ?? [], [data]);
 
@@ -112,6 +117,7 @@ export default function Feed() {
       </View>
 
       <FlatList
+        ref={listRef}
         data={posts}
         keyExtractor={(p) => p.id}
         renderItem={renderItem}
