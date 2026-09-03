@@ -62,6 +62,7 @@ so re-applying a file after a tweak is safe.
 | `0008_dm.sql` | `dm_messages`, `dm_inbox()` — every thread is with "ishaan" |
 | `0009_notifications.sql` | `push_tokens`, `dm_messages.read_at`, `profiles.activity_read_at` — see [Push notifications](#5-push-notifications) below for the Edge Function + webhooks this depends on |
 | `0011_drake_bot.sql` | `pg_cron` schedule that calls the `daily-drake` Edge Function once a day — see [Drake bot](#6-drake-bot) below |
+| `0012_drake_bot_photo_log.sql` | `drake_bot_photo_log` — tracks which photos `daily-drake` has already posted, so it cycles through the pool instead of repeating |
 
 ### Option A — SQL editor (no tooling required)
 
@@ -204,10 +205,16 @@ created a webhook through the UI before.
 
 ## 6. Drake bot
 
-A joke account, `@prosecco_daddy`, that posts a random Drake photo and swaps
-its own avatar once a day. Same shape as push notifications: an Edge Function
-plus a piece of Dashboard-only setup, here `pg_cron` instead of a Database
-Webhook, since this fires on a timer rather than a table insert.
+A joke account, `@prosecco_daddy`, that posts a Drake photo and swaps its own
+avatar once a day, picked from a pool of 22 photos on Wikimedia Commons.
+Same shape as push notifications: an Edge Function plus a piece of
+Dashboard-only setup, here `pg_cron` instead of a Database Webhook, since
+this fires on a timer rather than a table insert.
+
+The function never repeats a photo: `drake_bot_photo_log`
+(`0012_drake_bot_photo_log.sql`) tracks which of the 22 it's already posted,
+and it picks only from the unposted ones each run. Once all 22 have gone
+out, it clears the log itself and starts a fresh cycle.
 
 1. **Deploy the Edge Function.** Dashboard → **Edge Functions** → **New
    Function**, name it exactly `daily-drake`, paste in
@@ -216,8 +223,10 @@ Webhook, since this fires on a timer rather than a table insert.
    with no user JWT to verify.
 2. **Enable `pg_cron`.** Dashboard → **Database** → **Extensions** → search
    `pg_cron` → enable. (`pg_net` should already be on from step 5 above.)
-3. **Run `0011_drake_bot.sql`** in the SQL editor. It schedules the function
-   to run daily at 15:30 UTC (~9:30am Mountain).
+3. **Run `0011_drake_bot.sql`, then `0012_drake_bot_photo_log.sql`** in the
+   SQL editor. The first schedules the function to run daily at 15:30 UTC
+   (~9:30am Mountain); the second creates the no-repeat tracking table —
+   required, the function's first call will error without it.
 4. **Test it once by hand** before trusting the schedule: SQL editor →
    `select net.http_post(url := 'https://snmnhlxletlgeorzwbvt.supabase.co/functions/v1/daily-drake', headers := '{"Content-Type": "application/json"}'::jsonb);`
    — then check `@prosecco_daddy`'s profile in the app for a new post and a
