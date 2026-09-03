@@ -117,7 +117,10 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <StatusBar style="auto" />
+            {/* Content is always light (lib/theme.ts) -- "auto" would pick
+                light status bar icons on a phone in Dark Mode, invisible
+                against our white background. */}
+            <StatusBar style="dark" />
             <RootNavigator />
           </AuthProvider>
         </QueryClientProvider>
