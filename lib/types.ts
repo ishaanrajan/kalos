@@ -103,6 +103,13 @@ export interface DMMessage {
   created_at: Timestamp;
   /** Set by the recipient when they open the thread — drives read receipts. */
   read_at: Timestamp | null;
+  /**
+   * Every thread is still keyed to one human, but more than one account can
+   * now post into it (ishaan, or a bot like the Drake account) -- this is
+   * what lets the client attribute each message to who actually sent it
+   * instead of assuming it's always the thread's nominal other party.
+   */
+  sender?: Pick<Profile, 'username' | 'avatar_path'>;
 }
 
 /** One row of ishaan's inbox: a thread plus its most recent message. */

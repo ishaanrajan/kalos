@@ -392,11 +392,14 @@ export function useDMThread(threadUserId: string | undefined) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('dm_messages')
-        .select('*')
+        // dm_messages has two FKs into profiles (sender_id, thread_user_id) --
+        // the explicit constraint name is required to disambiguate which one
+        // this embed follows.
+        .select('*, sender:profiles!dm_messages_sender_id_fkey(username, avatar_path)')
         .eq('thread_user_id', threadUserId!)
         .order('created_at', { ascending: true });
       if (error) throw error;
-      return data as DMMessage[];
+      return data as unknown as DMMessage[];
     },
   });
 }

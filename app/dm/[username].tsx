@@ -15,7 +15,9 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatCommentAge } from '../../components/CommentRow';
 import { EmptyState } from '../../components/EmptyState';
+import { Avatar } from '../../components/Avatar';
 import { useDMThread, useMarkDMRead, useProfile, useSendDM } from '../../lib/queries';
+import { avatarUrl } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
 import type { DMMessage } from '../../lib/types';
@@ -97,15 +99,22 @@ export default function DMThread() {
             />
           )
         }
-        renderItem={({ item, index }) => (
-          <Bubble
-            message={item}
-            mine={item.sender_id === me.id}
-            showSeen={
-              index === (messages?.length ?? 0) - 1 && item.sender_id === me.id && !!item.read_at
-            }
-          />
-        )}
+        renderItem={({ item, index }) => {
+          const mine = item.sender_id === me.id;
+          const prev = messages?.[index - 1];
+          return (
+            <Bubble
+              message={item}
+              mine={mine}
+              // Threads can now carry messages from more than one sender
+              // (ishaan, or a bot like the Drake account) -- label a received
+              // message with who actually sent it, but only when that's a
+              // change from the message above, same grouping iMessage uses.
+              showSender={!mine && item.sender_id !== prev?.sender_id}
+              showSeen={index === (messages?.length ?? 0) - 1 && mine && !!item.read_at}
+            />
+          );
+        }}
       />
 
       <View
@@ -137,15 +146,25 @@ export default function DMThread() {
 function Bubble({
   message,
   mine,
+  showSender,
   showSeen,
 }: {
   message: DMMessage;
   mine: boolean;
+  showSender: boolean;
   showSeen: boolean;
 }) {
   const { colors } = useTheme();
   return (
     <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
+      {showSender && message.sender && (
+        <View style={styles.senderRow}>
+          <Avatar url={avatarUrl(message.sender.avatar_path)} username={message.sender.username} size={16} />
+          <Text style={[styles.senderName, { color: colors.textSecondary }]}>
+            {message.sender.username}
+          </Text>
+        </View>
+      )}
       <View
         style={[
           styles.bubble,
@@ -173,6 +192,8 @@ const styles = StyleSheet.create({
   listContent: { flexGrow: 1, paddingVertical: 12 },
   bubbleRow: { paddingHorizontal: 16, marginVertical: 4, alignItems: 'flex-start' },
   bubbleRowMine: { alignItems: 'flex-end' },
+  senderRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3, marginLeft: 4 },
+  senderName: { fontSize: 11, fontWeight: '600' },
   bubble: {
     maxWidth: '78%',
     borderRadius: 18,

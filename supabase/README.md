@@ -63,6 +63,7 @@ so re-applying a file after a tweak is safe.
 | `0009_notifications.sql` | `push_tokens`, `dm_messages.read_at`, `profiles.activity_read_at` — see [Push notifications](#5-push-notifications) below for the Edge Function + webhooks this depends on |
 | `0011_drake_bot.sql` | `pg_cron` schedule that calls the `daily-drake` Edge Function once a day — see [Drake bot](#6-drake-bot) below |
 | `0012_drake_bot_photo_log.sql` | `drake_bot_photo_log` — tracks which photos `daily-drake` has already posted, so it cycles through the pool instead of repeating |
+| `0013_drake_dm.sql` | `pg_cron` schedule that calls the `drake-dm` Edge Function every 4 hours — see [Drake DMs](#drake-dms) below |
 
 ### Option A — SQL editor (no tooling required)
 
@@ -235,6 +236,36 @@ out, it clears the log itself and starts a fresh cycle.
 To change the daily time, edit the cron expression in
 `0011_drake_bot.sql` and re-run the file — `cron.schedule` upserts by job
 name, so this updates the existing schedule rather than creating a second one.
+
+### Drake DMs
+
+`@prosecco_daddy` also DMs a random account (never `ishaan` — he sees every
+thread via his own inbox regardless, so excluding him just avoids a "thread
+with yourself" row) every 4 hours, with a joke/lyric-flavored one-liner from
+a fixed list in `supabase/functions/drake-dm/index.ts`. Same shape as the
+photo bot: an Edge Function on a `pg_cron` timer.
+
+This is the one thing in the app that writes into someone else's DM thread
+other than `ishaan` — it works because the function runs on the service-role
+key, which bypasses `dm_messages`' RLS entirely (see `0008_dm.sql`). The
+client attributes each message to its real sender (`lib/queries.ts`'s
+`useDMThread` embeds `sender:profiles`), so a Drake DM shows up correctly
+labeled instead of looking like it came from `ishaan`.
+
+1. **Deploy the Edge Function.** Dashboard → **Edge Functions** → **New
+   Function**, name it exactly `drake-dm`, paste in
+   `supabase/functions/drake-dm/index.ts`. Turn **off** "Enforce JWT
+   verification", same as the other cron-driven functions.
+2. **Run `0013_drake_dm.sql`** in the SQL editor. `pg_cron`/`pg_net` are
+   already enabled from the steps above.
+3. **Test it once by hand**: SQL editor →
+   `select net.http_post(url := 'https://snmnhlxletlgeorzwbvt.supabase.co/functions/v1/drake-dm', headers := '{"Content-Type": "application/json"}'::jsonb);`
+   — then check that some account (not `ishaan`) got a new DM from
+   `@prosecco_daddy`.
+
+To change the cadence, edit the cron expression in `0013_drake_dm.sql` and
+re-run it. To change what it says, edit the `MESSAGES` array in
+`supabase/functions/drake-dm/index.ts` and redeploy the function.
 
 ---
 
