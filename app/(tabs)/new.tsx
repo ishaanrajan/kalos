@@ -42,6 +42,30 @@ type Step = 'filter' | 'share';
 type Source = 'camera' | 'library';
 
 /**
+ * Requests a permission, then re-checks it once if the request came back
+ * not-granted. Android has a known race (expo/expo#20096) where the OS
+ * dialog is answered "allow" but the request call's own response doesn't
+ * reflect that yet -- without this, that shows up as "Can't open that" on
+ * the very first try, and every retry re-opens the whole source-choice
+ * sheet from scratch.
+ */
+async function requestPermissionWithRetry(
+  source: Source
+): Promise<ImagePicker.PermissionResponse> {
+  const request =
+    source === 'camera'
+      ? ImagePicker.requestCameraPermissionsAsync
+      : ImagePicker.requestMediaLibraryPermissionsAsync;
+  const get =
+    source === 'camera' ? ImagePicker.getCameraPermissionsAsync : ImagePicker.getMediaLibraryPermissionsAsync;
+
+  const first = await request();
+  if (first.granted || !first.canAskAgain) return first;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  return get();
+}
+
+/**
  * Camera or library, asked with the platform's own sheet so nothing of ours
  * has to render first. The tab is a shutter button; putting a screen in front
  * of the picker just to hold two buttons made it flash on the way past.
@@ -116,10 +140,7 @@ export default function NewPost() {
         return;
       }
 
-      const permission =
-        source === 'camera'
-          ? await ImagePicker.requestCameraPermissionsAsync()
-          : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const permission = await requestPermissionWithRetry(source);
       if (!permission.granted) {
         setBlocked(
           source === 'camera'
