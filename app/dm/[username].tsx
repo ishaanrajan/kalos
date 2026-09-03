@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatCommentAge } from '../../components/CommentRow';
 import { EmptyState } from '../../components/EmptyState';
 import { useDMThread, useMarkDMRead, useProfile, useSendDM } from '../../lib/queries';
@@ -28,6 +29,7 @@ export default function DMThread() {
   const { profile: me } = useAuth();
   const { data: other, isLoading: otherLoading } = useProfile(username);
   const [draft, setDraft] = useState('');
+  const insets = useSafeAreaInsets();
 
   const isIshaan = me?.username === 'ishaan';
   const threadUserId = isIshaan ? other?.id : me?.id;
@@ -91,7 +93,7 @@ export default function DMThread() {
         )}
       />
 
-      <View style={styles.composer}>
+      <View style={[styles.composer, { paddingBottom: Math.max(10, insets.bottom) }]}>
         <TextInput
           style={styles.input}
           placeholder="Message…"

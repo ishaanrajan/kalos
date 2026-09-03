@@ -23,6 +23,12 @@ export interface Profile {
   created_at: Timestamp;
   /** Last time the Activity tab was opened — drives its unread red dot. */
   activity_read_at: Timestamp | null;
+  /**
+   * False only for an account created after this feature shipped that hasn't
+   * yet added a profile photo and posted once — existing accounts are never
+   * retroactively forced through onboarding, hence the default of true.
+   */
+  onboarded: boolean;
 }
 
 export interface Post {

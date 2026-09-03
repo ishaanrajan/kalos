@@ -12,6 +12,7 @@ import {
   View,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PostCard } from '../../components/PostCard';
 import { CommentRow } from '../../components/CommentRow';
 import { EmptyState } from '../../components/EmptyState';
@@ -30,6 +31,7 @@ export default function PostScreen() {
   const toggleLike = useToggleLike();
   const deletePost = useDeletePost();
   const [draft, setDraft] = useState('');
+  const insets = useSafeAreaInsets();
 
   if (isLoading || !post) {
     return (
@@ -97,7 +99,7 @@ export default function PostScreen() {
         )}
       />
 
-      <View style={styles.composer}>
+      <View style={[styles.composer, { paddingBottom: Math.max(10, insets.bottom) }]}>
         <TextInput
           style={styles.input}
           placeholder="Add a comment…"

@@ -16,7 +16,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { randomUUID } from 'expo-crypto';
 import { File } from 'expo-file-system';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { Tabs, useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 import { FilterStrip } from '../../components/FilterStrip';
@@ -25,6 +25,7 @@ import { EmptyState } from '../../components/EmptyState';
 import { FILTERS, getFilter } from '../../lib/filters';
 import { bakeFilteredImage, downscaleForPreview } from '../../lib/bake';
 import { supabase, PHOTOS_BUCKET } from '../../lib/supabase';
+import { useUpdateProfile } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 
 const SCREEN = Dimensions.get('window').width;
@@ -68,7 +69,11 @@ function chooseSource(): Promise<Source | null> {
 export default function NewPost() {
   const router = useRouter();
   const qc = useQueryClient();
-  const { session } = useAuth();
+  const { session, profile, refreshProfile } = useAuth();
+  const updateProfile = useUpdateProfile();
+  // A brand-new account is forced here for its first post (see the redirect
+  // in app/_layout.tsx); the tab bar has nowhere useful to go until then.
+  const isForcedFirstPost = !!profile && !profile.onboarded;
 
   const [picked, setPicked] = useState<Picked | null>(null);
   const [step, setStep] = useState<Step>('filter');
@@ -205,6 +210,14 @@ export default function NewPost() {
       qc.invalidateQueries({ queryKey: ['profile-posts'] });
       qc.invalidateQueries({ queryKey: ['profile'] });
 
+      if (isForcedFirstPost) {
+        await updateProfile.mutateAsync({ onboarded: true });
+      }
+      // AuthProvider's profile is separate state from the react-query cache
+      // above -- the redirect in app/_layout.tsx reads post_count and
+      // onboarded off of it, so it needs its own explicit refresh.
+      await refreshProfile();
+
       setPicked(null);
       setCaption('');
       router.replace('/(tabs)');
@@ -213,13 +226,31 @@ export default function NewPost() {
     } finally {
       setPosting(false);
     }
-  }, [picked, session, filter, isNormal, caption, qc, router]);
+  }, [
+    picked,
+    session,
+    filter,
+    isNormal,
+    caption,
+    qc,
+    router,
+    isForcedFirstPost,
+    updateProfile,
+    refreshProfile,
+  ]);
+
+  // A forced first post has nowhere else to send you, so the tab bar itself
+  // is hidden rather than just non-functional.
+  const hideTabBar = isForcedFirstPost ? (
+    <Tabs.Screen options={{ tabBarStyle: { display: 'none' } }} />
+  ) : null;
 
   if (!picked) {
     // Nothing but a bare screen while the sheet and picker are up — anything
     // drawn here would flash for the moment before they cover it.
     return (
       <SafeAreaView style={styles.root} edges={['top']}>
+        {hideTabBar}
         {blocked ? (
           <>
             <View style={styles.header}>
@@ -241,6 +272,7 @@ export default function NewPost() {
   if (step === 'filter') {
     return (
       <SafeAreaView style={styles.root} edges={['top']}>
+        {hideTabBar}
         <View style={styles.header}>
           <Pressable onPress={discard} hitSlop={12}>
             <Text style={styles.headerAction}>Cancel</Text>
@@ -272,7 +304,8 @@ export default function NewPost() {
   }
 
   return (
-    <SafeAreaView style={styles.root} edges={['top']}>
+    <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
+      {hideTabBar}
       <View style={styles.header}>
         <Pressable onPress={() => setStep('filter')} hitSlop={12} disabled={posting}>
           <Text style={[styles.headerAction, posting && styles.disabled]}>Back</Text>

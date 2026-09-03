@@ -15,19 +15,38 @@ const queryClient = new QueryClient({
 });
 
 function RootNavigator() {
-  const { session, loading } = useAuth();
+  const { session, profile, loading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
     const inAuthGroup = segments[0] === '(auth)';
+
     if (!session && !inAuthGroup) {
       router.replace('/(auth)/sign-in');
-    } else if (session && inAuthGroup) {
-      router.replace('/(tabs)');
+      return;
     }
-  }, [session, loading, segments, router]);
+    if (session && inAuthGroup) {
+      router.replace('/(tabs)');
+      return;
+    }
+
+    // Forced onboarding for a brand-new account (0010_onboarding.sql) --
+    // never true for an existing account, since onboarded defaults to true
+    // for every row that isn't freshly created by handle_new_user().
+    if (session && profile && !profile.onboarded) {
+      if (!profile.avatar_path) {
+        if (segments[0] !== 'onboarding-avatar') router.replace('/onboarding-avatar');
+        return;
+      }
+      if (profile.post_count === 0) {
+        const onNewPost = segments[0] === '(tabs)' && segments[1] === 'new';
+        if (!onNewPost) router.replace('/(tabs)/new');
+        return;
+      }
+    }
+  }, [session, profile, loading, segments, router]);
 
   // The notify Edge Function attaches { url } to every push it sends;
   // tapping one just needs to hand that straight to the router.
@@ -51,6 +70,7 @@ function RootNavigator() {
     <Stack screenOptions={{ headerShown: false, headerBackButtonDisplayMode: 'minimal' }}>
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="onboarding-avatar" />
       <Stack.Screen name="post/[id]" options={{ headerShown: true, title: 'Post' }} />
       <Stack.Screen name="profile/[username]" options={{ headerShown: true, title: '' }} />
       <Stack.Screen name="follows/[username]" options={{ headerShown: true, title: '' }} />

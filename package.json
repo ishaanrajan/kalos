@@ -49,6 +49,7 @@
     "verify:explore": "tsx scripts/verify-explore.ts",
     "verify:dm": "tsx scripts/verify-dm.ts",
     "verify:notifications": "tsx scripts/verify-notifications.ts",
+    "verify:onboarding": "tsx scripts/verify-onboarding.ts",
     "seed": "tsx scripts/seed.ts"
   },
   "private": true

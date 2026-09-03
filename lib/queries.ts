@@ -281,6 +281,7 @@ export interface ProfilePatch {
   display_name?: string | null;
   bio?: string | null;
   avatar_path?: string | null;
+  onboarded?: boolean;
 }
 
 export function useUpdateProfile() {

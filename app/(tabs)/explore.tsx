@@ -8,6 +8,10 @@ import { EmptyState } from '../../components/EmptyState';
 import { EndOfFeed } from '../../components/EndOfFeed';
 import { useExploreFeed } from '../../lib/queries';
 import { photoUrl } from '../../lib/supabase';
+import { useAuth } from '../../lib/auth';
+
+/** Posts of your own required before Explore unlocks. */
+const POSTS_TO_UNLOCK = 5;
 
 /**
  * Explore, the way it used to work.
@@ -19,10 +23,29 @@ import { photoUrl } from '../../lib/supabase';
  */
 export default function Explore() {
   const router = useRouter();
+  const { profile } = useAuth();
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useExploreFeed();
 
   const posts = useMemo(() => data?.pages.flat() ?? [], [data]);
+
+  if (profile && profile.post_count < POSTS_TO_UNLOCK) {
+    const remaining = POSTS_TO_UNLOCK - profile.post_count;
+    return (
+      <SafeAreaView style={styles.root} edges={['top']}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Explore</Text>
+        </View>
+        <EmptyState
+          icon="lock"
+          title="Explore is locked"
+          body={`Share ${remaining} more photo${remaining === 1 ? '' : 's'} to unlock it — you've posted ${profile.post_count} of ${POSTS_TO_UNLOCK}.`}
+          actionLabel="New post"
+          onAction={() => router.push('/(tabs)/new')}
+        />
+      </SafeAreaView>
+    );
+  }
 
   if (isLoading) {
     return (
