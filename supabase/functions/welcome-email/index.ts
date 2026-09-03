@@ -31,7 +31,16 @@ interface WebhookPayload {
 
 /** Prefer a set display_name (first word only, e.g. "Diya Rao" -> "Diya"); fall back to the username as-is. */
 function greetingName(username: string, displayName: string | null): string {
-  const raw = displayName?.trim() ? displayName.trim().split(/\s+/)[0] : username;
+  let raw = username;
+  const trimmed = displayName ? displayName.trim() : '';
+  if (trimmed.length > 0) {
+    const spaceIndex = trimmed.indexOf(' ');
+    if (spaceIndex === -1) {
+      raw = trimmed;
+    } else {
+      raw = trimmed.substring(0, spaceIndex);
+    }
+  }
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
@@ -59,12 +68,12 @@ Deno.serve(async (req) => {
   const payload = (await req.json()) as WebhookPayload;
   const { id, username, display_name } = payload.record;
 
-  const { data: user, error } = await db.auth.admin.getUserById(id);
-  if (error || !user?.user?.email) {
+  const { data: userResult, error } = await db.auth.admin.getUserById(id);
+  const email = userResult && userResult.user ? userResult.user.email : null;
+  if (error || !email) {
     console.error('could not resolve email', error);
     return new Response('no email', { status: 200 });
   }
-  const email = user.user.email;
 
   // Seed fixtures (scripts/seed.ts) use @example.com and would otherwise get
   // a "welcome" email every time the seed script re-runs.
