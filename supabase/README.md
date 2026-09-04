@@ -64,6 +64,9 @@ so re-applying a file after a tweak is safe.
 | `0011_drake_bot.sql` | `pg_cron` schedule that calls the `daily-drake` Edge Function once a day — see [Drake bot](#6-drake-bot) below |
 | `0012_drake_bot_photo_log.sql` | `drake_bot_photo_log` — tracks which photos `daily-drake` has already posted, so it cycles through the pool instead of repeating |
 | `0013_drake_dm.sql` | `pg_cron` schedule that calls the `drake-dm` Edge Function every 4 hours — see [Drake DMs](#drake-dms) below |
+| `0014_dm_multi_thread.sql` | `dm_messages.thread_with_id` — a thread's real identity is now (thread_user_id, thread_with_id), so a Drake DM no longer lands mixed into the ishaan thread |
+| `0015_home_feed_comment_preview.sql` | `home_feed()` gains `preview_comments` — the 2 most recent comments per post, for `PostCard`'s inline preview |
+| `0016_welcome_email_log.sql` | `profiles.welcome_emailed_at` — lets `welcome-email` skip an account it's already emailed |
 
 ### Option A — SQL editor (no tooling required)
 

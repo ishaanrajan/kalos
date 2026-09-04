@@ -68,6 +68,13 @@ Deno.serve(async (req) => {
   const payload = (await req.json()) as WebhookPayload;
   const { id, username, display_name } = payload.record;
 
+  // Idempotency guard: protects against a webhook re-fire, a manual re-run,
+  // or this same function being invoked twice for the same signup.
+  const { data: profile } = await db.from('profiles').select('welcome_emailed_at').eq('id', id).single();
+  if (profile?.welcome_emailed_at) {
+    return new Response('already sent', { status: 200 });
+  }
+
   const { data: userResult, error } = await db.auth.admin.getUserById(id);
   const email = userResult && userResult.user ? userResult.user.email : null;
   if (error || !email) {
@@ -97,6 +104,7 @@ Deno.serve(async (req) => {
       subject: 'Welcome to Kalos',
       content: emailBody(greetingName(username, display_name)),
     });
+    await db.from('profiles').update({ welcome_emailed_at: new Date().toISOString() }).eq('id', id);
     return new Response('sent', { status: 200 });
   } catch (e) {
     console.error('SMTP send failed', e);
