@@ -34,11 +34,6 @@ async function usernameOf(id: string): Promise<string> {
   return data?.username ?? 'someone';
 }
 
-async function ishaanId(): Promise<string | null> {
-  const { data } = await db.from('profiles').select('id').eq('username', 'ishaan').single();
-  return data?.id ?? null;
-}
-
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n).trimEnd()}…` : s;
 }
@@ -48,9 +43,14 @@ async function resolve(payload: WebhookPayload): Promise<Notification | null> {
 
   switch (payload.table) {
     case 'dm_messages': {
-      const ishaan = await ishaanId();
-      if (!ishaan) return null;
-      const recipientId = r.sender_id === ishaan ? r.thread_user_id : ishaan;
+      // A thread's identity is (thread_user_id, thread_with_id) since 0014 --
+      // the recipient is whichever of the two isn't the sender. This used to
+      // hardcode "recipient is ishaan unless ishaan is the sender," which
+      // predates Drake having a thread of his own: any Drake DM to a regular
+      // user has sender_id = drake, which is never ishaan, so the old logic
+      // always resolved the recipient to ishaan -- he was getting pushed a
+      // notification for every Drake DM sent to anyone.
+      const recipientId = r.sender_id === r.thread_user_id ? r.thread_with_id : r.thread_user_id;
       if (recipientId === r.sender_id) return null;
       const senderUsername = await usernameOf(r.sender_id);
       return {
