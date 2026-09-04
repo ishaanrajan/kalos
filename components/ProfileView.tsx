@@ -68,24 +68,39 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
             )}
           </>
         ) : (
-          <Button
-            variant={following ? 'outline' : 'primary'}
-            label={following ? 'Following' : 'Follow'}
-            onPress={() =>
-              toggleFollow.mutate(
-                { profileId: profile.id, following: following ?? false },
-                {
-                  onError: (e) =>
-                    Alert.alert(
-                      following ? 'Could not unfollow' : 'Could not follow',
-                      e instanceof Error ? e.message : undefined
-                    ),
-                }
-              )
-            }
-            disabled={toggleFollow.isPending}
-            style={styles.action}
-          />
+          <>
+            <Button
+              variant={following ? 'outline' : 'primary'}
+              label={following ? 'Following' : 'Follow'}
+              onPress={() =>
+                toggleFollow.mutate(
+                  { profileId: profile.id, following: following ?? false },
+                  {
+                    onError: (e) =>
+                      Alert.alert(
+                        following ? 'Could not unfollow' : 'Could not follow',
+                        e instanceof Error ? e.message : undefined
+                      ),
+                  }
+                )
+              }
+              disabled={toggleFollow.isPending}
+              style={styles.action}
+            />
+            {/* The only other account (besides ishaan) allowed to write into
+                someone else's DM thread -- see 0014_dm_multi_thread.sql --
+                so it's the only profile that gets its own Message entry
+                point. A regular user reaches their ishaan thread via the
+                Home tab's message icon instead. */}
+            {profile.username === 'prosecco_daddy' && (
+              <Button
+                variant="outline"
+                label="Message"
+                onPress={() => router.push(`/dm/${profile.username}`)}
+                style={styles.action}
+              />
+            )}
+          </>
         )}
       </View>
     </View>

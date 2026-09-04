@@ -98,6 +98,7 @@ export type ActivityEvent =
 export interface DMMessage {
   id: UUID;
   thread_user_id: UUID;
+  thread_with_id: UUID;
   sender_id: UUID;
   body: string;
   created_at: Timestamp;

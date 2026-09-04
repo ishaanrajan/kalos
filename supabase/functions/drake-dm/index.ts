@@ -78,6 +78,10 @@ Deno.serve(async () => {
 
   const { error: insertErr } = await db.from('dm_messages').insert({
     thread_user_id: recipient.id,
+    // Without this, it defaults to ishaan's thread (0014_dm_multi_thread.sql)
+    // and the message lands mixed into the recipient's conversation with
+    // ishaan instead of being its own separate thread with Drake.
+    thread_with_id: bot.id,
     sender_id: bot.id,
     body,
   });

@@ -23,10 +23,12 @@ import { useTheme } from '../../lib/theme';
 import type { DMMessage } from '../../lib/types';
 
 /**
- * A DM thread. There is only ever one on either side of it: for anyone but
- * ishaan, `username` here is always "ishaan" and the thread is keyed to your
- * own id; for ishaan, `username` is whichever thread they opened from the
- * inbox, and the thread is keyed to that person's id.
+ * A DM thread. `username` names who this thread is *with*: for anyone but
+ * ishaan, that's either "ishaan" or the Drake bot -- two separate threads,
+ * both keyed to your own id as thread_user_id but different thread_with_id.
+ * For ishaan, `username` is whichever person he opened from his inbox, and
+ * thread_with_id is always his own id (his inbox only manages threads with
+ * him, not e.g. someone's separate thread with Drake).
  */
 export default function DMThread() {
   const { username } = useLocalSearchParams<{ username: string }>();
@@ -39,15 +41,16 @@ export default function DMThread() {
 
   const isIshaan = me?.username === 'ishaan';
   const threadUserId = isIshaan ? other?.id : me?.id;
+  const threadWithId = isIshaan ? me?.id : other?.id;
 
-  const { data: messages, isLoading: messagesLoading } = useDMThread(threadUserId);
-  const sendDM = useSendDM(threadUserId);
-  const markRead = useMarkDMRead(threadUserId);
+  const { data: messages, isLoading: messagesLoading } = useDMThread(threadUserId, threadWithId);
+  const sendDM = useSendDM(threadUserId, threadWithId);
+  const markRead = useMarkDMRead(threadUserId, threadWithId);
 
   // Opening the thread is what "read" means -- mark whatever's here now.
   useEffect(() => {
-    if (threadUserId) markRead.mutate();
-  }, [threadUserId]);
+    if (threadUserId && threadWithId) markRead.mutate();
+  }, [threadUserId, threadWithId]);
 
   function submit() {
     const body = draft.trim();

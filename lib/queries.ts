@@ -380,15 +380,17 @@ export function useSearchProfiles(q: string) {
 }
 
 // ---------------------------------------------------------------------------
-// DMs — every thread is with "ishaan". thread_user_id is always the
-// non-ishaan participant, so it doubles as the thread's identity: there is
-// nothing to look up or create, a user's thread is just "my own id."
+// DMs — a thread's identity is the pair (thread_user_id, thread_with_id):
+// which human, and which of the small set of accounts allowed to write into
+// someone else's thread (ishaan, or a bot like Drake) it's with. A regular
+// user can have more than one thread now (one per thread_with_id); ishaan's
+// own inbox only ever manages the ones where thread_with_id = his own id.
 // ---------------------------------------------------------------------------
 
-export function useDMThread(threadUserId: string | undefined) {
+export function useDMThread(threadUserId: string | undefined, threadWithId: string | undefined) {
   return useQuery({
-    queryKey: ['dm-thread', threadUserId],
-    enabled: !!threadUserId,
+    queryKey: ['dm-thread', threadUserId, threadWithId],
+    enabled: !!threadUserId && !!threadWithId,
     queryFn: async () => {
       const { data, error } = await supabase
         .from('dm_messages')
@@ -397,6 +399,7 @@ export function useDMThread(threadUserId: string | undefined) {
         // this embed follows.
         .select('*, sender:profiles!dm_messages_sender_id_fkey(username, avatar_path)')
         .eq('thread_user_id', threadUserId!)
+        .eq('thread_with_id', threadWithId!)
         .order('created_at', { ascending: true });
       if (error) throw error;
       return data as unknown as DMMessage[];
@@ -404,18 +407,18 @@ export function useDMThread(threadUserId: string | undefined) {
   });
 }
 
-export function useSendDM(threadUserId: string | undefined) {
+export function useSendDM(threadUserId: string | undefined, threadWithId: string | undefined) {
   const qc = useQueryClient();
   const userId = useUserId();
   return useMutation({
     mutationFn: async (body: string) => {
       const { error } = await supabase
         .from('dm_messages')
-        .insert({ thread_user_id: threadUserId!, sender_id: userId!, body });
+        .insert({ thread_user_id: threadUserId!, thread_with_id: threadWithId!, sender_id: userId!, body });
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId] });
+      qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId, threadWithId] });
       qc.invalidateQueries({ queryKey: ['dm-inbox'] });
     },
   });
@@ -461,23 +464,24 @@ export function useHasUnreadDMs() {
 }
 
 /** Marks every unread incoming message in a thread as read. */
-export function useMarkDMRead(threadUserId: string | undefined) {
+export function useMarkDMRead(threadUserId: string | undefined, threadWithId: string | undefined) {
   const qc = useQueryClient();
   const userId = useUserId();
   return useMutation({
     mutationFn: async () => {
-      if (!threadUserId) return;
+      if (!threadUserId || !threadWithId) return;
       const { error } = await supabase
         .from('dm_messages')
         .update({ read_at: new Date().toISOString() })
         .eq('thread_user_id', threadUserId)
+        .eq('thread_with_id', threadWithId)
         .neq('sender_id', userId!)
         .is('read_at', null);
       if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['dm-unread'] });
-      qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId] });
+      qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId, threadWithId] });
       qc.invalidateQueries({ queryKey: ['dm-inbox'] });
     },
   });
