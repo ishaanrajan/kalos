@@ -67,7 +67,6 @@ export default function Feed() {
         onPressComments={() => router.push(`/post/${item.id}`)}
         onPressLikes={() => router.push(`/likes/${item.id}`)}
         onPressOptions={item.author_id === userId ? () => deleteOwnPost(item) : undefined}
-        onPressShare={() => router.push('/dm')}
         previewComments={item.preview_comments}
       />
     ),

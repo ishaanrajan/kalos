@@ -61,8 +61,6 @@ export interface PostCardProps {
   onPressOptions?: () => void;
   /** Tapping the Explore reason chip. */
   onPressReason?: () => void;
-  /** Direct's paper-plane action, next to comment. Hidden when omitted. */
-  onPressShare?: () => void;
 
   /** Shows the "View all N comments" line. Defaults to true. */
   showCommentPreview?: boolean;
@@ -160,7 +158,6 @@ export function PostCard({
   onPressImage,
   onPressOptions,
   onPressReason,
-  onPressShare,
   showCommentPreview = true,
   previewComments,
   captionNumberOfLines = 2,
@@ -357,24 +354,9 @@ export function PostCard({
           hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel="Comment"
-          style={onPressShare ? styles.action : undefined}
         >
           <Ionicons name="chatbubble-outline" size={23} color={colors.text} />
         </Pressable>
-
-        {onPressShare ? (
-          <>
-            <View style={styles.actionsSpacer} />
-            <Pressable
-              onPress={onPressShare}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Share"
-            >
-              <Ionicons name="paper-plane-outline" size={23} color={colors.text} />
-            </Pressable>
-          </>
-        ) : null}
       </View>
 
       {/* Meta */}
@@ -521,9 +503,6 @@ const styles = StyleSheet.create({
   },
   action: {
     marginRight: spacing.lg,
-  },
-  actionsSpacer: {
-    flex: 1,
   },
   meta: {
     paddingHorizontal: spacing.md,

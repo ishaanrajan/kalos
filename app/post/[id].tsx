@@ -106,7 +106,6 @@ export default function PostScreen() {
             onPressAuthor={() => router.push(`/profile/${post.author.username}`)}
             onPressLikes={() => router.push(`/likes/${post.id}`)}
             onPressOptions={post.author.id === userId ? deleteThisPost : undefined}
-            onPressShare={() => router.push('/dm')}
             showCommentPreview={false}
           />
         }
