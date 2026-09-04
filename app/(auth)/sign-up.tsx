@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Link } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
 
@@ -17,12 +17,13 @@ const USERNAME_RE = /^[a-z0-9._]{3,30}$/;
 
 export default function SignUp() {
   const { signUp } = useAuth();
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const { colors } = useTheme();
+  const { colors, wordmarkFontFamily } = useTheme();
 
   const normalizedUsername = username.trim().toLowerCase();
   const usernameValid = USERNAME_RE.test(normalizedUsername);
@@ -46,7 +47,12 @@ export default function SignUp() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.card}>
-        <Text style={[styles.wordmark, { color: colors.text }]}>Kalos</Text>
+        <Text style={[styles.wordmark, { color: colors.text, fontFamily: wordmarkFontFamily }]}>
+          Kalos
+        </Text>
+        <Text style={[styles.tagline, { color: colors.textSecondary }]}>
+          Photos from people you actually follow.
+        </Text>
 
         <TextInput
           style={[
@@ -111,9 +117,9 @@ export default function SignUp() {
           <Text style={[styles.footerText, { color: colors.textSecondary }]}>
             Already have an account?{' '}
           </Text>
-          <Link href="/(auth)/sign-in" style={[styles.footerLink, { color: colors.accent }]}>
-            Log in
-          </Link>
+          <Pressable onPress={() => router.replace('/(auth)/sign-in')} hitSlop={8}>
+            <Text style={[styles.footerLink, { color: colors.accent }]}>Log in</Text>
+          </Pressable>
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -121,15 +127,16 @@ export default function SignUp() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, justifyContent: 'center' },
-  card: { paddingHorizontal: 32 },
+  root: { flex: 1, justifyContent: 'flex-start' },
+  card: { paddingHorizontal: 32, marginTop: '18%' },
   wordmark: {
     fontSize: 44,
     textAlign: 'center',
     fontWeight: '300',
     letterSpacing: 0.5,
-    marginBottom: 32,
+    marginBottom: 6,
   },
+  tagline: { textAlign: 'center', fontSize: 14, marginBottom: 32 },
   input: {
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 4,

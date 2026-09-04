@@ -61,6 +61,8 @@ export interface PostCardProps {
   onPressOptions?: () => void;
   /** Tapping the Explore reason chip. */
   onPressReason?: () => void;
+  /** Direct's paper-plane action, next to comment. Hidden when omitted. */
+  onPressShare?: () => void;
 
   /** Shows the "View all N comments" line. Defaults to true. */
   showCommentPreview?: boolean;
@@ -158,6 +160,7 @@ export function PostCard({
   onPressImage,
   onPressOptions,
   onPressReason,
+  onPressShare,
   showCommentPreview = true,
   previewComments,
   captionNumberOfLines = 2,
@@ -196,14 +199,12 @@ export function PostCard({
   likedRef.current = liked;
 
   const playBurst = useCallback(() => {
-    burstScale.value = withSequence(
-      withTiming(0, { duration: 0 }),
-      withSpring(1, BURST_SPRING),
-      withDelay(280, withTiming(1.25, { duration: 200 })),
-    );
+    // Pop in with the spring's overshoot, hold at rest, then fade -- the real
+    // animation never grows a second time right before it disappears.
+    burstScale.value = withSequence(withTiming(0, { duration: 0 }), withSpring(1, BURST_SPRING));
     burstOpacity.value = withSequence(
       withTiming(1, { duration: 0 }),
-      withDelay(460, withTiming(0, { duration: 200 })),
+      withDelay(300, withTiming(0, { duration: 200 })),
     );
   }, [burstScale, burstOpacity]);
 
@@ -294,7 +295,6 @@ export function PostCard({
           url={avatarUrl}
           username={authorUsername}
           size={32}
-          ring
           onPress={onPressAuthor}
         />
 
@@ -357,10 +357,24 @@ export function PostCard({
           hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel="Comment"
-          style={styles.action}
+          style={onPressShare ? styles.action : undefined}
         >
-          <Feather name="message-circle" size={24} color={colors.text} />
+          <Ionicons name="chatbubble-outline" size={23} color={colors.text} />
         </Pressable>
+
+        {onPressShare ? (
+          <>
+            <View style={styles.actionsSpacer} />
+            <Pressable
+              onPress={onPressShare}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Share"
+            >
+              <Ionicons name="paper-plane-outline" size={23} color={colors.text} />
+            </Pressable>
+          </>
+        ) : null}
       </View>
 
       {/* Meta */}
@@ -507,6 +521,9 @@ const styles = StyleSheet.create({
   },
   action: {
     marginRight: spacing.lg,
+  },
+  actionsSpacer: {
+    flex: 1,
   },
   meta: {
     paddingHorizontal: spacing.md,

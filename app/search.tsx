@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { FlatList, StyleSheet, TextInput, View } from 'react-native';
+import { FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { EmptyState } from '../components/EmptyState';
 import { UserRow } from '../components/UserRow';
-import { useSearchProfiles } from '../lib/queries';
+import { useSearchProfiles, useSuggestedProfiles } from '../lib/queries';
 import { useTheme } from '../lib/theme';
 
 /**
@@ -13,14 +13,21 @@ import { useTheme } from '../lib/theme';
  * Doubles as ishaan's "new message" picker: opened as `/search?intent=dm`
  * (from the DM inbox's compose button), a tap opens a thread instead of a
  * profile.
+ *
+ * Before anything is typed, the list shows up to 5 suggested accounts
+ * (useSuggestedProfiles) instead of sitting empty — the moment there's a
+ * query, that list is replaced by real search results.
  */
 export default function Search() {
   const router = useRouter();
   const { intent } = useLocalSearchParams<{ intent?: string }>();
   const isDmIntent = intent === 'dm';
   const [q, setQ] = useState('');
+  const isSearching = q.trim().length > 0;
   const { data: results } = useSearchProfiles(q);
+  const { data: suggested } = useSuggestedProfiles();
   const { colors } = useTheme();
+  const data = isSearching ? results ?? [] : suggested ?? [];
 
   return (
     <View style={[styles.root, { backgroundColor: colors.surface }]}>
@@ -37,11 +44,16 @@ export default function Search() {
       />
 
       <FlatList
-        data={results ?? []}
+        data={data}
         keyExtractor={(p) => p.id}
         keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={
+          !isSearching && data.length > 0 ? (
+            <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>Suggested</Text>
+          ) : null
+        }
         ListEmptyComponent={
-          q.trim() ? (
+          isSearching ? (
             <EmptyState icon="search" title="No accounts found" body={`Nothing matching "${q}".`} />
           ) : null
         }
@@ -66,5 +78,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 15,
+  },
+  sectionHeader: {
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 8,
   },
 });

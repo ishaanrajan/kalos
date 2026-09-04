@@ -87,7 +87,7 @@ const FilterThumb = React.memo(function FilterThumb({
         numberOfLines={1}
         style={[
           styles.label,
-          { color: selected ? colors.accent : colors.textSecondary },
+          { color: selected ? colors.text : colors.textSecondary },
           selected && styles.labelSelected,
         ]}
         allowFontScaling={false}

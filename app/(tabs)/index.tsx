@@ -16,7 +16,7 @@ import type { FeedPost } from '../../lib/types';
 export default function Feed() {
   const router = useRouter();
   const userId = useUserId();
-  const { colors } = useTheme();
+  const { colors, wordmarkFontFamily } = useTheme();
   const { data: hasUnreadDMs } = useHasUnreadDMs();
   const {
     data,
@@ -67,6 +67,7 @@ export default function Feed() {
         onPressComments={() => router.push(`/post/${item.id}`)}
         onPressLikes={() => router.push(`/likes/${item.id}`)}
         onPressOptions={item.author_id === userId ? () => deleteOwnPost(item) : undefined}
+        onPressShare={() => router.push('/dm')}
         previewComments={item.preview_comments}
       />
     ),
@@ -98,8 +99,19 @@ export default function Feed() {
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <View style={styles.headerSpacer} />
-        <Text style={[styles.wordmark, { color: colors.text }]}>Kalos</Text>
+        <View style={styles.headerSpacer}>
+          <Pressable
+            onPress={() => router.push('/(tabs)/new')}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="New post"
+          >
+            <Feather name="camera" size={22} color={colors.text} />
+          </Pressable>
+        </View>
+        <Text style={[styles.wordmark, { color: colors.text, fontFamily: wordmarkFontFamily }]}>
+          Kalos
+        </Text>
         <View style={styles.headerSpacer}>
           <Pressable
             onPress={() => router.push('/dm')}
@@ -126,6 +138,8 @@ export default function Feed() {
             icon="camera"
             title="Your feed is quiet"
             body="Follow a few people, or post the first photo yourself."
+            actionLabel="Find people to follow"
+            onAction={() => router.push('/search')}
           />
         }
         // The feed ends. When there is no next page we say so, rather than

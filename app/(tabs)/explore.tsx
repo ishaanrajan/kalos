@@ -12,7 +12,7 @@ import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
 
 /** Posts of your own required before Explore unlocks. */
-const POSTS_TO_UNLOCK = 5;
+export const POSTS_TO_UNLOCK = 5;
 
 /**
  * Explore, the way it used to work.
@@ -161,14 +161,16 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 4,
     bottom: 4,
-    right: 4,
+    maxWidth: '85%',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-    borderRadius: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    // Pill-shaped, matching the app's own overlay-badge radius token rather
+    // than dipping below its type floor with a squared-off corner.
+    borderRadius: 999,
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
-  reasonText: { flex: 1, color: '#fff', fontSize: 9, fontWeight: '600' },
+  reasonText: { flexShrink: 1, color: '#fff', fontSize: 10, fontWeight: '600' },
 });

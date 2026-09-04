@@ -91,21 +91,29 @@ export default function OnboardingAvatar() {
         </Pressable>
       </View>
 
-      <Pressable
-        style={[
-          styles.continueButton,
-          { backgroundColor: colors.accent },
-          !pendingAvatar && styles.continueDisabled,
-        ]}
-        onPress={save}
-        disabled={!pendingAvatar || saving}
-      >
-        {saving ? (
-          <ActivityIndicator color={'#ffffff'} />
-        ) : (
-          <Text style={[styles.continueText, { color: '#ffffff' }]}>Continue</Text>
-        )}
-      </Pressable>
+      <View style={styles.footer}>
+        <Pressable
+          style={[
+            styles.continueButton,
+            { backgroundColor: colors.accent },
+            !pendingAvatar && styles.continueDisabled,
+          ]}
+          onPress={save}
+          disabled={!pendingAvatar || saving}
+        >
+          {saving ? (
+            <ActivityIndicator color={'#ffffff'} />
+          ) : (
+            <Text style={[styles.continueText, { color: '#ffffff' }]}>Continue</Text>
+          )}
+        </Pressable>
+
+        {!pendingAvatar ? (
+          <Text style={[styles.continueHint, { color: colors.textSecondary }]}>
+            Choose a photo to continue
+          </Text>
+        ) : null}
+      </View>
     </SafeAreaView>
   );
 }
@@ -141,12 +149,16 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   pickText: { fontSize: 14, fontWeight: '600', marginTop: 20 },
+  footer: { marginHorizontal: 24, marginBottom: 24 },
   continueButton: {
     borderRadius: 8,
     paddingVertical: 14,
     alignItems: 'center',
-    marginHorizontal: 24,
-    marginBottom: 24,
+  },
+  continueHint: {
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 10,
   },
   continueDisabled: { opacity: 0.4 },
   continueText: { fontWeight: '600', fontSize: 15 },

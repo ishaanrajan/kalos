@@ -94,10 +94,19 @@ export default function PostScreen() {
             }}
             imageUrl={photoUrl(post.image_path)}
             avatarUrl={avatarUrl(post.author.avatar_path)}
-            onLike={() => toggleLike.mutate({ postId: post.id, liked: post.viewer_has_liked })}
+            onLike={() =>
+              toggleLike.mutate(
+                { postId: post.id, liked: post.viewer_has_liked },
+                {
+                  onError: (e) =>
+                    Alert.alert('Could not update like', e instanceof Error ? e.message : undefined),
+                }
+              )
+            }
             onPressAuthor={() => router.push(`/profile/${post.author.username}`)}
             onPressLikes={() => router.push(`/likes/${post.id}`)}
             onPressOptions={post.author.id === userId ? deleteThisPost : undefined}
+            onPressShare={() => router.push('/dm')}
             showCommentPreview={false}
           />
         }

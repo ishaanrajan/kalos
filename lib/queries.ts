@@ -108,18 +108,36 @@ export function useProfilePosts(profileId: string | undefined) {
   });
 }
 
+/**
+ * The single-post / comments screen. This is a raw table query, not one of
+ * the feed RPCs, so `viewer_has_liked` isn't a real column on `posts` --
+ * it has to be fetched separately (a plain `likes` row lookup, same table
+ * `useToggleLike` itself writes to) and merged in. Without this, the heart
+ * on this screen would always read as "not liked", and `onLike` would always
+ * try to INSERT a like that may already exist.
+ */
 export function usePost(postId: string | undefined) {
+  const userId = useUserId();
   return useQuery({
-    queryKey: ['post', postId],
+    queryKey: ['post', postId, userId],
     enabled: !!postId,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('posts')
-        .select('*, author:profiles!posts_author_id_fkey(id, username, display_name, avatar_path)')
-        .eq('id', postId!)
-        .single();
-      if (error) throw error;
-      return data as FeedPost & { author: Pick<Profile, 'id' | 'username' | 'display_name' | 'avatar_path'> };
+      const [postResult, likeResult] = await Promise.all([
+        supabase
+          .from('posts')
+          .select('*, author:profiles!posts_author_id_fkey(id, username, display_name, avatar_path)')
+          .eq('id', postId!)
+          .single(),
+        userId
+          ? supabase.from('likes').select('post_id').eq('post_id', postId!).eq('user_id', userId).maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+      ]);
+      if (postResult.error) throw postResult.error;
+      if (likeResult.error) throw likeResult.error;
+      return {
+        ...postResult.data,
+        viewer_has_liked: !!likeResult.data,
+      } as FeedPost & { author: Pick<Profile, 'id' | 'username' | 'display_name' | 'avatar_path'> };
     },
   });
 }
@@ -187,17 +205,29 @@ export function useToggleLike() {
           ? { ...p, viewer_has_liked: !liked, like_count: p.like_count + (liked ? -1 : 1) }
           : p;
 
-      const snapshots = qc.getQueriesData<InfiniteData<FeedPost[]>>({ queryKey: ['home_feed'] })
+      const feedSnapshots = qc.getQueriesData<InfiniteData<FeedPost[]>>({ queryKey: ['home_feed'] })
         .concat(qc.getQueriesData<InfiniteData<FeedPost[]>>({ queryKey: ['explore_feed'] }));
 
-      for (const [key, value] of snapshots) {
+      for (const [key, value] of feedSnapshots) {
         if (!value) continue;
         qc.setQueryData<InfiniteData<FeedPost[]>>(key, {
           ...value,
           pages: value.pages.map((page) => page.map(patch)),
         });
       }
-      return { snapshots };
+
+      // The single-post screen (app/post/[id].tsx) isn't an infinite-query
+      // page, it's one `['post', postId, userId]` entry -- patch it too so
+      // that screen's heart doesn't sit stale until the round trip completes.
+      const postSnapshots = qc.getQueriesData<FeedPost>({ queryKey: ['post', postId] });
+      for (const [key, value] of postSnapshots) {
+        if (!value) continue;
+        qc.setQueryData(key, patch(value));
+      }
+
+      return {
+        snapshots: [...feedSnapshots, ...postSnapshots] as [readonly unknown[], unknown][],
+      };
     },
     onError: (_err, _vars, ctx) => {
       for (const [key, value] of ctx?.snapshots ?? []) qc.setQueryData(key, value);
@@ -380,6 +410,25 @@ export function useSearchProfiles(q: string) {
   });
 }
 
+/**
+ * Five accounts one hop further into the viewer's graph -- people followed by
+ * people they follow, minus anyone already followed and the viewer
+ * themselves. Shown under the search bar before a query is typed. Same
+ * no-backfill rule as Explore: a viewer who follows nobody gets an empty list.
+ */
+export function useSuggestedProfiles() {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: ['suggested-profiles', userId],
+    enabled: !!userId,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('suggested_profiles', { lim: 5 });
+      if (error) throw error;
+      return (data ?? []) as Profile[];
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // DMs — a thread's identity is the pair (thread_user_id, thread_with_id):
 // which human, and which of the small set of accounts allowed to write into
@@ -388,7 +437,38 @@ export function useSearchProfiles(q: string) {
 // own inbox only ever manages the ones where thread_with_id = his own id.
 // ---------------------------------------------------------------------------
 
+/**
+ * A thread's messages, kept live by a Realtime subscription -- without this,
+ * a message sent from the other side never appears until you leave the
+ * screen and come back (the typing indicator is a real Realtime broadcast
+ * channel already; the messages themselves weren't). The subscription can
+ * only filter on one column, so it's scoped to `thread_user_id` and the
+ * handler double-checks `thread_with_id` client-side before invalidating --
+ * cheap, since a filter that's slightly too broad just means the odd wasted
+ * refetch of a query no screen currently cares about.
+ */
 export function useDMThread(threadUserId: string | undefined, threadWithId: string | undefined) {
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    if (!threadUserId || !threadWithId) return;
+    const channel = supabase
+      .channel(`dm-thread:${threadUserId}:${threadWithId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'dm_messages', filter: `thread_user_id=eq.${threadUserId}` },
+        (payload) => {
+          if ((payload.new as { thread_with_id?: string }).thread_with_id === threadWithId) {
+            qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId, threadWithId] });
+          }
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [threadUserId, threadWithId, qc]);
+
   return useQuery({
     queryKey: ['dm-thread', threadUserId, threadWithId],
     enabled: !!threadUserId && !!threadWithId,
@@ -421,6 +501,7 @@ export function useSendDM(threadUserId: string | undefined, threadWithId: string
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId, threadWithId] });
       qc.invalidateQueries({ queryKey: ['dm-inbox'] });
+      qc.invalidateQueries({ queryKey: ['dm-my-threads'] });
     },
   });
 }
@@ -441,9 +522,9 @@ export function useDMInbox() {
 /**
  * A regular user's own threads (ishaan, and the Drake bot), keyed by
  * thread_with_id, with a preview of the latest message in each if any.
- * Unlike dm_inbox() -- ishaan's cross-user inbox -- there's no RPC here:
- * a regular account only ever has two possible thread_with_id values, so
- * bucketing client-side is simpler than a second SQL function for it.
+ * Goes through `my_dm_thread_previews()` (0018) rather than fetching a
+ * user's entire message history and reducing it client-side -- that used to
+ * pull every row in both threads just to keep two preview lines.
  */
 export function useMyDMThreads() {
   const userId = useUserId();
@@ -451,15 +532,20 @@ export function useMyDMThreads() {
     queryKey: ['dm-my-threads', userId],
     enabled: !!userId,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('dm_messages')
-        .select('thread_with_id, sender_id, body, created_at')
-        .eq('thread_user_id', userId!)
-        .order('created_at', { ascending: false });
+      const { data, error } = await supabase.rpc('my_dm_thread_previews');
       if (error) throw error;
       const latest = new Map<string, { sender_id: string; body: string; created_at: string }>();
-      for (const row of data ?? []) {
-        if (!latest.has(row.thread_with_id)) latest.set(row.thread_with_id, row);
+      for (const row of (data ?? []) as {
+        thread_with_id: string;
+        last_sender_id: string;
+        last_body: string;
+        last_created_at: string;
+      }[]) {
+        latest.set(row.thread_with_id, {
+          sender_id: row.last_sender_id,
+          body: row.last_body,
+          created_at: row.last_created_at,
+        });
       }
       return latest;
     },
@@ -467,21 +553,30 @@ export function useMyDMThreads() {
 }
 
 /**
- * Red-dot state for the DM icon. RLS already scopes visible rows to "my
- * thread" for a regular user or "every thread" for ishaan, so a plain
- * unread-and-not-from-me count is correct for both without branching here.
+ * Red-dot state for the DM icon. RLS lets ishaan SELECT every row in the
+ * table (see 0008_dm.sql), including threads he's not actually a party to
+ * (e.g. a Drake DM to a regular user) -- an unscoped unread count would pick
+ * those up too, and since ishaan has no screen that can ever open or mark
+ * read a thread he's not in, the badge would stay lit forever after the
+ * first one. Scope explicitly instead of trusting RLS to do it: a regular
+ * user only ever has unread messages in their own `thread_user_id` bucket;
+ * ishaan only ever has unread messages in threads addressed to him.
  */
 export function useHasUnreadDMs() {
+  const { profile } = useAuth();
   const userId = useUserId();
+  const isIshaan = profile?.username === 'ishaan';
   return useQuery({
     queryKey: ['dm-unread', userId],
     enabled: !!userId,
     queryFn: async () => {
-      const { count, error } = await supabase
+      let query = supabase
         .from('dm_messages')
         .select('*', { count: 'exact', head: true })
         .is('read_at', null)
         .neq('sender_id', userId!);
+      query = isIshaan ? query.eq('thread_with_id', userId!) : query.eq('thread_user_id', userId!);
+      const { count, error } = await query;
       if (error) throw error;
       return (count ?? 0) > 0;
     },
@@ -512,6 +607,7 @@ export function useMarkDMRead(threadUserId: string | undefined, threadWithId: st
       qc.invalidateQueries({ queryKey: ['dm-unread'] });
       qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId, threadWithId] });
       qc.invalidateQueries({ queryKey: ['dm-inbox'] });
+      qc.invalidateQueries({ queryKey: ['dm-my-threads'] });
     },
   });
 }
@@ -533,9 +629,15 @@ export function useTypingIndicator(
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSentRef = useRef(0);
+  // The channel object exists synchronously once `.channel()` returns, but
+  // the Realtime join it kicks off is async -- sending a broadcast before
+  // that join completes is silently dropped, which meant typing fast enough
+  // right after opening a thread never notified the other side at all.
+  const joinedRef = useRef(false);
 
   useEffect(() => {
     setOtherTyping(false);
+    joinedRef.current = false;
     if (!threadUserId || !threadWithId) return;
 
     const channel = supabase
@@ -551,10 +653,13 @@ export function useTypingIndicator(
         if (clearTimer.current) clearTimeout(clearTimer.current);
         clearTimer.current = setTimeout(() => setOtherTyping(false), 3000);
       })
-      .subscribe();
+      .subscribe((status) => {
+        joinedRef.current = status === 'SUBSCRIBED';
+      });
     channelRef.current = channel;
 
     return () => {
+      joinedRef.current = false;
       if (clearTimer.current) clearTimeout(clearTimer.current);
       supabase.removeChannel(channel);
       channelRef.current = null;
@@ -562,6 +667,7 @@ export function useTypingIndicator(
   }, [threadUserId, threadWithId, meId]);
 
   const notifyTyping = useCallback(() => {
+    if (!joinedRef.current) return;
     // Throttled -- one broadcast per burst of typing is plenty, no need to
     // send on every keystroke.
     const now = Date.now();

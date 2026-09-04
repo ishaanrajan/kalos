@@ -108,7 +108,10 @@ export function LikeButton({
       <Animated.View style={animatedStyle}>
         <Ionicons
           name={liked ? 'heart' : 'heart-outline'}
-          size={size}
+          // The outline glyph's stroke reads heavier than a hairline at equal
+          // size, which flattens the outline -> filled "pop" -- sizing it down
+          // a touch restores that contrast without touching the filled state.
+          size={liked ? size : size - 2}
           color={liked ? (likedColor ?? colors.heart) : (color ?? colors.text)}
         />
       </Animated.View>

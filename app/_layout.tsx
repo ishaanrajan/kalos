@@ -78,6 +78,7 @@ function RootNavigator() {
     const sub = Notifications.addNotificationReceivedListener(() => {
       queryClient.invalidateQueries({ queryKey: ['dm-unread'] });
       queryClient.invalidateQueries({ queryKey: ['dm-inbox'] });
+      queryClient.invalidateQueries({ queryKey: ['dm-my-threads'] });
       queryClient.invalidateQueries({ queryKey: ['activity'] });
     });
     return () => sub.remove();

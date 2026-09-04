@@ -142,6 +142,20 @@ export const fontFamily: string | undefined = Platform.select({
   default: undefined,
 });
 
+/**
+ * For the "Kalos" wordmark only -- everywhere else in the UI is correctly
+ * Helvetica Neue, which is exactly why a thin-weight cut of that same face
+ * reads wrong for the one piece of hand-lettered logotype a 2015 user would
+ * have actually seen. Falls back to plain `fontFamily` wherever no system
+ * script face exists (Android has no built-in equivalent to iOS's Snell
+ * Roundhand) rather than shipping a licensed font file for one word.
+ */
+export const wordmarkFontFamily: string | undefined = Platform.select({
+  ios: 'Snell Roundhand',
+  web: '"Segoe Script", "Bradley Hand", cursive',
+  default: fontFamily,
+});
+
 export interface TypeScale {
   /** Thin, large — empty states and "You're all caught up". */
   display: TextStyle;
@@ -226,6 +240,7 @@ export interface Theme {
   typography: TypeScale;
   hairlineWidth: number;
   fontFamily: string | undefined;
+  wordmarkFontFamily: string | undefined;
 }
 
 export const lightTheme: Theme = {
@@ -236,6 +251,7 @@ export const lightTheme: Theme = {
   typography,
   hairlineWidth,
   fontFamily,
+  wordmarkFontFamily,
 };
 
 export const darkTheme: Theme = {
@@ -246,6 +262,7 @@ export const darkTheme: Theme = {
   typography,
   hairlineWidth,
   fontFamily,
+  wordmarkFontFamily,
 };
 
 /**

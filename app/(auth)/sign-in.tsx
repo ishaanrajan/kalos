@@ -9,17 +9,18 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Link } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
 
 export default function SignIn() {
   const { signIn } = useAuth();
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const { colors } = useTheme();
+  const { colors, wordmarkFontFamily } = useTheme();
 
   const disabled = busy || !email.trim() || !password;
 
@@ -41,7 +42,9 @@ export default function SignIn() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.card}>
-        <Text style={[styles.wordmark, { color: colors.text }]}>Kalos</Text>
+        <Text style={[styles.wordmark, { color: colors.text, fontFamily: wordmarkFontFamily }]}>
+          Kalos
+        </Text>
         <Text style={[styles.tagline, { color: colors.textSecondary }]}>
           Photos from people you actually follow.
         </Text>
@@ -91,9 +94,9 @@ export default function SignIn() {
           <Text style={[styles.footerText, { color: colors.textSecondary }]}>
             Don't have an account?{' '}
           </Text>
-          <Link href="/(auth)/sign-up" style={[styles.footerLink, { color: colors.accent }]}>
-            Sign up
-          </Link>
+          <Pressable onPress={() => router.replace('/(auth)/sign-up')} hitSlop={8}>
+            <Text style={[styles.footerLink, { color: colors.accent }]}>Sign up</Text>
+          </Pressable>
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -101,8 +104,8 @@ export default function SignIn() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, justifyContent: 'center' },
-  card: { paddingHorizontal: 32 },
+  root: { flex: 1, justifyContent: 'flex-start' },
+  card: { paddingHorizontal: 32, marginTop: '18%' },
   wordmark: {
     fontSize: 44,
     textAlign: 'center',
