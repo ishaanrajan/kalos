@@ -67,6 +67,8 @@ so re-applying a file after a tweak is safe.
 | `0014_dm_multi_thread.sql` | `dm_messages.thread_with_id` — a thread's real identity is now (thread_user_id, thread_with_id), so a Drake DM no longer lands mixed into the ishaan thread |
 | `0015_home_feed_comment_preview.sql` | `home_feed()` gains `preview_comments` — the 2 most recent comments per post, for `PostCard`'s inline preview |
 | `0016_welcome_email_log.sql` | `profiles.welcome_emailed_at` — lets `welcome-email` skip an account it's already emailed |
+| `0017_suggested_profiles.sql` | `suggested_profiles()` — the 5 accounts shown under the search bar before a query is typed, reusing Explore's `followed_by` graph logic |
+| `0018_dm_hardening.sql` | DM fixes from a subsystem review: `thread_with_id`'s FK now cascades on delete, RLS actually enforces the "ishaan or Drake only" thread model post-0014, `my_dm_thread_previews()` replaces a full-history client-side reduction, and `dm_messages` is added to the `supabase_realtime` publication so a thread updates live |
 
 ### Option A — SQL editor (no tooling required)
 
