@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -11,12 +12,12 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatCommentAge } from '../../components/CommentRow';
 import { EmptyState } from '../../components/EmptyState';
 import { Avatar } from '../../components/Avatar';
-import { useDMThread, useMarkDMRead, useProfile, useSendDM } from '../../lib/queries';
+import { useDMThread, useMarkDMRead, useProfile, useSendDM, useTypingIndicator } from '../../lib/queries';
 import { avatarUrl } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
@@ -32,6 +33,7 @@ import type { DMMessage } from '../../lib/types';
  */
 export default function DMThread() {
   const { username } = useLocalSearchParams<{ username: string }>();
+  const router = useRouter();
   const { profile: me } = useAuth();
   const { data: other, isLoading: otherLoading } = useProfile(username);
   const [draft, setDraft] = useState('');
@@ -46,6 +48,7 @@ export default function DMThread() {
   const { data: messages, isLoading: messagesLoading } = useDMThread(threadUserId, threadWithId);
   const sendDM = useSendDM(threadUserId, threadWithId);
   const markRead = useMarkDMRead(threadUserId, threadWithId);
+  const { otherTyping, notifyTyping } = useTypingIndicator(threadUserId, threadWithId, me?.id ?? null);
 
   // Opening the thread is what "read" means -- mark whatever's here now.
   useEffect(() => {
@@ -85,7 +88,15 @@ export default function DMThread() {
       // leaving the composer cramped against the keyboard.
       keyboardVerticalOffset={insets.top + 44}
     >
-      <Stack.Screen options={{ title: other.username }} />
+      <Stack.Screen
+        options={{
+          headerTitle: () => (
+            <Pressable onPress={() => router.push(`/profile/${other.username}`)} hitSlop={8}>
+              <Text style={[styles.headerTitle, { color: colors.text }]}>{other.username}</Text>
+            </Pressable>
+          ),
+        }}
+      />
 
       <FlatList
         ref={listRef}
@@ -98,6 +109,7 @@ export default function DMThread() {
         // (sent or received), so this covers both without needing to tell
         // the two apart.
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+        ListFooterComponent={otherTyping ? <TypingBubble /> : null}
         ListEmptyComponent={
           messagesLoading ? (
             <ActivityIndicator style={styles.loading} />
@@ -138,7 +150,10 @@ export default function DMThread() {
           placeholder="Message…"
           placeholderTextColor={colors.textSecondary}
           value={draft}
-          onChangeText={setDraft}
+          onChangeText={(text) => {
+            setDraft(text);
+            if (text.trim()) notifyTyping();
+          }}
           onSubmitEditing={submit}
           returnKeyType="send"
           multiline
@@ -195,6 +210,39 @@ function Bubble({
   );
 }
 
+/** Three staggered pulsing dots, left-aligned like a received bubble. */
+function TypingBubble() {
+  const { colors } = useTheme();
+  const dots = useRef([0, 1, 2].map(() => new Animated.Value(0.3))).current;
+
+  useEffect(() => {
+    const loops = dots.map((value, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 150),
+          Animated.timing(value, { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.timing(value, { toValue: 0.3, duration: 300, useNativeDriver: true }),
+        ])
+      )
+    );
+    loops.forEach((l) => l.start());
+    return () => loops.forEach((l) => l.stop());
+  }, [dots]);
+
+  return (
+    <View style={styles.bubbleRow}>
+      <View style={[styles.bubble, styles.typingBubble, { backgroundColor: colors.surfaceAlt }]}>
+        {dots.map((value, i) => (
+          <Animated.View
+            key={i}
+            style={[styles.typingDot, { backgroundColor: colors.textSecondary, opacity: value }]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -214,6 +262,9 @@ const styles = StyleSheet.create({
   age: { fontSize: 11, marginTop: 3, marginHorizontal: 4 },
   ageMine: { alignSelf: 'flex-end' },
   seen: { fontSize: 11, marginTop: 1, marginHorizontal: 4, alignSelf: 'flex-end' },
+  typingBubble: { flexDirection: 'row', gap: 4, alignItems: 'center', paddingVertical: 13 },
+  typingDot: { width: 6, height: 6, borderRadius: 3 },
+  headerTitle: { fontSize: 17, fontWeight: '600' },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',

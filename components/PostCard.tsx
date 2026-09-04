@@ -33,16 +33,9 @@ import Feather from '@expo/vector-icons/Feather';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
 import { hairlineWidth, spacing, useTheme } from '../lib/theme';
-import type { FeedPost, Timestamp, UUID } from '../lib/types';
+import type { CommentPreview, FeedPost, Timestamp } from '../lib/types';
 import { Avatar } from './Avatar';
 import { LikeButton } from './LikeButton';
-
-/** A comment rendered inline under the caption. */
-export interface PostCardComment {
-  id: UUID;
-  username: string;
-  body: string;
-}
 
 export interface PostCardProps {
   /**
@@ -72,7 +65,7 @@ export interface PostCardProps {
   /** Shows the "View all N comments" line. Defaults to true. */
   showCommentPreview?: boolean;
   /** Comments rendered inline between the caption and the timestamp. */
-  previewComments?: PostCardComment[];
+  previewComments?: CommentPreview[];
   /** Caption lines before the "more" affordance. Defaults to 2. */
   captionNumberOfLines?: number;
   style?: StyleProp<ViewStyle>;
@@ -440,6 +433,8 @@ export function PostCard({
             key={comment.id}
             style={[typography.body, styles.previewComment, { color: colors.text }]}
             numberOfLines={2}
+            onPress={onPressComments}
+            suppressHighlighting
           >
             <Text style={[typography.bodyStrong, { color: colors.text }]}>
               {comment.username}

@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   useInfiniteQuery,
   useMutation,
@@ -485,6 +486,63 @@ export function useMarkDMRead(threadUserId: string | undefined, threadWithId: st
       qc.invalidateQueries({ queryKey: ['dm-inbox'] });
     },
   });
+}
+
+/**
+ * Ephemeral "is typing" state over a Supabase Realtime broadcast channel --
+ * nothing here touches the database, it only exists for as long as both
+ * people happen to be in the thread at the same time. Scoped to the same
+ * (threadUserId, threadWithId) pair that identifies a DM thread, so both
+ * participants land on the same channel regardless of which side of it
+ * they're on.
+ */
+export function useTypingIndicator(
+  threadUserId: string | undefined,
+  threadWithId: string | undefined,
+  meId: string | null
+) {
+  const [otherTyping, setOtherTyping] = useState(false);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSentRef = useRef(0);
+
+  useEffect(() => {
+    setOtherTyping(false);
+    if (!threadUserId || !threadWithId) return;
+
+    const channel = supabase
+      .channel(`dm-typing:${threadUserId}:${threadWithId}`, {
+        config: { broadcast: { self: false } },
+      })
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        if (payload?.userId === meId) return;
+        setOtherTyping(true);
+        // No explicit "stopped typing" event -- this just expires on its
+        // own, same as iMessage/WhatsApp, so a dropped connection or a
+        // closed app can't leave the bubble stuck on forever.
+        if (clearTimer.current) clearTimeout(clearTimer.current);
+        clearTimer.current = setTimeout(() => setOtherTyping(false), 3000);
+      })
+      .subscribe();
+    channelRef.current = channel;
+
+    return () => {
+      if (clearTimer.current) clearTimeout(clearTimer.current);
+      supabase.removeChannel(channel);
+      channelRef.current = null;
+    };
+  }, [threadUserId, threadWithId, meId]);
+
+  const notifyTyping = useCallback(() => {
+    // Throttled -- one broadcast per burst of typing is plenty, no need to
+    // send on every keystroke.
+    const now = Date.now();
+    if (now - lastSentRef.current < 2000) return;
+    lastSentRef.current = now;
+    channelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { userId: meId } });
+  }, [meId]);
+
+  return { otherTyping, notifyTyping };
 }
 
 /** Red-dot state for the Activity tab: anything newer than the last visit? */

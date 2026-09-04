@@ -54,6 +54,13 @@ export interface Comment {
   author?: Pick<Profile, 'id' | 'username' | 'avatar_path'>;
 }
 
+/** The 2 most recent comments on a post, for PostCard's inline preview. */
+export interface CommentPreview {
+  id: UUID;
+  username: string;
+  body: string;
+}
+
 /**
  * A post as returned by the home_feed / explore_feed RPCs: the post columns
  * flattened together with its author and the viewer's own like state.
@@ -64,6 +71,8 @@ export interface FeedPost extends Post {
   author_avatar_path: string | null;
   /** Whether the current viewer has liked this post. */
   viewer_has_liked: boolean;
+  /** Only populated by home_feed. */
+  preview_comments?: CommentPreview[];
   /** Only populated by explore_feed — why this post is being shown. */
   reason?: ExploreReason;
   /** Username of the follow that connects the viewer to this post. */
