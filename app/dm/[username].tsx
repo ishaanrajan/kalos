@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -35,6 +35,7 @@ export default function DMThread() {
   const [draft, setDraft] = useState('');
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const listRef = useRef<FlatList<DMMessage>>(null);
 
   const isIshaan = me?.username === 'ishaan';
   const threadUserId = isIshaan ? other?.id : me?.id;
@@ -84,10 +85,16 @@ export default function DMThread() {
       <Stack.Screen options={{ title: other.username }} />
 
       <FlatList
+        ref={listRef}
         data={messages ?? []}
         keyExtractor={(m) => m.id}
         inverted={false}
         contentContainerStyle={styles.listContent}
+        // Messages are oldest-first, so "the bottom" is the newest one --
+        // content size changes on the initial load and on every new message
+        // (sent or received), so this covers both without needing to tell
+        // the two apart.
+        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
         ListEmptyComponent={
           messagesLoading ? (
             <ActivityIndicator style={styles.loading} />
