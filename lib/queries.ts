@@ -439,6 +439,34 @@ export function useDMInbox() {
 }
 
 /**
+ * A regular user's own threads (ishaan, and the Drake bot), keyed by
+ * thread_with_id, with a preview of the latest message in each if any.
+ * Unlike dm_inbox() -- ishaan's cross-user inbox -- there's no RPC here:
+ * a regular account only ever has two possible thread_with_id values, so
+ * bucketing client-side is simpler than a second SQL function for it.
+ */
+export function useMyDMThreads() {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: ['dm-my-threads', userId],
+    enabled: !!userId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('dm_messages')
+        .select('thread_with_id, sender_id, body, created_at')
+        .eq('thread_user_id', userId!)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const latest = new Map<string, { sender_id: string; body: string; created_at: string }>();
+      for (const row of data ?? []) {
+        if (!latest.has(row.thread_with_id)) latest.set(row.thread_with_id, row);
+      }
+      return latest;
+    },
+  });
+}
+
+/**
  * Red-dot state for the DM icon. RLS already scopes visible rows to "my
  * thread" for a regular user or "every thread" for ishaan, so a plain
  * unread-and-not-from-me count is correct for both without branching here.

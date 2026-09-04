@@ -8,7 +8,7 @@ import { EndOfFeed } from '../../components/EndOfFeed';
 import { EmptyState } from '../../components/EmptyState';
 import { useDeletePost, useHasUnreadDMs, useHomeFeed, useToggleLike } from '../../lib/queries';
 import { photoUrl, avatarUrl } from '../../lib/supabase';
-import { useAuth, useUserId } from '../../lib/auth';
+import { useUserId } from '../../lib/auth';
 import { confirmDestructive } from '../../lib/actionSheet';
 import { useTheme } from '../../lib/theme';
 import type { FeedPost } from '../../lib/types';
@@ -16,11 +16,7 @@ import type { FeedPost } from '../../lib/types';
 export default function Feed() {
   const router = useRouter();
   const userId = useUserId();
-  const { profile } = useAuth();
   const { colors } = useTheme();
-  // Everyone's one DM thread is with "ishaan" specifically; ishaan gets the
-  // inbox listing every thread instead of a single one.
-  const dmHref = profile?.username === 'ishaan' ? '/dm' : '/dm/ishaan';
   const { data: hasUnreadDMs } = useHasUnreadDMs();
   const {
     data,
@@ -106,7 +102,7 @@ export default function Feed() {
         <Text style={[styles.wordmark, { color: colors.text }]}>Kalos</Text>
         <View style={styles.headerSpacer}>
           <Pressable
-            onPress={() => router.push(dmHref)}
+            onPress={() => router.push('/dm')}
             hitSlop={12}
             accessibilityRole="button"
             accessibilityLabel={hasUnreadDMs ? 'Messages, unread' : 'Messages'}

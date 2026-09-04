@@ -1,27 +1,30 @@
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Redirect, Stack, useRouter } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { EmptyState } from '../../components/EmptyState';
 import { UserRow } from '../../components/UserRow';
 import { formatCommentAge } from '../../components/CommentRow';
-import { useDMInbox } from '../../lib/queries';
+import { useDMInbox, useMyDMThreads, useProfile } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
+import type { Profile } from '../../lib/types';
 
 /**
- * ishaan's inbox — every thread that's messaged him, most recent first.
- * Meaningless for anyone else, so anyone who isn't ishaan gets bounced
- * straight to their own (only) thread instead.
+ * The messages landing page. ishaan sees every thread that's messaged him
+ * (his real inbox); anyone else sees exactly their two possible threads --
+ * ishaan, and the Drake bot -- since those are the only two accounts
+ * allowed to write into someone else's thread (0008_dm.sql, 0014_dm_multi_thread.sql).
  */
 export default function DMInbox() {
+  const { profile: me } = useAuth();
+  return me?.username === 'ishaan' ? <IshaanInbox /> : <MyThreads />;
+}
+
+function IshaanInbox() {
   const { profile: me } = useAuth();
   const router = useRouter();
   const { data: threads, isLoading } = useDMInbox();
   const { colors } = useTheme();
-
-  if (me && me.username !== 'ishaan') {
-    return <Redirect href="/dm/ishaan" />;
-  }
 
   if (isLoading) {
     return (
@@ -78,6 +81,58 @@ export default function DMInbox() {
         )}
       />
     </>
+  );
+}
+
+/** Everyone but ishaan: a fixed two-row list, not a general inbox. */
+function MyThreads() {
+  const { profile: me } = useAuth();
+  const router = useRouter();
+  const { colors } = useTheme();
+  const { data: latestByThread, isLoading: threadsLoading } = useMyDMThreads();
+  const { data: ishaan, isLoading: ishaanLoading } = useProfile('ishaan');
+  const { data: bot, isLoading: botLoading } = useProfile('prosecco_daddy');
+
+  if (threadsLoading || ishaanLoading || botLoading || !ishaan || !bot) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.surface }]}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  const rows: Profile[] = [ishaan, bot];
+
+  return (
+    <FlatList
+      style={[styles.root, { backgroundColor: colors.surface }]}
+      data={rows}
+      keyExtractor={(p) => p.id}
+      renderItem={({ item }) => {
+        const latest = latestByThread?.get(item.id);
+        return (
+          <UserRow
+            profile={item}
+            onPress={() => router.push(`/dm/${item.username}`)}
+            accessory={
+              latest ? (
+                <View style={styles.preview}>
+                  <Text style={[styles.previewBody, { color: colors.textSecondary }]} numberOfLines={1}>
+                    {latest.sender_id === me?.id ? 'You: ' : ''}
+                    {latest.body}
+                  </Text>
+                  <Text style={[styles.previewAge, { color: colors.textSecondary }]}>
+                    {formatCommentAge(latest.created_at)}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={[styles.previewBody, { color: colors.textSecondary }]}>Say hi</Text>
+              )
+            }
+          />
+        );
+      }}
+    />
   );
 }
 
