@@ -36,6 +36,7 @@ import { hairlineWidth, spacing, useTheme } from '../lib/theme';
 import type { CommentPreview, FeedPost, Timestamp } from '../lib/types';
 import { Avatar } from './Avatar';
 import { LikeButton } from './LikeButton';
+import { MentionText } from './MentionText';
 
 export interface PostCardProps {
   /**
@@ -61,6 +62,8 @@ export interface PostCardProps {
   onPressOptions?: () => void;
   /** Tapping the Explore reason chip. */
   onPressReason?: () => void;
+  /** Tapping an @mention in the caption or a previewed comment. */
+  onPressMention?: (username: string) => void;
 
   /** Shows the "View all N comments" line. Defaults to true. */
   showCommentPreview?: boolean;
@@ -158,6 +161,7 @@ export function PostCard({
   onPressImage,
   onPressOptions,
   onPressReason,
+  onPressMention,
   showCommentPreview = true,
   previewComments,
   captionNumberOfLines = 2,
@@ -385,7 +389,7 @@ export function PostCard({
                 {authorUsername}
               </Text>
               {'  '}
-              {caption}
+              <MentionText text={caption} mentionColor={colors.accent} onPressMention={onPressMention} />
             </Text>
 
             {/* Off-screen copy, measured to decide whether "more" is warranted. */}
@@ -436,7 +440,7 @@ export function PostCard({
               {comment.username}
             </Text>
             {'  '}
-            {comment.body}
+            <MentionText text={comment.body} mentionColor={colors.accent} onPressMention={onPressMention} />
           </Text>
         ))}
 

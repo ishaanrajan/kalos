@@ -38,7 +38,25 @@ function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n).trimEnd()}…` : s;
 }
 
-async function resolve(payload: WebhookPayload): Promise<Notification | null> {
+// Same charset sign-up enforces (lowercase letters, digits, dots,
+// underscores, 3-30 chars) -- mirrors lib/mentions.ts's MENTION_RE. Kept as
+// a separate copy rather than a shared import since this function has no
+// access to the app's lib/ directory (Deno, deployed independently).
+const MENTION_RE = /@([a-z0-9._]{3,30})/gi;
+
+function extractMentionedUsernames(body: string): string[] {
+  const usernames = new Set<string>();
+  for (const match of body.matchAll(MENTION_RE)) {
+    usernames.add(match[1].toLowerCase());
+  }
+  return [...usernames];
+}
+
+// One event can fan out to more than one person -- a comment notifies its
+// post's author AND anyone @mentioned in it, and those can be different
+// people (or nobody, if the commenter only mentioned themselves or the
+// author, both filtered out below).
+async function resolve(payload: WebhookPayload): Promise<Notification[]> {
   const r = payload.record;
 
   switch (payload.table) {
@@ -51,72 +69,95 @@ async function resolve(payload: WebhookPayload): Promise<Notification | null> {
       // always resolved the recipient to ishaan -- he was getting pushed a
       // notification for every Drake DM sent to anyone.
       const recipientId = r.sender_id === r.thread_user_id ? r.thread_with_id : r.thread_user_id;
-      if (recipientId === r.sender_id) return null;
+      if (recipientId === r.sender_id) return [];
       const senderUsername = await usernameOf(r.sender_id);
-      return {
-        recipientId,
-        title: senderUsername,
-        body: truncate(r.body, 120),
-        url: `/dm/${senderUsername}`,
-      };
+      return [
+        {
+          recipientId,
+          title: senderUsername,
+          body: truncate(r.body, 120),
+          url: `/dm/${senderUsername}`,
+        },
+      ];
     }
 
     case 'likes': {
-      if (!r.post_id || !r.user_id) return null;
+      if (!r.post_id || !r.user_id) return [];
       const { data: post } = await db.from('posts').select('author_id').eq('id', r.post_id).single();
-      if (!post || post.author_id === r.user_id) return null;
+      if (!post || post.author_id === r.user_id) return [];
       const likerUsername = await usernameOf(r.user_id);
-      return {
-        recipientId: post.author_id,
-        title: 'Kalos',
-        body: `${likerUsername} liked your photo`,
-        url: `/post/${r.post_id}`,
-      };
+      return [
+        {
+          recipientId: post.author_id,
+          title: 'Kalos',
+          body: `${likerUsername} liked your photo`,
+          url: `/post/${r.post_id}`,
+        },
+      ];
     }
 
     case 'comments': {
-      if (!r.post_id || !r.author_id) return null;
+      if (!r.post_id || !r.author_id) return [];
       const { data: post } = await db.from('posts').select('author_id').eq('id', r.post_id).single();
-      if (!post || post.author_id === r.author_id) return null;
+      if (!post) return [];
       const commenterUsername = await usernameOf(r.author_id);
-      return {
-        recipientId: post.author_id,
-        title: 'Kalos',
-        body: `${commenterUsername}: ${truncate(r.body, 100)}`,
-        url: `/post/${r.post_id}`,
-      };
+      const notifications: Notification[] = [];
+
+      if (post.author_id !== r.author_id) {
+        notifications.push({
+          recipientId: post.author_id,
+          title: 'Kalos',
+          body: `${commenterUsername}: ${truncate(r.body, 100)}`,
+          url: `/post/${r.post_id}`,
+        });
+      }
+
+      const mentionedUsernames = extractMentionedUsernames(r.body ?? '');
+      if (mentionedUsernames.length > 0) {
+        const { data: mentioned } = await db
+          .from('profiles')
+          .select('id, username')
+          .in('username', mentionedUsernames);
+        for (const m of mentioned ?? []) {
+          // No self-mention ping, and no double ping for the post's own
+          // author -- they already got the comment notification above.
+          if (m.id === r.author_id || m.id === post.author_id) continue;
+          notifications.push({
+            recipientId: m.id,
+            title: 'Kalos',
+            body: `${commenterUsername} mentioned you: ${truncate(r.body, 100)}`,
+            url: `/post/${r.post_id}`,
+          });
+        }
+      }
+
+      return notifications;
     }
 
     case 'follows': {
-      if (!r.follower_id || !r.followee_id) return null;
+      if (!r.follower_id || !r.followee_id) return [];
       const followerUsername = await usernameOf(r.follower_id);
-      return {
-        recipientId: r.followee_id,
-        title: 'Kalos',
-        body: `${followerUsername} started following you`,
-        url: `/profile/${followerUsername}`,
-      };
+      return [
+        {
+          recipientId: r.followee_id,
+          title: 'Kalos',
+          body: `${followerUsername} started following you`,
+          url: `/profile/${followerUsername}`,
+        },
+      ];
     }
 
     default:
-      return null;
+      return [];
   }
 }
 
-Deno.serve(async (req) => {
-  const payload = (await req.json()) as WebhookPayload;
-
-  const notification = await resolve(payload).catch((e) => {
-    console.error('resolve failed', e);
-    return null;
-  });
-  if (!notification) return new Response('skipped', { status: 200 });
-
+async function sendPush(notification: Notification): Promise<void> {
   const { data: tokens } = await db
     .from('push_tokens')
     .select('token')
     .eq('user_id', notification.recipientId);
-  if (!tokens?.length) return new Response('no tokens', { status: 200 });
+  if (!tokens?.length) return;
 
   const messages = tokens.map((t) => ({
     to: t.token,
@@ -125,11 +166,25 @@ Deno.serve(async (req) => {
     data: { url: notification.url },
   }));
 
-  const res = await fetch('https://exp.host/--/api/v2/push/send', {
+  await fetch('https://exp.host/--/api/v2/push/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(messages),
   });
+}
 
-  return new Response(await res.text(), { status: res.ok ? 200 : 502 });
+Deno.serve(async (req) => {
+  const payload = (await req.json()) as WebhookPayload;
+
+  const notifications = await resolve(payload).catch((e) => {
+    console.error('resolve failed', e);
+    return [] as Notification[];
+  });
+  if (notifications.length === 0) return new Response('skipped', { status: 200 });
+
+  for (const notification of notifications) {
+    await sendPush(notification);
+  }
+
+  return new Response(`sent ${notifications.length}`, { status: 200 });
 });

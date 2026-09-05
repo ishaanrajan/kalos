@@ -67,6 +67,7 @@ export default function Feed() {
         onPressComments={() => router.push(`/post/${item.id}`)}
         onPressLikes={() => router.push(`/likes/${item.id}`)}
         onPressOptions={item.author_id === userId ? () => deleteOwnPost(item) : undefined}
+        onPressMention={(username) => router.push(`/profile/${username}`)}
         previewComments={item.preview_comments}
       />
     ),

@@ -11,6 +11,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { spacing, useTheme } from '../lib/theme';
 import type { Comment, Timestamp } from '../lib/types';
 import { Avatar } from './Avatar';
+import { MentionText } from './MentionText';
 
 export interface CommentRowProps {
   /** The comment, straight off the wire. `comment.author` supplies the username. */
@@ -24,6 +25,8 @@ export interface CommentRowProps {
   onPressAuthor?: () => void;
   onPressLike?: () => void;
   onLongPress?: () => void;
+  /** Tapping an @mention in the comment body. */
+  onPressMention?: (username: string) => void;
   /** Avatar diameter. Defaults to 32. */
   avatarSize?: number;
   style?: StyleProp<ViewStyle>;
@@ -66,6 +69,7 @@ export function CommentRow({
   onPressAuthor,
   onPressLike,
   onLongPress,
+  onPressMention,
   avatarSize = 32,
   style,
   testID,
@@ -101,7 +105,7 @@ export function CommentRow({
             {username}
           </Text>
           {'  '}
-          {body}
+          <MentionText text={body} mentionColor={colors.accent} onPressMention={onPressMention} />
         </Text>
 
         {age ? (

@@ -108,6 +108,7 @@ export default function PostScreen() {
             onPressAuthor={() => router.push(`/profile/${post.author.username}`)}
             onPressLikes={() => router.push(`/likes/${post.id}`)}
             onPressOptions={post.author.id === userId ? deleteThisPost : undefined}
+            onPressMention={(username) => router.push(`/profile/${username}`)}
             showCommentPreview={false}
           />
         }
@@ -116,6 +117,7 @@ export default function PostScreen() {
             comment={item}
             avatarUrl={avatarUrl(item.author?.avatar_path ?? null)}
             onPressAuthor={() => item.author && router.push(`/profile/${item.author.username}`)}
+            onPressMention={(username) => router.push(`/profile/${username}`)}
           />
         )}
       />
