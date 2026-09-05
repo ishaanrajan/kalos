@@ -124,7 +124,7 @@ Deno.serve(async (req) => {
   let replyText: string;
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-opus-5',
+      model: 'claude-sonnet-5',
       max_tokens: 150,
       output_config: { effort: 'low' },
       system: SYSTEM_PROMPT,
