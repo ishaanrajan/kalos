@@ -70,6 +70,7 @@ so re-applying a file after a tweak is safe.
 | `0017_suggested_profiles.sql` | `suggested_profiles()` — the 5 accounts shown under the search bar before a query is typed, reusing Explore's `followed_by` graph logic |
 | `0018_dm_hardening.sql` | DM fixes from a subsystem review: `thread_with_id`'s FK now cascades on delete, RLS actually enforces the "ishaan or Drake only" thread model post-0014, `my_dm_thread_previews()` replaces a full-history client-side reduction, and `dm_messages` is added to the `supabase_realtime` publication so a thread updates live |
 | `0019_drake_reply.sql` | `drake_pending_replies` + a `pg_cron` schedule that flushes it every minute — see [Drake replies](#drake-replies) below |
+| `0020_drake_reply_thread_with_id.sql` | Adds `drake_pending_replies.thread_with_id` — a queued reply now preserves its real thread identity instead of assuming `thread_with_id` is always the bot's own id, which broke ishaan's thread with Drake specifically (see the note in [Drake replies](#drake-replies)) |
 
 ### Option A — SQL editor (no tooling required)
 
@@ -293,6 +294,18 @@ everywhere else in this section:
   normally and the human gets a real push notification when the reply
   actually lands.
 
+A thread's identity is the `(thread_user_id, thread_with_id)` pair, and which
+slot Drake occupies depends on who's on the other end: a regular user's
+thread with Drake is `(them, drake)`, but ishaan's DM screen always puts
+*himself* in `thread_with_id` regardless of who he's actually talking to
+(that's how his cross-user inbox is built) — so **his** thread with Drake is
+`(drake, ishaan)`, the opposite slot arrangement. `drake-reply-generate`
+checks both slots and preserves whichever pair the original message actually
+used; `drake_pending_replies` stores the real `thread_with_id` rather than
+`drake-reply-flush` assuming it's always the bot's own id
+(`0020_drake_reply_thread_with_id.sql`) — get this wrong and ishaan's own
+messages to Drake are silently invisible to the whole pipeline.
+
 1. **Add one more secret.** Dashboard → **Edge Functions** → **Manage
    secrets**: `ANTHROPIC_API_KEY`, an API key from console.anthropic.com.
 2. **Deploy both Edge Functions.** Dashboard → **Edge Functions** → **New
@@ -304,10 +317,11 @@ everywhere else in this section:
    `drake-reply-generate`. (This is in addition to the `notify` webhook on
    the same table from [Push notifications](#5-push-notifications) — both
    fire independently on the same insert.)
-4. **Run `0019_drake_reply.sql`** in the SQL editor. `pg_cron`/`pg_net` are
-   already enabled from the steps above.
-5. **Test it**: DM `@prosecco_daddy` from any non-`ishaan` account, then
-   check `drake_pending_replies` in the Table Editor for a queued row —
+4. **Run `0019_drake_reply.sql`, then `0020_drake_reply_thread_with_id.sql`**
+   in the SQL editor. `pg_cron`/`pg_net` are already enabled from the steps
+   above.
+5. **Test it**: DM `@prosecco_daddy` from any account — including ishaan's —
+   then check `drake_pending_replies` in the Table Editor for a queued row —
    it should appear in the thread within a few minutes once
    `drake-reply-flush`'s next tick picks it up.
 

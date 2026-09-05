@@ -86,7 +86,19 @@ Deno.serve(async (req) => {
   // Only reply to a human writing INTO the Drake thread -- not Drake's own
   // messages (the random drake-dm pings, or a queued reply this same
   // function generated), and not messages in some other thread entirely.
-  if (r.thread_with_id !== bot.id || r.sender_id === bot.id) {
+  //
+  // A thread's identity is the (thread_user_id, thread_with_id) pair, and
+  // which slot Drake occupies depends on who's on the other end: a regular
+  // user's thread with Drake is (them, drake) -- but ishaan's DM screen
+  // always puts *himself* in thread_with_id regardless of who he's talking
+  // to (that's how his cross-user inbox is built), so HIS thread with Drake
+  // is (drake, ishaan) -- Drake in thread_user_id instead. Checking only
+  // thread_with_id === bot.id (as this used to) missed every message ishaan
+  // sent to Drake entirely. Whichever slot Drake is in, the pair as given is
+  // already the correct thread identity to query and reuse -- no need to
+  // figure out which slot is "the human."
+  const mentionsDrake = r.thread_user_id === bot.id || r.thread_with_id === bot.id;
+  if (!mentionsDrake || r.sender_id === bot.id) {
     return new Response('not a message to drake', { status: 200 });
   }
 
@@ -99,7 +111,7 @@ Deno.serve(async (req) => {
     .from('dm_messages')
     .select('id, sender_id, body, created_at')
     .eq('thread_user_id', r.thread_user_id)
-    .eq('thread_with_id', bot.id)
+    .eq('thread_with_id', r.thread_with_id)
     .neq('id', r.id)
     .order('created_at', { ascending: false })
     .limit(HISTORY_LIMIT);
@@ -144,6 +156,7 @@ Deno.serve(async (req) => {
   const sendAt = new Date(Date.now() + randomDelaySeconds() * 1000).toISOString();
   const { error: insertErr } = await db.from('drake_pending_replies').insert({
     thread_user_id: r.thread_user_id,
+    thread_with_id: r.thread_with_id,
     body: replyText,
     send_at: sendAt,
   });

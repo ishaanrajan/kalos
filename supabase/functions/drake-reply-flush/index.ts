@@ -37,7 +37,7 @@ Deno.serve(async () => {
 
   const { data: due, error: dueErr } = await db
     .from('drake_pending_replies')
-    .select('id, thread_user_id, body')
+    .select('id, thread_user_id, thread_with_id, body')
     .lte('send_at', new Date().toISOString())
     .order('send_at', { ascending: true })
     .limit(BATCH_LIMIT);
@@ -51,9 +51,15 @@ Deno.serve(async () => {
 
   let sent = 0;
   for (const row of due) {
+    // Reuse the exact (thread_user_id, thread_with_id) pair drake-reply-generate
+    // queued -- NOT a hardcoded thread_with_id: bot.id. Which slot Drake
+    // occupies depends on who he's talking to: a regular user's thread is
+    // (them, drake), but ishaan's is (drake, ishaan) -- his DM screen always
+    // puts himself in thread_with_id. Hardcoding bot.id here would send
+    // ishaan's replies into a thread nothing ever reads.
     const { error: insertErr } = await db.from('dm_messages').insert({
       thread_user_id: row.thread_user_id,
-      thread_with_id: bot.id,
+      thread_with_id: row.thread_with_id,
       sender_id: bot.id,
       body: row.body,
     });
