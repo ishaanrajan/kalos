@@ -36,6 +36,9 @@ export const palette = {
   /** The classic Instagram blue. */
   blue: '#3897f0',
   bluePressed: '#2d7dc9',
+  /** Light blue -- @mentions specifically, deliberately paler/more cyan
+   * than the primary accent so a mention doesn't read as a button/link. */
+  lightBlue: '#5AC8FA',
   /** Heart red. */
   red: '#ed4956',
   black: '#000000',
@@ -65,6 +68,8 @@ export interface ThemeColors {
   border: string;
   accent: string;
   accentPressed: string;
+  /** @mention text color -- light blue, distinct from `accent`. */
+  mention: string;
   /** Liked-heart red. */
   heart: string;
   /** Translucent black for overlays. */
@@ -82,6 +87,7 @@ export const lightColors: ThemeColors = {
   border: palette.divider,
   accent: palette.blue,
   accentPressed: palette.bluePressed,
+  mention: palette.lightBlue,
   heart: palette.red,
   scrim: 'rgba(0, 0, 0, 0.45)',
 };
@@ -97,6 +103,7 @@ export const darkColors: ThemeColors = {
   border: palette.darkDivider,
   accent: palette.blue,
   accentPressed: palette.bluePressed,
+  mention: palette.lightBlue,
   heart: palette.red,
   scrim: 'rgba(0, 0, 0, 0.6)',
 };

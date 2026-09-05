@@ -389,7 +389,7 @@ export function PostCard({
                 {authorUsername}
               </Text>
               {'  '}
-              <MentionText text={caption} mentionColor={colors.accent} onPressMention={onPressMention} />
+              <MentionText text={caption} mentionColor={colors.mention} onPressMention={onPressMention} />
             </Text>
 
             {/* Off-screen copy, measured to decide whether "more" is warranted. */}
@@ -440,7 +440,7 @@ export function PostCard({
               {comment.username}
             </Text>
             {'  '}
-            <MentionText text={comment.body} mentionColor={colors.accent} onPressMention={onPressMention} />
+            <MentionText text={comment.body} mentionColor={colors.mention} onPressMention={onPressMention} />
           </Text>
         ))}
 

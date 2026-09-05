@@ -105,7 +105,7 @@ export function CommentRow({
             {username}
           </Text>
           {'  '}
-          <MentionText text={body} mentionColor={colors.accent} onPressMention={onPressMention} />
+          <MentionText text={body} mentionColor={colors.mention} onPressMention={onPressMention} />
         </Text>
 
         {age ? (
