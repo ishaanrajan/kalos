@@ -146,12 +146,19 @@ export const fontFamily: string | undefined = Platform.select({
  * For the "Kalos" wordmark only -- everywhere else in the UI is correctly
  * Helvetica Neue, which is exactly why a thin-weight cut of that same face
  * reads wrong for the one piece of hand-lettered logotype a 2015 user would
- * have actually seen. Falls back to plain `fontFamily` wherever no system
- * script face exists (Android has no built-in equivalent to iOS's Snell
- * Roundhand) rather than shipping a licensed font file for one word.
+ * have actually seen.
+ *
+ * 'cursive' is one of Android's generic font family names (alongside
+ * 'sans-serif'/'serif'/'monospace') -- it resolves to whatever script face
+ * the device ships, same idea as iOS's named system font below, just an
+ * alias instead of a specific face. An earlier version of this left Android
+ * out of the Platform.select entirely, which silently fell through to
+ * `default: fontFamily` -- the wordmark rendered in plain Helvetica Neue on
+ * Android with no error to notice it by.
  */
 export const wordmarkFontFamily: string | undefined = Platform.select({
   ios: 'Snell Roundhand',
+  android: 'cursive',
   web: '"Segoe Script", "Bradley Hand", cursive',
   default: fontFamily,
 });
