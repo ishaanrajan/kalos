@@ -221,8 +221,11 @@ function Bubble({
       )}
       {isBigHeart ? (
         // No bubble chrome at all -- old Instagram's tap-to-send heart
-        // rendered as just a big glyph, not a normal message bubble.
-        <Text style={styles.bigHeart}>{BIG_HEART}</Text>
+        // rendered as just a big glyph, not a normal message bubble. A real
+        // vector icon here instead of the stored emoji character itself --
+        // the platform's color-emoji glyph reads as cartoonish next to the
+        // app's own icon language (the same Ionicons heart everywhere else).
+        <Ionicons name="heart" size={72} color={colors.heart} />
       ) : (
         <View
           style={[
@@ -294,7 +297,6 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   bubbleText: { fontSize: 15, lineHeight: 20 },
-  bigHeart: { fontSize: 56, lineHeight: 64 },
   age: { fontSize: 11, marginTop: 3, marginHorizontal: 4 },
   ageMine: { alignSelf: 'flex-end' },
   seen: { fontSize: 11, marginTop: 1, marginHorizontal: 4, alignSelf: 'flex-end' },
