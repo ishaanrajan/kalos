@@ -62,11 +62,16 @@ function RootNavigator() {
   }, [session, profile, loading, segments, router]);
 
   // The notify Edge Function attaches { url } to every push it sends;
-  // tapping one just needs to hand that straight to the router.
+  // tapping one just needs to hand that straight to the router. Dismissing
+  // it and clearing the badge afterward is separate from that navigation --
+  // tapping a delivered notification doesn't reliably clear it from the
+  // tray/Notification Center on its own, so it's done explicitly here.
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       const url = response.notification.request.content.data?.url;
       if (typeof url === 'string') router.push(url as never);
+      Notifications.dismissNotificationAsync(response.notification.request.identifier).catch(() => undefined);
+      Notifications.setBadgeCountAsync(0).catch(() => undefined);
     });
     return () => sub.remove();
   }, [router]);
