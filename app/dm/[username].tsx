@@ -188,7 +188,7 @@ export default function DMThread() {
             accessibilityRole="button"
             accessibilityLabel="Send a heart"
           >
-            <Ionicons name="heart" size={26} color={colors.heart} />
+            <Ionicons name="heart-outline" size={26} color={colors.text} />
           </Pressable>
         )}
       </View>
@@ -225,7 +225,7 @@ function Bubble({
         // vector icon here instead of the stored emoji character itself --
         // the platform's color-emoji glyph reads as cartoonish next to the
         // app's own icon language (the same Ionicons heart everywhere else).
-        <Ionicons name="heart" size={72} color={colors.heart} />
+        <Ionicons name="heart" size={64} color={colors.heart} />
       ) : (
         <View
           style={[
