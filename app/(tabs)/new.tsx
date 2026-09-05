@@ -367,7 +367,7 @@ export default function NewPost() {
 
       <KeyboardAvoidingView
         style={styles.shareBody}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <View style={styles.captionRow}>
           <FilterPreview

@@ -20,7 +20,7 @@ import { Avatar } from '../../components/Avatar';
 import { useDMThread, useMarkDMRead, useProfile, useSendDM, useTypingIndicator } from '../../lib/queries';
 import { avatarUrl } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
-import { useTheme } from '../../lib/theme';
+import { nativeHeaderHeight, useTheme } from '../../lib/theme';
 import type { DMMessage } from '../../lib/types';
 
 /**
@@ -79,14 +79,18 @@ export default function DMThread() {
   return (
     <KeyboardAvoidingView
       style={[styles.root, { backgroundColor: colors.surface }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       // The native header sits above this view and isn't part of its own
       // layout box, so KeyboardAvoidingView has no way to know its height on
-      // its own. 44 is the iOS nav bar's fixed content height; insets.top
-      // covers the rest (status bar / Dynamic Island), and varies by device
-      // -- a hardcoded offset here was previously too short on some phones,
-      // leaving the composer cramped against the keyboard.
-      keyboardVerticalOffset={insets.top + 44}
+      // its own. `nativeHeaderHeight` is the header's own content height (44
+      // iOS / 56 Android); insets.top covers the rest (status bar / Dynamic
+      // Island) and varies by device -- a hardcoded offset here was
+      // previously too short on some phones, leaving the composer cramped
+      // against the keyboard. `behavior: undefined` on Android relied on an
+      // OS-level auto-resize that edge-to-edge display (Android default
+      // since SDK 54) broke -- the composer sat entirely underneath the
+      // keyboard, invisible, until this was made explicit.
+      keyboardVerticalOffset={insets.top + nativeHeaderHeight}
     >
       <Stack.Screen
         options={{

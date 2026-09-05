@@ -210,6 +210,16 @@ export const typography: TypeScale = {
 /** One physical pixel — the divider weight the 2015 UI used everywhere. */
 export const hairlineWidth = StyleSheet.hairlineWidth;
 
+/**
+ * The native stack header's own content height -- iOS's nav bar is a fixed
+ * 44pt; Android's Material app bar is 56dp. `insets.top` alone only covers
+ * the status bar/notch, not the header content sitting below it, so a
+ * KeyboardAvoidingView on a screen with a header needs `insets.top + this`
+ * as its offset, not just `insets.top`. Using the iOS value on Android (or
+ * vice versa) either leaves a gap or the composer overlaps the header.
+ */
+export const nativeHeaderHeight = Platform.select({ ios: 44, default: 56 });
+
 export type HairlineSide = 'top' | 'bottom' | 'left' | 'right' | 'all';
 
 /**

@@ -20,7 +20,7 @@ import { useAddComment, useComments, useDeletePost, usePost, useToggleLike } fro
 import { avatarUrl, photoUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
 import { confirmDestructive } from '../../lib/actionSheet';
-import { useTheme } from '../../lib/theme';
+import { nativeHeaderHeight, useTheme } from '../../lib/theme';
 
 export default function PostScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -75,11 +75,13 @@ export default function PostScreen() {
   return (
     <KeyboardAvoidingView
       style={[styles.root, { backgroundColor: colors.surface }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      // See the same fix in app/dm/[username].tsx -- 90 was a hardcoded
-      // guess at the native header's height, wrong on devices whose
-      // safe-area-top differs (Dynamic Island vs. notch vs. none).
-      keyboardVerticalOffset={insets.top + 44}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      // See the same fix in app/dm/[username].tsx. `nativeHeaderHeight` is
+      // the header's own content height (44 iOS / 56 Android) -- insets.top
+      // alone is only the status bar/notch, wrong on devices whose
+      // safe-area-top differs (Dynamic Island vs. notch vs. none), and using
+      // iOS's 44 on Android under-offsets against its taller Material bar.
+      keyboardVerticalOffset={insets.top + nativeHeaderHeight}
     >
       <FlatList
         data={comments ?? []}

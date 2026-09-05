@@ -115,7 +115,7 @@ export default function EditProfile() {
   return (
     <KeyboardAvoidingView
       style={[styles.root, { backgroundColor: colors.surface }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <Stack.Screen
         options={{

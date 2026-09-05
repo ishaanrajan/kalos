@@ -39,7 +39,7 @@ export default function SignIn() {
   return (
     <KeyboardAvoidingView
       style={[styles.root, { backgroundColor: colors.surface }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.card}>
         <Text style={[styles.wordmark, { color: colors.text, fontFamily: wordmarkFontFamily }]}>
