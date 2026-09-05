@@ -15,6 +15,26 @@ Notifications.setNotificationHandler({
 });
 
 /**
+ * Android 8+ (API 26+) drops every notification into a "Miscellaneous"
+ * fallback channel at default importance unless the app creates its own --
+ * unlike iOS, where a granted permission is enough to get a heads-up banner.
+ * Skipped with no error, that fallback is exactly the wordmark bug's shape:
+ * push "works" (the notification lands in the shade) but silently degrades
+ * -- no heads-up pop-over, no guaranteed sound -- with nothing to notice it
+ * by. iOS ignores this call entirely (the module below is Android-only), so
+ * it's a no-op there rather than a second code path to keep in sync.
+ */
+async function ensureAndroidNotificationChannel(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync('default', {
+    name: 'Default',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    sound: 'default',
+  });
+}
+
+/**
  * Requests permission and registers this device's Expo push token for the
  * signed-in user. Fails silently on denial, on the Simulator (no real APNs
  * capability), or on any other error -- push is a nice-to-have, never
@@ -22,6 +42,8 @@ Notifications.setNotificationHandler({
  */
 export async function registerForPushNotificationsAsync(userId: string): Promise<void> {
   try {
+    await ensureAndroidNotificationChannel();
+
     const { status: existing } = await Notifications.getPermissionsAsync();
     const status =
       existing === 'granted' ? existing : (await Notifications.requestPermissionsAsync()).status;
