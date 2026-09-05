@@ -246,6 +246,7 @@ export default function NewPost() {
     qc.invalidateQueries({ queryKey: ['home_feed'] });
     qc.invalidateQueries({ queryKey: ['profile-posts'] });
     qc.invalidateQueries({ queryKey: ['profile'] });
+    qc.invalidateQueries({ queryKey: ['posted-today'] });
     setPicked(null);
     setCaption('');
     router.replace('/(tabs)');

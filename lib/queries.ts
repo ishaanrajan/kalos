@@ -706,3 +706,29 @@ export function useMarkActivityRead() {
     },
   });
 }
+
+/**
+ * Whether the viewer has posted since local midnight -- Explore's unlock
+ * condition is a daily gate, not a cumulative post count: post today and
+ * it's open for today; skip a day and it's locked again until you post.
+ * "Today" is the device's own local calendar day, not UTC, so it matches
+ * what the person actually experiences as "today."
+ */
+export function useHasPostedToday() {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: ['posted-today', userId],
+    enabled: !!userId,
+    queryFn: async () => {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const { count, error } = await supabase
+        .from('posts')
+        .select('*', { count: 'exact', head: true })
+        .eq('author_id', userId!)
+        .gte('created_at', startOfToday.toISOString());
+      if (error) throw error;
+      return (count ?? 0) > 0;
+    },
+  });
+}

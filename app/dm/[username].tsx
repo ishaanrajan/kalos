@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { formatCommentAge } from '../../components/CommentRow';
 import { EmptyState } from '../../components/EmptyState';
 import { Avatar } from '../../components/Avatar';
@@ -22,6 +23,13 @@ import { avatarUrl } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { nativeHeaderHeight, useTheme } from '../../lib/theme';
 import type { DMMessage } from '../../lib/types';
+
+/**
+ * The old-Instagram "tap the heart instead of typing" send -- Bubble below
+ * renders a message whose body is exactly this glyph as a large, bubble-less
+ * heart instead of normal text.
+ */
+const BIG_HEART = '❤️';
 
 /**
  * A DM thread. `username` names who this thread is *with*: for anyone but
@@ -65,6 +73,12 @@ export default function DMThread() {
         setDraft(body);
         Alert.alert('Could not send message', e instanceof Error ? e.message : undefined);
       },
+    });
+  }
+
+  function sendHeart() {
+    sendDM.mutate(BIG_HEART, {
+      onError: (e) => Alert.alert('Could not send', e instanceof Error ? e.message : undefined),
     });
   }
 
@@ -162,11 +176,21 @@ export default function DMThread() {
           returnKeyType="send"
           multiline
         />
-        <Pressable onPress={submit} disabled={!draft.trim() || sendDM.isPending} hitSlop={10}>
-          <Text style={[styles.send, { color: colors.accent }, !draft.trim() && styles.sendDisabled]}>
-            Send
-          </Text>
-        </Pressable>
+        {draft.trim() ? (
+          <Pressable onPress={submit} disabled={sendDM.isPending} hitSlop={10}>
+            <Text style={[styles.send, { color: colors.accent }]}>Send</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={sendHeart}
+            disabled={sendDM.isPending}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Send a heart"
+          >
+            <Ionicons name="heart" size={26} color={colors.heart} />
+          </Pressable>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
@@ -184,6 +208,7 @@ function Bubble({
   showSeen: boolean;
 }) {
   const { colors } = useTheme();
+  const isBigHeart = message.body.trim() === BIG_HEART;
   return (
     <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
       {showSender && message.sender && (
@@ -194,16 +219,22 @@ function Bubble({
           </Text>
         </View>
       )}
-      <View
-        style={[
-          styles.bubble,
-          { backgroundColor: mine ? colors.accent : colors.surfaceAlt },
-        ]}
-      >
-        <Text style={[styles.bubbleText, { color: mine ? '#ffffff' : colors.text }]}>
-          {message.body}
-        </Text>
-      </View>
+      {isBigHeart ? (
+        // No bubble chrome at all -- old Instagram's tap-to-send heart
+        // rendered as just a big glyph, not a normal message bubble.
+        <Text style={styles.bigHeart}>{BIG_HEART}</Text>
+      ) : (
+        <View
+          style={[
+            styles.bubble,
+            { backgroundColor: mine ? colors.accent : colors.surfaceAlt },
+          ]}
+        >
+          <Text style={[styles.bubbleText, { color: mine ? '#ffffff' : colors.text }]}>
+            {message.body}
+          </Text>
+        </View>
+      )}
       <Text style={[styles.age, { color: colors.textSecondary }, mine && styles.ageMine]}>
         {formatCommentAge(message.created_at)}
       </Text>
@@ -263,6 +294,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   bubbleText: { fontSize: 15, lineHeight: 20 },
+  bigHeart: { fontSize: 56, lineHeight: 64 },
   age: { fontSize: 11, marginTop: 3, marginHorizontal: 4 },
   ageMine: { alignSelf: 'flex-end' },
   seen: { fontSize: 11, marginTop: 1, marginHorizontal: 4, alignSelf: 'flex-end' },
@@ -284,5 +316,4 @@ const styles = StyleSheet.create({
     maxHeight: 100,
   },
   send: { fontWeight: '600', fontSize: 14, paddingBottom: 6 },
-  sendDisabled: { opacity: 0.4 },
 });

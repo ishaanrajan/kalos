@@ -6,13 +6,9 @@ import { Feather } from '@expo/vector-icons';
 import { PhotoGrid } from '../../components/PhotoGrid';
 import { EmptyState } from '../../components/EmptyState';
 import { EndOfFeed } from '../../components/EndOfFeed';
-import { useExploreFeed } from '../../lib/queries';
+import { useExploreFeed, useHasPostedToday } from '../../lib/queries';
 import { photoUrl } from '../../lib/supabase';
-import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
-
-/** Posts of your own required before Explore unlocks. */
-export const POSTS_TO_UNLOCK = 5;
 
 /**
  * Explore, the way it used to work.
@@ -21,21 +17,24 @@ export const POSTS_TO_UNLOCK = 5;
  * liked, or a post by someone they follow. Nothing is here because it is
  * "performing well" — there is no ranking signal in the query at all, and the
  * order is plain reverse-chronological.
+ *
+ * Unlocking it is a daily gate, not a one-time milestone: post today and
+ * it's open for today; skip a day and it locks again until you post. See
+ * useHasPostedToday() for what "today" means (the device's own local day).
  */
 export default function Explore() {
   const router = useRouter();
-  const { profile } = useAuth();
   const { colors } = useTheme();
+  const { data: postedToday, isLoading: postedTodayLoading } = useHasPostedToday();
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useExploreFeed();
 
   const posts = useMemo(() => data?.pages.flat() ?? [], [data]);
-  const locked = !!profile && profile.post_count < POSTS_TO_UNLOCK;
+  const locked = postedToday === false;
 
   // The search bar is the only way into /search that isn't the DM compose
   // button -- it stays reachable even while the photo grid itself is locked,
-  // so a new account can still find and follow people during the 5-post
-  // ramp-up instead of being cut off from the rest of the app entirely.
+  // so a locked-out day doesn't cut someone off from the rest of the app.
   const searchBar = (
     <Pressable
       style={[styles.searchBar, { backgroundColor: colors.surfaceAlt }]}
@@ -48,8 +47,15 @@ export default function Explore() {
     </Pressable>
   );
 
+  if (postedTodayLoading) {
+    return (
+      <SafeAreaView style={[styles.center, { backgroundColor: colors.surface }]} edges={['top']}>
+        <ActivityIndicator />
+      </SafeAreaView>
+    );
+  }
+
   if (locked) {
-    const remaining = POSTS_TO_UNLOCK - profile.post_count;
     return (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         <View style={styles.header}>
@@ -59,7 +65,7 @@ export default function Explore() {
         <EmptyState
           icon="lock"
           title="Explore is locked"
-          body={`Share ${remaining} more photo${remaining === 1 ? '' : 's'} to unlock it — you've posted ${profile.post_count} of ${POSTS_TO_UNLOCK}.`}
+          body="Post a photo today to unlock it. Miss a day and it locks again -- that's the deal."
           actionLabel="New post"
           onAction={() => router.push('/(tabs)/new')}
         />

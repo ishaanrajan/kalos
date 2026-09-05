@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -16,11 +16,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PostCard } from '../../components/PostCard';
 import { CommentRow } from '../../components/CommentRow';
 import { EmptyState } from '../../components/EmptyState';
-import { useAddComment, useComments, useDeletePost, usePost, useToggleLike } from '../../lib/queries';
+import { MentionSuggestions } from '../../components/MentionSuggestions';
+import { useAddComment, useComments, useDeletePost, useFollowList, usePost, useToggleLike } from '../../lib/queries';
 import { avatarUrl, photoUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
 import { confirmDestructive } from '../../lib/actionSheet';
+import { activeMentionQuery, applyMentionSelection } from '../../lib/mentions';
 import { nativeHeaderHeight, useTheme } from '../../lib/theme';
+import type { Comment } from '../../lib/types';
 
 export default function PostScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -31,9 +34,16 @@ export default function PostScreen() {
   const addComment = useAddComment(id!);
   const toggleLike = useToggleLike();
   const deletePost = useDeletePost();
+  const { data: following } = useFollowList(userId ?? undefined, 'following');
   const [draft, setDraft] = useState('');
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const listRef = useRef<FlatList<Comment>>(null);
+  const mentionQuery = useMemo(() => activeMentionQuery(draft), [draft]);
+
+  function selectMention(username: string) {
+    setDraft((prev) => applyMentionSelection(prev, username));
+  }
 
   if (isLoading || !post) {
     return (
@@ -84,8 +94,13 @@ export default function PostScreen() {
       keyboardVerticalOffset={insets.top + nativeHeaderHeight}
     >
       <FlatList
+        ref={listRef}
         data={comments ?? []}
         keyExtractor={(c) => c.id}
+        // Comments are oldest-first, so "the bottom" is the newest ones --
+        // without this you land on the top of a long thread instead of the
+        // recent activity you actually opened the screen to see or reply to.
+        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
         ListHeaderComponent={
           <PostCard
             post={{
@@ -121,6 +136,10 @@ export default function PostScreen() {
           />
         )}
       />
+
+      {mentionQuery !== null ? (
+        <MentionSuggestions query={mentionQuery} candidates={following ?? []} onSelect={selectMention} />
+      ) : null}
 
       <View
         style={[

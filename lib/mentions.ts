@@ -45,3 +45,30 @@ export function extractMentionedUsernames(text: string): string[] {
   }
   return [...usernames];
 }
+
+// ---------------------------------------------------------------------------
+// Autocomplete -- driven off the trailing "word" being typed, not real
+// cursor tracking. Composing forward (the overwhelming case on mobile) this
+// is indistinguishable from proper cursor-position detection and is far
+// simpler; it just doesn't offer suggestions if you go back and edit an
+// "@partial" that isn't at the end of the text.
+// ---------------------------------------------------------------------------
+
+const TRAILING_MENTION_RE = /(^|\s)@([a-z0-9._]*)$/i;
+
+/**
+ * The in-progress username being typed after a trailing "@", or `null` if
+ * the text doesn't currently end in one. Empty string means just "@" with
+ * nothing typed yet -- callers should still show suggestions for that (an
+ * unfiltered list), not treat it as "no query".
+ */
+export function activeMentionQuery(text: string): string | null {
+  const match = text.match(TRAILING_MENTION_RE);
+  return match ? match[2]!.toLowerCase() : null;
+}
+
+/** Replaces the trailing "@partial" with "@username " (trailing space so
+ * typing can continue immediately), preserving whatever preceded the "@". */
+export function applyMentionSelection(text: string, username: string): string {
+  return text.replace(TRAILING_MENTION_RE, (_match, lead: string) => `${lead}@${username} `);
+}
