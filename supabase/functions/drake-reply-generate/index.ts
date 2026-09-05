@@ -52,6 +52,7 @@ interface WebhookPayload {
   type: 'INSERT';
   table: 'dm_messages';
   record: {
+    id: string;
     thread_user_id: string;
     thread_with_id: string;
     sender_id: string;
@@ -89,11 +90,17 @@ Deno.serve(async (req) => {
     return new Response('not a message to drake', { status: 200 });
   }
 
+  // Excludes this exact row rather than trusting it to sort last -- Claude
+  // rejects a conversation that doesn't end on a user turn, and relying on
+  // re-query ordering to guarantee that is fragile (it's also exactly what
+  // broke testing this function directly with a synthetic payload, since
+  // that doesn't actually insert the row the query would otherwise find).
   const { data: history, error: historyErr } = await db
     .from('dm_messages')
-    .select('sender_id, body, created_at')
+    .select('id, sender_id, body, created_at')
     .eq('thread_user_id', r.thread_user_id)
     .eq('thread_with_id', bot.id)
+    .neq('id', r.id)
     .order('created_at', { ascending: false })
     .limit(HISTORY_LIMIT);
   if (historyErr || !history) {
@@ -108,6 +115,9 @@ Deno.serve(async (req) => {
       role: m.sender_id === bot.id ? ('assistant' as const) : ('user' as const),
       content: m.body,
     }));
+  // Always the guaranteed final turn, so the conversation reliably ends on
+  // 'user' regardless of what the history query above found.
+  messages.push({ role: 'user', content: r.body });
 
   const anthropic = new Anthropic({ apiKey: anthropicApiKey });
 
