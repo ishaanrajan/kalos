@@ -69,6 +69,7 @@ so re-applying a file after a tweak is safe.
 | `0016_welcome_email_log.sql` | `profiles.welcome_emailed_at` — lets `welcome-email` skip an account it's already emailed |
 | `0017_suggested_profiles.sql` | `suggested_profiles()` — the 5 accounts shown under the search bar before a query is typed, reusing Explore's `followed_by` graph logic |
 | `0018_dm_hardening.sql` | DM fixes from a subsystem review: `thread_with_id`'s FK now cascades on delete, RLS actually enforces the "ishaan or Drake only" thread model post-0014, `my_dm_thread_previews()` replaces a full-history client-side reduction, and `dm_messages` is added to the `supabase_realtime` publication so a thread updates live |
+| `0019_drake_reply.sql` | `drake_pending_replies` + a `pg_cron` schedule that flushes it every minute — see [Drake replies](#drake-replies) below |
 
 ### Option A — SQL editor (no tooling required)
 
@@ -271,6 +272,44 @@ labeled instead of looking like it came from `ishaan`.
 To change the cadence, edit the cron expression in `0013_drake_dm.sql` and
 re-run it. To change what it says, edit the `MESSAGES` array in
 `supabase/functions/drake-dm/index.ts` and redeploy the function.
+
+### Drake replies
+
+`@prosecco_daddy` also replies when a human messages *him* — an actual
+Claude-generated in-character line, not another canned message, with a
+randomized couple-minutes delay before it lands so it doesn't read as
+instant/robotic. Two Edge Functions, same webhook-plus-cron shape used
+everywhere else in this section:
+
+- `drake-reply-generate` — Database Webhook on `dm_messages` insert (a
+  second, independent webhook from `notify`'s — different concern). When a
+  human writes into their thread with Drake, this fetches the last 20
+  messages of that thread, calls the Claude API for a reply, and queues it
+  in `drake_pending_replies` (`0019_drake_reply.sql`) with a random `send_at`
+  20s–3min out. It does not send anything itself.
+- `drake-reply-flush` — `pg_cron`, every minute. Sends whatever's due by
+  inserting into `dm_messages` as `@prosecco_daddy`, same as `drake-dm`
+  already does — which also means the existing `notify` webhook fires
+  normally and the human gets a real push notification when the reply
+  actually lands.
+
+1. **Add one more secret.** Dashboard → **Edge Functions** → **Manage
+   secrets**: `ANTHROPIC_API_KEY`, an API key from console.anthropic.com.
+2. **Deploy both Edge Functions.** Dashboard → **Edge Functions** → **New
+   Function**, once each for `drake-reply-generate` and `drake-reply-flush`,
+   pasting in the matching file from `supabase/functions/`. Turn **off**
+   "Enforce JWT verification" on both.
+3. **Create the second webhook.** Dashboard → **Database** → **Webhooks** →
+   **Create a new hook**, on `dm_messages`, event **Insert**, Edge Function
+   `drake-reply-generate`. (This is in addition to the `notify` webhook on
+   the same table from [Push notifications](#5-push-notifications) — both
+   fire independently on the same insert.)
+4. **Run `0019_drake_reply.sql`** in the SQL editor. `pg_cron`/`pg_net` are
+   already enabled from the steps above.
+5. **Test it**: DM `@prosecco_daddy` from any non-`ishaan` account, then
+   check `drake_pending_replies` in the Table Editor for a queued row —
+   it should appear in the thread within a few minutes once
+   `drake-reply-flush`'s next tick picks it up.
 
 ---
 
