@@ -1,6 +1,6 @@
 // Supabase Edge Function: daily-drake
 //
-// Called once a day by a pg_cron schedule (see 0011_drake_bot.sql). Posts a
+// Called twice a day by a pg_cron schedule (see 0011_drake_bot.sql). Posts a
 // photo as @prosecco_daddy -- picked from the ones it hasn't posted yet, so
 // today's photo can never repeat one already used -- and swaps its avatar to
 // another random one from the same pool. Photos are the account owner's own

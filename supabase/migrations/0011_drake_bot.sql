@@ -15,13 +15,19 @@
 -- after a schedule tweak is safe -- it updates the existing job in place
 -- rather than creating a duplicate.
 --
--- 30 15 * * * = 15:30 UTC daily, ~9:30am Mountain (MDT, UTC-6) / 8:30am
--- Mountain standard time in winter. Change the cron expression below if a
--- different time is wanted.
+-- 30 3,15 * * * = 03:30 and 15:30 UTC daily -- ~9:30pm and 9:30am Mountain
+-- (MDT, UTC-6) / 8:30pm and 8:30am Mountain standard time in winter. Twice a
+-- day, not once -- the job name stays 'daily-drake-post' even though that's
+-- no longer literally accurate, so re-running this file after a schedule
+-- tweak keeps upserting the same job instead of leaving the old one
+-- scheduled alongside a renamed one. Change the cron expression below if a
+-- different cadence/time is wanted; the function itself has no "how many
+-- times today" concept, it just posts once whenever it's called, so any
+-- cadence works without touching supabase/functions/daily-drake/index.ts.
 
 select cron.schedule(
   'daily-drake-post',
-  '30 15 * * *',
+  '30 3,15 * * *',
   $$
   select net.http_post(
     url := 'https://snmnhlxletlgeorzwbvt.supabase.co/functions/v1/daily-drake',

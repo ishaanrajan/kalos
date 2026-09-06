@@ -61,7 +61,7 @@ so re-applying a file after a tweak is safe.
 | `0007_revoke_default_grants.sql` | closes the default-privilege gap that let a client forge `like_count` |
 | `0008_dm.sql` | `dm_messages`, `dm_inbox()` — every thread is with "ishaan" |
 | `0009_notifications.sql` | `push_tokens`, `dm_messages.read_at`, `profiles.activity_read_at` — see [Push notifications](#5-push-notifications) below for the Edge Function + webhooks this depends on |
-| `0011_drake_bot.sql` | `pg_cron` schedule that calls the `daily-drake` Edge Function once a day — see [Drake bot](#6-drake-bot) below |
+| `0011_drake_bot.sql` | `pg_cron` schedule that calls the `daily-drake` Edge Function twice a day — see [Drake bot](#6-drake-bot) below |
 | `0012_drake_bot_photo_log.sql` | `drake_bot_photo_log` — tracks which photos `daily-drake` has already posted, so it cycles through the pool instead of repeating |
 | `0013_drake_dm.sql` | `pg_cron` schedule that calls the `drake-dm` Edge Function every 4 hours — see [Drake DMs](#drake-dms) below |
 | `0014_dm_multi_thread.sql` | `dm_messages.thread_with_id` — a thread's real identity is now (thread_user_id, thread_with_id), so a Drake DM no longer lands mixed into the ishaan thread |
@@ -214,7 +214,7 @@ created a webhook through the UI before.
 ## 6. Drake bot
 
 A joke account, `@prosecco_daddy`, that posts a Drake photo and swaps its own
-avatar once a day, picked from a pool of 40 curated photos pre-uploaded to
+avatar twice a day, picked from a pool of 40 curated photos pre-uploaded to
 the `photos` storage bucket under the bot's own user folder
 (`photos/<bot_id>/source-N.jpg`) -- originally a pool of 22 Wikimedia Commons
 images, swapped out for a locally-sourced set. Same shape as push
@@ -243,17 +243,21 @@ via `expo-image`'s `contentFit="cover"`, which centers by default.
 2. **Enable `pg_cron`.** Dashboard → **Database** → **Extensions** → search
    `pg_cron` → enable. (`pg_net` should already be on from step 5 above.)
 3. **Run `0011_drake_bot.sql`, then `0012_drake_bot_photo_log.sql`** in the
-   SQL editor. The first schedules the function to run daily at 15:30 UTC
-   (~9:30am Mountain); the second creates the no-repeat tracking table —
-   required, the function's first call will error without it.
+   SQL editor. The first schedules the function to run twice daily, at 03:30
+   and 15:30 UTC (~9:30pm and 9:30am Mountain); the second creates the
+   no-repeat tracking table — required, the function's first call will error
+   without it.
 4. **Test it once by hand** before trusting the schedule: SQL editor →
    `select net.http_post(url := 'https://snmnhlxletlgeorzwbvt.supabase.co/functions/v1/daily-drake', headers := '{"Content-Type": "application/json"}'::jsonb);`
    — then check `@prosecco_daddy`'s profile in the app for a new post and a
    changed avatar.
 
-To change the daily time, edit the cron expression in
+To change the cadence or time, edit the cron expression in
 `0011_drake_bot.sql` and re-run the file — `cron.schedule` upserts by job
-name, so this updates the existing schedule rather than creating a second one.
+name, so this updates the existing schedule rather than creating a second
+one. The function itself has no notion of "once a day" -- it just posts once
+whenever called -- so any cron cadence works without touching
+`daily-drake/index.ts`.
 
 ### Drake DMs
 
