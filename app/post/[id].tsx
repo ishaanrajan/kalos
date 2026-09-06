@@ -46,6 +46,17 @@ export default function PostScreen() {
     setDraft((prev) => applyMentionSelection(prev, username));
   }
 
+  // FlatList.scrollToEnd() resolves the end of the list from its own
+  // measured-cell bookkeeping -- with zero comments there are no cells to
+  // measure, so it doesn't reliably land at the true bottom of the header
+  // content (the post itself). scrollToOffset with a deliberately oversized
+  // offset sidesteps that: native scroll views clamp any offset to the real
+  // scrollable max automatically, so this always lands at the true end
+  // whether there are 0 comments or 500.
+  function scrollToBottom(animated: boolean) {
+    listRef.current?.scrollToOffset({ offset: Number.MAX_SAFE_INTEGER, animated });
+  }
+
   // Tapping the comment box focuses it well before the keyboard has actually
   // finished sliding up -- scrolling on focus lands at what's currently the
   // bottom, then the keyboard's own show animation shrinks the list's
@@ -56,9 +67,7 @@ export default function PostScreen() {
     // "Did," not "will" -- "will" fires as the animation starts, which is
     // the same race as onFocus, just a smaller window. "Did" only fires
     // once the keyboard (and the resize it drives) has actually finished.
-    const sub = Keyboard.addListener('keyboardDidShow', () => {
-      listRef.current?.scrollToEnd({ animated: true });
-    });
+    const sub = Keyboard.addListener('keyboardDidShow', () => scrollToBottom(true));
     return () => sub.remove();
   }, []);
 
@@ -117,7 +126,7 @@ export default function PostScreen() {
         // Comments are oldest-first, so "the bottom" is the newest ones --
         // without this you land on the top of a long thread instead of the
         // recent activity you actually opened the screen to see or reply to.
-        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+        onContentSizeChange={() => scrollToBottom(false)}
         ListHeaderComponent={
           <PostCard
             post={{
