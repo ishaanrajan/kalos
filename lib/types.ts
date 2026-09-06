@@ -98,7 +98,8 @@ export const PAGE_SIZE = 12;
 export type ActivityEvent =
   | { kind: 'like'; actor: Profile; post_id: UUID; image_path: string; created_at: Timestamp }
   | { kind: 'comment'; actor: Profile; post_id: UUID; image_path: string; body: string; created_at: Timestamp }
-  | { kind: 'follow'; actor: Profile; created_at: Timestamp };
+  | { kind: 'follow'; actor: Profile; created_at: Timestamp }
+  | { kind: 'mention'; actor: Profile; post_id: UUID; image_path: string; body: string; created_at: Timestamp };
 
 /**
  * A single DM. Every thread is with "ishaan" — thread_user_id is always the

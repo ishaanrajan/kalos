@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Avatar } from '../../components/Avatar';
 import { EmptyState } from '../../components/EmptyState';
+import { MentionText } from '../../components/MentionText';
 import { useActivity, useMarkActivityRead } from '../../lib/queries';
 import { avatarUrl, photoUrl } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
@@ -81,6 +82,16 @@ function ActivityRow({
         {event.kind === 'like' && ' liked your photo.'}
         {event.kind === 'comment' && ` commented: ${event.body}`}
         {event.kind === 'follow' && ' started following you.'}
+        {event.kind === 'mention' && (
+          <>
+            {' mentioned you: '}
+            <MentionText
+              text={event.body}
+              mentionColor={colors.mention}
+              onPressMention={(username) => router.push(`/profile/${username}`)}
+            />
+          </>
+        )}
       </Text>
       {event.kind !== 'follow' && (
         <Image

@@ -71,6 +71,7 @@ so re-applying a file after a tweak is safe.
 | `0018_dm_hardening.sql` | DM fixes from a subsystem review: `thread_with_id`'s FK now cascades on delete, RLS actually enforces the "ishaan or Drake only" thread model post-0014, `my_dm_thread_previews()` replaces a full-history client-side reduction, and `dm_messages` is added to the `supabase_realtime` publication so a thread updates live |
 | `0019_drake_reply.sql` | `drake_pending_replies` + a `pg_cron` schedule that flushes it every minute — see [Drake replies](#drake-replies) below |
 | `0020_drake_reply_thread_with_id.sql` | Adds `drake_pending_replies.thread_with_id` — a queued reply now preserves its real thread identity instead of assuming `thread_with_id` is always the bot's own id, which broke ishaan's thread with Drake specifically (see the note in [Drake replies](#drake-replies)) |
+| `0021_activity_mentions.sql` | `activity_feed()` gains a `'mention'` kind — a live scan over `comments` for `@you`, on any post, not just your own. Backfills automatically since nothing is stored, it's a query |
 
 ### Option A — SQL editor (no tooling required)
 
