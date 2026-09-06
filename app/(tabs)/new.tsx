@@ -217,7 +217,6 @@ export default function NewPost() {
         uri: picked.uri,
         filter,
         strength: 1,
-        maxEdge: 1440,
       });
 
       const path = `${session.user.id}/${randomUUID()}.jpg`;

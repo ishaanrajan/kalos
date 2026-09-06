@@ -175,8 +175,8 @@ export async function bakeFilteredImage({
   uri,
   filter,
   strength,
-  maxEdge = 1440,
-  quality = 90,
+  maxEdge = 2560,
+  quality = 100,
 }: BakeOptions): Promise<BakedImage> {
   const { image: source, data } = await decode(uri);
   const size = fitWithin({ width: source.width(), height: source.height() }, maxEdge);
