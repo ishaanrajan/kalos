@@ -6,7 +6,7 @@ import { Feather } from '@expo/vector-icons';
 import { PhotoGrid } from '../../components/PhotoGrid';
 import { EmptyState } from '../../components/EmptyState';
 import { EndOfFeed } from '../../components/EndOfFeed';
-import { useExploreFeed, useHasPostedToday } from '../../lib/queries';
+import { EXPLORE_POST_THRESHOLD, useExploreFeed, useExploreLockState } from '../../lib/queries';
 import { photoUrl } from '../../lib/supabase';
 import { useTheme } from '../../lib/theme';
 
@@ -18,19 +18,19 @@ import { useTheme } from '../../lib/theme';
  * "performing well" — there is no ranking signal in the query at all, and the
  * order is plain reverse-chronological.
  *
- * Unlocking it is a daily gate, not a one-time milestone: post today and
- * it's open for today; skip a day and it locks again until you post. See
- * useHasPostedToday() for what "today" means (the device's own local day).
+ * Unlocking it is two combined conditions, checked in order: post 5 photos
+ * total (a one-time threshold), and only once that's cleared does it become
+ * a daily gate on top -- post today or it's locked again. See
+ * useExploreLockState() for the combined logic.
  */
 export default function Explore() {
   const router = useRouter();
   const { colors } = useTheme();
-  const { data: postedToday, isLoading: postedTodayLoading } = useHasPostedToday();
+  const { locked, needsMorePosts, postCount, isLoading: lockLoading } = useExploreLockState();
   const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useExploreFeed();
 
   const posts = useMemo(() => data?.pages.flat() ?? [], [data]);
-  const locked = postedToday === false;
 
   // The search bar is the only way into /search that isn't the DM compose
   // button -- it stays reachable even while the photo grid itself is locked,
@@ -47,7 +47,7 @@ export default function Explore() {
     </Pressable>
   );
 
-  if (postedTodayLoading) {
+  if (lockLoading) {
     return (
       <SafeAreaView style={[styles.center, { backgroundColor: colors.surface }]} edges={['top']}>
         <ActivityIndicator />
@@ -56,6 +56,10 @@ export default function Explore() {
   }
 
   if (locked) {
+    const remaining = EXPLORE_POST_THRESHOLD - postCount;
+    const body = needsMorePosts
+      ? `Share ${remaining} more photo${remaining === 1 ? '' : 's'} to unlock it — you've posted ${postCount} of ${EXPLORE_POST_THRESHOLD}.`
+      : 'Post a photo today to unlock it.';
     return (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         <View style={styles.header}>
@@ -65,7 +69,7 @@ export default function Explore() {
         <EmptyState
           icon="lock"
           title="Explore is locked"
-          body="Post a photo today to unlock it. Miss a day and it locks again -- that's the deal."
+          body={body}
           actionLabel="New post"
           onAction={() => router.push('/(tabs)/new')}
         />

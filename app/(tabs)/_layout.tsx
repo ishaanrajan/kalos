@@ -2,7 +2,7 @@ import { StyleSheet, View, type ColorValue } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { Avatar } from '../../components/Avatar';
-import { useHasPostedToday, useHasUnreadActivity } from '../../lib/queries';
+import { useExploreLockState, useHasUnreadActivity } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import { avatarUrl } from '../../lib/supabase';
 import { useTheme } from '../../lib/theme';
@@ -19,20 +19,17 @@ function ActivityTabIcon({ color, size }: { color: ColorValue; size: number }) {
 }
 
 /**
- * Explore's unlock is a daily gate now (post today or it's locked), not a
- * cumulative count, so there's no "N more to go" number left to show --
- * just whether today specifically still needs a post, disclosed here rather
- * than only on tapping the locked tab.
+ * Discloses Explore's actual combined lock state up front rather than only
+ * on tapping the locked tab -- see useExploreLockState() for the two
+ * conditions (5-post threshold, then a daily gate on top).
  */
 function ExploreTabIcon({ color, size }: { color: ColorValue; size: number }) {
-  const postedToday = useHasPostedToday();
+  const { locked } = useExploreLockState();
   const { colors } = useTheme();
   return (
     <View>
       <Feather name="search" size={size} color={color} />
-      {postedToday.data === false ? (
-        <View style={[styles.dot, { backgroundColor: colors.heart }]} />
-      ) : null}
+      {locked ? <View style={[styles.dot, { backgroundColor: colors.heart }]} /> : null}
     </View>
   );
 }

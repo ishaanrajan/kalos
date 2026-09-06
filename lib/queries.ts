@@ -708,11 +708,10 @@ export function useMarkActivityRead() {
 }
 
 /**
- * Whether the viewer has posted since local midnight -- Explore's unlock
- * condition is a daily gate, not a cumulative post count: post today and
- * it's open for today; skip a day and it's locked again until you post.
- * "Today" is the device's own local calendar day, not UTC, so it matches
- * what the person actually experiences as "today."
+ * Whether the viewer has posted since local midnight -- one half of
+ * Explore's unlock condition (see useExploreLockState). "Today" is the
+ * device's own local calendar day, not UTC, so it matches what the person
+ * actually experiences as "today."
  */
 export function useHasPostedToday() {
   const userId = useUserId();
@@ -731,4 +730,41 @@ export function useHasPostedToday() {
       return (count ?? 0) > 0;
     },
   });
+}
+
+/** Posts of your own required before Explore's daily gate even applies. */
+export const EXPLORE_POST_THRESHOLD = 5;
+
+export interface ExploreLockState {
+  /** True while either sub-check hasn't resolved yet. */
+  isLoading: boolean;
+  locked: boolean;
+  /** Haven't reached the one-time 5-post threshold yet -- this gate is
+   * checked first, and doesn't care what day it is. */
+  needsMorePosts: boolean;
+  /** Past the 5-post threshold, but haven't posted today specifically. */
+  needsPostToday: boolean;
+  postCount: number;
+}
+
+/**
+ * Explore unlocks on two combined conditions, not one: post 5 photos total
+ * (a one-time threshold, checked regardless of today's activity), and THEN
+ * it becomes a daily gate on top of that -- post today or it's locked again,
+ * re-evaluated every day. Centralized here so the Explore screen and the
+ * tab-bar badge can't disagree about whether it's actually locked.
+ */
+export function useExploreLockState(): ExploreLockState {
+  const { profile } = useAuth();
+  const { data: postedToday, isLoading: postedTodayLoading } = useHasPostedToday();
+  const postCount = profile?.post_count ?? 0;
+  const needsMorePosts = postCount < EXPLORE_POST_THRESHOLD;
+  const needsPostToday = !needsMorePosts && postedToday === false;
+  return {
+    isLoading: !profile || postedTodayLoading,
+    locked: needsMorePosts || needsPostToday,
+    needsMorePosts,
+    needsPostToday,
+    postCount,
+  };
 }
