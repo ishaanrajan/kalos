@@ -1,8 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -44,6 +45,22 @@ export default function PostScreen() {
   function selectMention(username: string) {
     setDraft((prev) => applyMentionSelection(prev, username));
   }
+
+  // Tapping the comment box focuses it well before the keyboard has actually
+  // finished sliding up -- scrolling on focus lands at what's currently the
+  // bottom, then the keyboard's own show animation shrinks the list's
+  // visible area a moment later and covers it again. Waiting for the
+  // keyboard to actually be up guarantees the scroll happens against the
+  // final, already-shrunk layout instead of racing it.
+  useEffect(() => {
+    // "Did," not "will" -- "will" fires as the animation starts, which is
+    // the same race as onFocus, just a smaller window. "Did" only fires
+    // once the keyboard (and the resize it drives) has actually finished.
+    const sub = Keyboard.addListener('keyboardDidShow', () => {
+      listRef.current?.scrollToEnd({ animated: true });
+    });
+    return () => sub.remove();
+  }, []);
 
   if (isLoading || !post) {
     return (
@@ -154,12 +171,6 @@ export default function PostScreen() {
           value={draft}
           onChangeText={setDraft}
           onSubmitEditing={submit}
-          // onContentSizeChange (on the FlatList above) only fires when the
-          // comment list itself grows -- initial load, a new comment. It
-          // does nothing when you tap into an already-loaded list's input,
-          // which is the actual "opened the keyboard to comment" moment
-          // this needs to land at the bottom for.
-          onFocus={() => listRef.current?.scrollToEnd({ animated: true })}
           returnKeyType="send"
         />
         <Pressable onPress={submit} disabled={!draft.trim() || addComment.isPending} hitSlop={10}>
