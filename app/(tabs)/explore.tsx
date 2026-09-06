@@ -107,20 +107,6 @@ export default function Explore() {
         posts={posts}
         imageUrlFor={(p) => photoUrl(p.image_path)}
         onPressPost={(p) => router.push(`/post/${p.id}`)}
-        renderOverlay={(p) =>
-          p.reason_username ? (
-            <View style={styles.reason}>
-              <Feather
-                name={p.reason === 'liked_by' ? 'heart' : 'user-plus'}
-                size={9}
-                color="#fff"
-              />
-              <Text style={styles.reasonText} numberOfLines={1}>
-                {p.reason_username}
-              </Text>
-            </View>
-          ) : null
-        }
         onEndReached={() => hasNextPage && !isFetchingNextPage && fetchNextPage()}
         ListEmptyComponent={
           <EmptyState icon="compass" title="Nothing to explore yet" />
@@ -159,24 +145,4 @@ const styles = StyleSheet.create({
   searchPlaceholder: { fontSize: 15 },
   title: { fontSize: 17, fontWeight: '600' },
   footerSpinner: { marginVertical: 24 },
-  // Why this photo reached you — the thing that made 2015 Explore feel like a
-  // place your friends had been, rather than a feed of strangers. Always a
-  // dark scrim with white text/icon: it sits on top of an arbitrary photo,
-  // not the app's own chrome, so it doesn't follow the theme.
-  reason: {
-    position: 'absolute',
-    left: 4,
-    bottom: 4,
-    maxWidth: '85%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    // Pill-shaped, matching the app's own overlay-badge radius token rather
-    // than dipping below its type floor with a squared-off corner.
-    borderRadius: 999,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
-  reasonText: { flexShrink: 1, color: '#fff', fontSize: 10, fontWeight: '600' },
 });

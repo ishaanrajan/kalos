@@ -20,7 +20,7 @@ This is the whole point, so it's worth being explicit about:
 - Email/password accounts
 - Square photos, 18 filters recreated from the 2015 set — Clarendon, Valencia, X-Pro II, Lo-Fi, Nashville, 1977, Inkwell and the rest — with a strength slider
 - A chronological feed of the people you follow
-- Explore, sourced purely from your social graph, labelled with *why* you're seeing something ("Liked by maya")
+- Explore, sourced purely from your social graph — a post someone you follow liked, or a post by someone they follow
 - Double-tap to like, comments, profile grids, follow/unfollow
 - Account search
 
