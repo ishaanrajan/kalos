@@ -214,15 +214,26 @@ created a webhook through the UI before.
 ## 6. Drake bot
 
 A joke account, `@prosecco_daddy`, that posts a Drake photo and swaps its own
-avatar once a day, picked from a pool of 22 photos on Wikimedia Commons.
-Same shape as push notifications: an Edge Function plus a piece of
-Dashboard-only setup, here `pg_cron` instead of a Database Webhook, since
-this fires on a timer rather than a table insert.
+avatar once a day, picked from a pool of 40 curated photos pre-uploaded to
+the `photos` storage bucket under the bot's own user folder
+(`photos/<bot_id>/source-N.jpg`) -- originally a pool of 22 Wikimedia Commons
+images, swapped out for a locally-sourced set. Same shape as push
+notifications: an Edge Function plus a piece of Dashboard-only setup, here
+`pg_cron` instead of a Database Webhook, since this fires on a timer rather
+than a table insert.
 
 The function never repeats a photo: `drake_bot_photo_log`
-(`0012_drake_bot_photo_log.sql`) tracks which of the 22 it's already posted,
-and it picks only from the unposted ones each run. Once all 22 have gone
-out, it clears the log itself and starts a fresh cycle.
+(`0012_drake_bot_photo_log.sql`) tracks which it's already posted, and it
+picks only from the unposted ones each run. Once every photo in the current
+pool has gone out, it clears the log itself and starts a fresh cycle --
+stale log entries from a previous, now-replaced pool never match anything in
+the current `PHOTOS` list, so swapping the pool out (as happened here)
+naturally starts a clean cycle without needing to manually clear the log.
+
+Posts never get an explicit width/height, so every photo displays as a
+perfect square (`posts.width`/`height` default to 1080x1080) regardless of
+its real aspect ratio -- the crop to fill that square happens client-side
+via `expo-image`'s `contentFit="cover"`, which centers by default.
 
 1. **Deploy the Edge Function.** Dashboard → **Edge Functions** → **New
    Function**, name it exactly `daily-drake`, paste in

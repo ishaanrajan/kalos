@@ -3,10 +3,20 @@
 // Called once a day by a pg_cron schedule (see 0011_drake_bot.sql). Posts a
 // photo as @prosecco_daddy -- picked from the ones it hasn't posted yet, so
 // today's photo can never repeat one already used -- and swaps its avatar to
-// another random one from the same pool. Photos are Wikimedia Commons
-// images: Commons doesn't allow fair-use uploads at all, so every file
-// hosted there directly (as opposed to Wikipedia) is required by site
-// policy to carry a free license (CC-BY, CC-BY-SA, or public domain).
+// another random one from the same pool. Photos are the account owner's own
+// curated set, pre-uploaded to the `photos` bucket under the bot's own user
+// folder (photos/<bot_id>/source-N.jpg) rather than fetched from Wikimedia
+// Commons -- same upload-then-insert flow either way, just a different
+// source for the bytes.
+//
+// Posts never get an explicit width/height (posts.width/height default to
+// 1080x1080 -- see 0002_schema.sql), so every source photo displays as a
+// perfect square regardless of its real aspect ratio. Cropping to that
+// square happens client-side (expo-image's `contentFit="cover"`, which
+// centers by default -- neither PhotoGrid nor PostCard override
+// `contentPosition`), so an off-center crop isn't something this function
+// controls, but it's also not something it needs to: the default already
+// centers it.
 //
 // Deploy via Dashboard -> Edge Functions -> New Function (paste this file),
 // name it exactly `daily-drake`. Turn off "Enforce JWT verification" the
@@ -22,28 +32,46 @@ const db = createClient(supabaseUrl, serviceRoleKey);
 const BOT_USERNAME = 'prosecco_daddy';
 
 const PHOTOS = [
-  'https://upload.wikimedia.org/wikipedia/commons/2/28/Drake_July_2016.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/1/18/Drake_2010.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/7/73/Drake_and_Migos_at_MSG_Aug_25th_2018.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/7/78/Drake_%2845184%29.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/9/9a/Drake_in_2017.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/1/17/Drake_Summer_Sixteen_Tour.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/d/d3/Drake_-_4972204415.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/a/a9/Drake_Bluesfest.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/9/9a/Drake_fox_theatre.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/a/a9/Drake_Live_at_Walmart_Soundcheck_%284635826377%29.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/9/92/Drake_Live_at_Walmart_Soundcheck_%284635826879%29.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/9/93/Drake_Live_at_Walmart_Soundcheck_%284636434192%29.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/6/6c/Drake_at_Bun-B_Concert_2011.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/2/21/Drake_in_2011.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/2/21/Drake_at_Tup_Tup_Palace.png',
-  'https://upload.wikimedia.org/wikipedia/commons/f/fb/Drake_Club_Paradise_Tour.png',
-  'https://upload.wikimedia.org/wikipedia/commons/c/c4/Drake_and_Future_2016_Summer_Sixteen_Tour.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/f/f3/Drake_all_summer_16.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/1/1a/Drake%2C_2017_Toronto_International_Film_Festival.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/1/15/Drake_at_The_Carter_Effect_2017_%2836818935200%29_%28cropped%29.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/1/17/Drake_Aug_25th_2018_at_MSG.jpg',
-  'https://upload.wikimedia.org/wikipedia/commons/1/12/Drake_Aug_25th_2018.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-0.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-1.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-2.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-3.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-4.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-5.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-6.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-7.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-8.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-9.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-10.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-11.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-12.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-13.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-14.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-15.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-16.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-17.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-18.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-19.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-20.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-21.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-22.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-23.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-24.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-25.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-26.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-27.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-28.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-29.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-30.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-31.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-32.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-33.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-34.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-35.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-36.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-37.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-38.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-39.jpg',
 ];
 
 const CAPTIONS = [
