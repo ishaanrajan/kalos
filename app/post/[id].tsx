@@ -154,6 +154,12 @@ export default function PostScreen() {
           value={draft}
           onChangeText={setDraft}
           onSubmitEditing={submit}
+          // onContentSizeChange (on the FlatList above) only fires when the
+          // comment list itself grows -- initial load, a new comment. It
+          // does nothing when you tap into an already-loaded list's input,
+          // which is the actual "opened the keyboard to comment" moment
+          // this needs to land at the bottom for.
+          onFocus={() => listRef.current?.scrollToEnd({ animated: true })}
           returnKeyType="send"
         />
         <Pressable onPress={submit} disabled={!draft.trim() || addComment.isPending} hitSlop={10}>
