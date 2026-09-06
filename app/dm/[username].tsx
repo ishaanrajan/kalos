@@ -26,10 +26,16 @@ import type { DMMessage } from '../../lib/types';
 
 /**
  * The old-Instagram "tap the heart instead of typing" send -- Bubble below
- * renders a message whose body is exactly this glyph as a large, bubble-less
- * heart instead of normal text.
+ * renders a message whose body is exactly this as a large, bubble-less heart
+ * instead of normal text. Deliberately not just '❤️': typing that same
+ * emoji by hand and hitting Send should render as an ordinary small emoji
+ * in a normal bubble, not trigger the big treatment -- so the button
+ * appends an invisible zero-width space a keyboard would never produce,
+ * making the two indistinguishable to a human (everywhere the raw body
+ * shows up as plain text -- push notifications, inbox previews -- it still
+ * just looks like a heart) but distinguishable to this exact check.
  */
-const BIG_HEART = '❤️';
+const BIG_HEART = '❤️​';
 
 /**
  * A DM thread. `username` names who this thread is *with*: for anyone but
