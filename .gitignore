@@ -3,6 +3,9 @@
 # dependencies
 node_modules/
 
+# Local staging area for one-off asset migrations -- never meant to be committed.
+.drake_source_photos/
+
 # Expo
 .expo/
 dist/
