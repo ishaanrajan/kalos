@@ -9,7 +9,7 @@ import { EmptyState } from '../../components/EmptyState';
 import { useDeletePost, useHasUnreadDMs, useHomeFeed, useToggleLike } from '../../lib/queries';
 import { photoUrl, avatarUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
-import { confirmDestructive } from '../../lib/actionSheet';
+import { confirmDestructive, showActionSheet } from '../../lib/actionSheet';
 import { useTheme } from '../../lib/theme';
 import type { FeedPost } from '../../lib/types';
 
@@ -56,6 +56,16 @@ export default function Feed() {
     [deletePost]
   );
 
+  const showPostOptions = useCallback(
+    (post: FeedPost) => {
+      showActionSheet('Post options', [
+        { label: 'Edit Caption', onPress: () => router.push(`/edit-caption/${post.id}`) },
+        { label: 'Delete Post', destructive: true, onPress: () => deleteOwnPost(post) },
+      ]);
+    },
+    [router, deleteOwnPost]
+  );
+
   const renderItem = useCallback(
     ({ item }: { item: FeedPost }) => (
       <PostCard
@@ -66,12 +76,12 @@ export default function Feed() {
         onPressAuthor={() => router.push(`/profile/${item.author_username}`)}
         onPressComments={() => router.push(`/post/${item.id}`)}
         onPressLikes={() => router.push(`/likes/${item.id}`)}
-        onPressOptions={item.author_id === userId ? () => deleteOwnPost(item) : undefined}
+        onPressOptions={item.author_id === userId ? () => showPostOptions(item) : undefined}
         onPressMention={(username) => router.push(`/profile/${username}`)}
         previewComments={item.preview_comments}
       />
     ),
-    [router, toggleLike, userId, deleteOwnPost]
+    [router, toggleLike, userId, showPostOptions]
   );
 
   if (isLoading) {

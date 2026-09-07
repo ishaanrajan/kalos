@@ -21,7 +21,7 @@ import { MentionSuggestions } from '../../components/MentionSuggestions';
 import { useAddComment, useComments, useDeletePost, useFollowList, usePost, useToggleLike } from '../../lib/queries';
 import { avatarUrl, photoUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
-import { confirmDestructive } from '../../lib/actionSheet';
+import { confirmDestructive, showActionSheet } from '../../lib/actionSheet';
 import { activeMentionQuery, applyMentionSelection } from '../../lib/mentions';
 import { nativeHeaderHeight, useTheme } from '../../lib/theme';
 import type { Comment } from '../../lib/types';
@@ -108,6 +108,13 @@ export default function PostScreen() {
     });
   }
 
+  function showPostOptions() {
+    showActionSheet('Post options', [
+      { label: 'Edit Caption', onPress: () => router.push(`/edit-caption/${post!.id}`) },
+      { label: 'Delete Post', destructive: true, onPress: deleteThisPost },
+    ]);
+  }
+
   return (
     <KeyboardAvoidingView
       style={[styles.root, { backgroundColor: colors.surface }]}
@@ -148,7 +155,7 @@ export default function PostScreen() {
             }
             onPressAuthor={() => router.push(`/profile/${post.author.username}`)}
             onPressLikes={() => router.push(`/likes/${post.id}`)}
-            onPressOptions={post.author.id === userId ? deleteThisPost : undefined}
+            onPressOptions={post.author.id === userId ? showPostOptions : undefined}
             onPressMention={(username) => router.push(`/profile/${username}`)}
             showCommentPreview={false}
           />

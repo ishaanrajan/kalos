@@ -398,6 +398,28 @@ export function useDeletePost() {
   });
 }
 
+/**
+ * Editing your own post's caption. RLS (`posts_update_own`) and the column
+ * grant (`update (caption, filter_name)` -- see 0004_rls.sql) already scope
+ * this to the post's own author and this one column; nothing new needed on
+ * the database side to support it.
+ */
+export function useUpdatePostCaption() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ postId, caption }: { postId: string; caption: string | null }) => {
+      const { error } = await supabase.from('posts').update({ caption }).eq('id', postId);
+      if (error) throw error;
+    },
+    onSuccess: (_d, { postId }) => {
+      qc.invalidateQueries({ queryKey: ['home_feed'] });
+      qc.invalidateQueries({ queryKey: ['explore_feed'] });
+      qc.invalidateQueries({ queryKey: ['profile-posts'] });
+      qc.invalidateQueries({ queryKey: ['post', postId] });
+    },
+  });
+}
+
 export function useSearchProfiles(q: string) {
   return useQuery({
     queryKey: ['search', q],

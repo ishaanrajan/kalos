@@ -120,6 +120,7 @@ function RootNavigator() {
       <Stack.Screen name="follows/[username]" options={{ headerShown: true, title: '' }} />
       <Stack.Screen name="likes/[postId]" options={{ headerShown: true, title: 'Likes' }} />
       <Stack.Screen name="edit-profile" options={{ headerShown: true, title: 'Edit profile' }} />
+      <Stack.Screen name="edit-caption/[id]" options={{ headerShown: true, title: 'Edit caption' }} />
       <Stack.Screen name="search" options={{ headerShown: true, title: 'Search' }} />
       <Stack.Screen name="dm/index" options={{ headerShown: true, title: 'Messages' }} />
       <Stack.Screen name="dm/[username]" options={{ headerShown: true, title: '' }} />
