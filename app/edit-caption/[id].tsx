@@ -10,8 +10,10 @@ import {
   View,
 } from 'react-native';
 import { StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { usePost, useUpdatePostCaption } from '../../lib/queries';
+import { photoUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
 
@@ -90,16 +92,27 @@ export default function EditCaption() {
         }}
       />
 
-      <TextInput
-        style={[styles.input, { color: colors.text }]}
-        value={caption}
-        onChangeText={setCaption}
-        multiline
-        autoFocus
-        maxLength={2200}
-        placeholder="Write a caption…"
-        placeholderTextColor={colors.textSecondary}
-      />
+      {/* Thumbnail + caption side by side, same layout as the share step of
+          new.tsx -- editing the caption shouldn't feel like a different
+          screen than writing it the first time, and it keeps the actual post
+          in view instead of just a bare text box. */}
+      <View style={styles.captionRow}>
+        <Image
+          source={photoUrl(post.image_path)}
+          style={[styles.thumb, { backgroundColor: colors.imagePlaceholder }]}
+          contentFit="cover"
+        />
+        <TextInput
+          style={[styles.input, { color: colors.text }]}
+          value={caption}
+          onChangeText={setCaption}
+          multiline
+          autoFocus
+          maxLength={2200}
+          placeholder="Write a caption…"
+          placeholderTextColor={colors.textSecondary}
+        />
+      </View>
       <Text style={[styles.counter, { color: colors.textSecondary }]}>{caption.length}/2200</Text>
     </KeyboardAvoidingView>
   );
@@ -109,12 +122,14 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   done: { fontSize: 15, fontWeight: '600' },
+  captionRow: { flexDirection: 'row', gap: 12, padding: 16 },
+  thumb: { width: 72, height: 72, borderRadius: 3, overflow: 'hidden' },
   input: {
     flex: 1,
     fontSize: 15,
     lineHeight: 20,
-    padding: 16,
-    textAlignVertical: 'top',
+    paddingTop: 2,
+    minHeight: 72,
   },
   counter: { alignSelf: 'flex-end', paddingHorizontal: 16, paddingBottom: 16, fontSize: 12 },
 });
