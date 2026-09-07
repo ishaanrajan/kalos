@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "259217620651",
+    "project_id": "kalos-e1b71",
+    "storage_bucket": "kalos-e1b71.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:259217620651:android:2b243429afb9914239c1ee",
+        "android_client_info": {
+          "package_name": "com.ishaanrajan.kalos"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBUDPuIs5ntL-eKfQmfG2gsdPSGux9L5xc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
