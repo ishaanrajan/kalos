@@ -7,7 +7,7 @@ import { PhotoGrid } from '../../components/PhotoGrid';
 import { EmptyState } from '../../components/EmptyState';
 import { EndOfFeed } from '../../components/EndOfFeed';
 import { EXPLORE_POST_THRESHOLD, useExploreFeed, useExploreLockState } from '../../lib/queries';
-import { photoUrl } from '../../lib/supabase';
+import { photoThumbUrl } from '../../lib/supabase';
 import { useTheme } from '../../lib/theme';
 
 /**
@@ -109,7 +109,7 @@ export default function Explore() {
 
       <PhotoGrid
         posts={posts}
-        imageUrlFor={(p) => photoUrl(p.image_path)}
+        imageUrlFor={photoThumbUrl}
         onPressPost={(p) => router.push(`/post/${p.id}`)}
         onEndReached={() => hasNextPage && !isFetchingNextPage && fetchNextPage()}
         ListEmptyComponent={

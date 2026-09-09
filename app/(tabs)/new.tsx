@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
   Alert,
   Dimensions,
   KeyboardAvoidingView,
+  PixelRatio,
   Platform,
   Pressable,
   ScrollView,
@@ -22,6 +23,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { FilterStrip } from '../../components/FilterStrip';
 import { FilterPreview } from '../../components/FilterPreview';
 import { EmptyState } from '../../components/EmptyState';
+import { displayAspectRatio } from '../../components/PostCard';
 import { FILTERS, getFilter } from '../../lib/filters';
 import { bakeFilteredImage, downscaleForPreview } from '../../lib/bake';
 import { supabase, PHOTOS_BUCKET } from '../../lib/supabase';
@@ -30,6 +32,12 @@ import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
 
 const SCREEN = Dimensions.get('window').width;
+// The composer preview is a single canvas (unlike FilterStrip's 18 at once,
+// which downscales further itself -- see THUMB_SOURCE_EDGE in
+// FilterStrip.tsx), so there's no cost reason to keep it small. Sized off the
+// device's actual pixel density so it's never blurrier than the screen it's
+// rendered on.
+const PREVIEW_MAX_EDGE = Math.round(SCREEN * PixelRatio.get());
 
 type Picked = { uri: string; previewUri: string; width: number; height: number };
 
@@ -114,6 +122,13 @@ export default function NewPost() {
 
   const filter = getFilter(filterName) ?? FILTERS[0];
   const isNormal = filter.name === 'Normal';
+  // Real dimensions once a photo's picked; 1 (square) beforehand -- this runs
+  // every render regardless of `picked` to keep hook order stable, same as
+  // every other hook in this component sitting above the early returns below.
+  const aspectRatio = useMemo(
+    () => (picked ? displayAspectRatio(picked.width, picked.height) : 1),
+    [picked]
+  );
 
   /** Guards the focus effect against re-entering while a picker is already up. */
   const picking = useRef(false);
@@ -153,10 +168,13 @@ export default function NewPost() {
         return;
       }
 
+      // No forced crop -- a photo's natural shape carries through to the
+      // post; PostCard's displayAspectRatio() clamps the extremes (4:5 to
+      // 1.91:1, near-square snapped to square) the same way 2015 Instagram
+      // eventually did, rather than cropping to a fixed square up front.
       const options: ImagePicker.ImagePickerOptions = {
         mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1], // square-first, the way it was
+        allowsEditing: false,
         quality: 1,
       };
       const result =
@@ -170,9 +188,10 @@ export default function NewPost() {
       }
 
       const asset = result.assets[0];
-      // Previews and thumbnails run against a small copy; the full-resolution
-      // image is only touched once, at post time.
-      const preview = await downscaleForPreview(asset.uri, 600);
+      // The preview runs against a downscaled copy sized to the screen's own
+      // resolution (still far smaller than the original for most photos);
+      // the full-resolution image is only touched once, at post time.
+      const preview = await downscaleForPreview(asset.uri, PREVIEW_MAX_EDGE);
       setPicked({
         uri: asset.uri,
         previewUri: preview.uri,
@@ -219,7 +238,8 @@ export default function NewPost() {
         strength: 1,
       });
 
-      const path = `${session.user.id}/${randomUUID()}.jpg`;
+      const id = randomUUID();
+      const path = `${session.user.id}/${id}.jpg`;
       const bytes = await new File(baked.uri).bytes();
 
       const { error: uploadError } = await supabase.storage
@@ -227,9 +247,25 @@ export default function NewPost() {
         .upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
       if (uploadError) throw uploadError;
 
+      // A small derivative for grid contexts (Explore, profile grids) --
+      // generated from the already-filtered bake output so it matches what
+      // actually got posted, not the unfiltered original. Without this,
+      // every ~130pt grid tile was decoding the same full-quality
+      // (maxEdge 2560, quality 100) image as the feed, which is what made
+      // scrolling those grids sluggish, especially on Android.
+      const thumb = await downscaleForPreview(baked.uri, 400);
+      const thumbPath = `${session.user.id}/${id}_thumb.jpg`;
+      const thumbBytes = await new File(thumb.uri).bytes();
+
+      const { error: thumbUploadError } = await supabase.storage
+        .from(PHOTOS_BUCKET)
+        .upload(thumbPath, thumbBytes, { contentType: 'image/jpeg', upsert: false });
+      if (thumbUploadError) throw thumbUploadError;
+
       const { error: insertError } = await supabase.from('posts').insert({
         author_id: session.user.id,
         image_path: path,
+        thumb_path: thumbPath,
         width: baked.width,
         height: baked.height,
         caption: caption.trim() || null,
@@ -331,7 +367,7 @@ export default function NewPost() {
             uri={picked.previewUri}
             filter={filter}
             strength={1}
-            size={SCREEN}
+            size={{ width: SCREEN, height: SCREEN / aspectRatio }}
             style={styles.preview}
           />
 

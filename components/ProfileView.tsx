@@ -5,7 +5,7 @@ import { Button } from './Button';
 import { PhotoGrid } from './PhotoGrid';
 import { EmptyState } from './EmptyState';
 import { useIsFollowing, useProfilePosts, useToggleFollow } from '../lib/queries';
-import { avatarUrl, photoUrl } from '../lib/supabase';
+import { avatarUrl, photoThumbUrl } from '../lib/supabase';
 import { useTheme } from '../lib/theme';
 import type { Profile } from '../lib/types';
 
@@ -109,7 +109,7 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
   return (
     <PhotoGrid
       posts={posts ?? []}
-      imageUrlFor={(p) => photoUrl(p.image_path)}
+      imageUrlFor={photoThumbUrl}
       onPressPost={(p) => router.push(`/post/${p.id}`)}
       ListHeaderComponent={() => header}
       ListEmptyComponent={

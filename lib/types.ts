@@ -35,6 +35,10 @@ export interface Post {
   id: UUID;
   author_id: UUID;
   image_path: string;
+  /** A small downscaled derivative for grid/thumbnail contexts. Null for
+   * posts created before this column existed -- callers fall back to
+   * image_path. */
+  thumb_path: string | null;
   width: number;
   height: number;
   caption: string | null;
