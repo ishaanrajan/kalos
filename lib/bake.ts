@@ -165,6 +165,26 @@ async function decode(uri: string): Promise<{ image: SkImage; data: SkData }> {
   return { image, data };
 }
 
+/**
+ * Skia's built-in codecs don't include HEIC/HEIF -- Apple's default capture
+ * format since iOS 11 -- so a photo picked straight from the library with no
+ * edit step (see new.tsx: allowsEditing is now false) can hand Skia a file
+ * it simply can't decode. `expo-image-manipulator`'s native codec (CoreImage
+ * on iOS) does understand HEIC; a no-op render-and-save through it converts
+ * to JPEG at full resolution and quality. JPEG/PNG sources skip this
+ * entirely -- Skia already decodes those natively and losslessly.
+ */
+function isHeic(uri: string): boolean {
+  return /\.(heic|heif)(\?.*)?$/i.test(uri);
+}
+
+async function ensureSkiaDecodable(uri: string): Promise<string> {
+  if (!isHeic(uri)) return uri;
+  const rendered = await ImageManipulator.manipulate(uri).renderAsync();
+  const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 1 });
+  return saved.uri;
+}
+
 let bakeCounter = 0;
 
 /**
@@ -178,7 +198,7 @@ export async function bakeFilteredImage({
   maxEdge = 2560,
   quality = 100,
 }: BakeOptions): Promise<BakedImage> {
-  const { image: source, data } = await decode(uri);
+  const { image: source, data } = await decode(await ensureSkiaDecodable(uri));
   const size = fitWithin({ width: source.width(), height: source.height() }, maxEdge);
 
   let surface: SkSurface | undefined;
@@ -226,7 +246,8 @@ export async function downscaleForPreview(uri: string, maxEdge: number): Promise
   const original: ImageSize = { width: probe.width, height: probe.height };
 
   if (Math.max(original.width, original.height) <= maxEdge) {
-    return { uri, width: original.width, height: original.height };
+    const decodableUri = await ensureSkiaDecodable(uri);
+    return { uri: decodableUri, width: original.width, height: original.height };
   }
 
   const rendered = await context
