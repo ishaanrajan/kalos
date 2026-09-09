@@ -64,6 +64,29 @@ function randomDelaySeconds(): number {
   return MIN_DELAY_SECONDS + Math.floor(Math.random() * (MAX_DELAY_SECONDS - MIN_DELAY_SECONDS));
 }
 
+// The system prompt is the only thing standing between a DM someone sends
+// Drake and whatever comes out the other side -- there's no tool access or
+// data reach beyond this one thread for an injection to actually exploit,
+// but a break-character reply still auto-sends with no human review, and it
+// reads as "from Drake" to whoever's in that thread. This is a second,
+// independent line of defense on the *output*, not the prompt: if the model
+// gets talked into breaking character anyway, this catches it before it's
+// ever queued, rather than trusting the instructions alone to hold every time.
+const BREAK_CHARACTER_PATTERNS: RegExp[] = [
+  /\bas an ai\b/i,
+  /\blanguage model\b/i,
+  /\bi'?m (?:an ai|just an ai|a bot|a chatbot)\b/i,
+  /\bi (?:cannot|can'?t) (?:help|assist|comply|do that)\b/i,
+  /\bsystem prompt\b/i,
+  /\b(?:ignore|disregard) (?:the )?(?:previous|prior|above) instructions?\b/i,
+  /\banthropic\b/i,
+  /\bi'?m not (?:actually |really )?drake\b/i,
+];
+
+function looksBrokenCharacter(text: string): boolean {
+  return BREAK_CHARACTER_PATTERNS.some((re) => re.test(text));
+}
+
 Deno.serve(async (req) => {
   if (!anthropicApiKey) {
     console.error('ANTHROPIC_API_KEY is not set');
@@ -151,6 +174,16 @@ Deno.serve(async (req) => {
   } catch (e) {
     console.error('Claude API call failed', e);
     return new Response('generation failed', { status: 502 });
+  }
+
+  if (looksBrokenCharacter(replyText)) {
+    // Dropped, not retried -- whatever prompted this (an injection attempt,
+    // an unlucky generation) is still sitting in the thread history, so a
+    // retry would likely just break character again. Silent no-reply is the
+    // safe failure mode here, same as every other "nothing to do" path in
+    // this function.
+    console.error('suppressed a break-character reply', { replyText });
+    return new Response('suppressed', { status: 200 });
   }
 
   const sendAt = new Date(Date.now() + randomDelaySeconds() * 1000).toISOString();
