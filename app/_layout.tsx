@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
-import { ActivityIndicator, AppState, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, View } from 'react-native';
 import type { AppStateStatus } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as Notifications from 'expo-notifications';
+import * as Updates from 'expo-updates';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -16,11 +17,42 @@ const queryClient = new QueryClient({
   },
 });
 
-// React Query's focus manager has no idea what "foreground" means on native
-// until it's told -- without this, refetchOnWindowFocus is silently a no-op
-// on iOS/Android, unlike on web where it's automatic.
+// React Query's focus manager has no idea what "foreground" until it's told
+// -- without this, refetchOnWindowFocus is silently a no-op on iOS/Android,
+// unlike on web where it's automatic.
 function onAppStateChange(status: AppStateStatus) {
   focusManager.setFocused(status === 'active');
+  if (status === 'active') {
+    void checkForUpdateOnForeground();
+  }
+}
+
+// expo-updates' default "check on load" only fires once per cold JS start --
+// backgrounding and reopening from the app switcher (as opposed to a real
+// force-quit) never re-triggers it, so someone who never fully force-quits
+// can be stuck running a stale bundle indefinitely. This is what actually
+// caused several people to hit the same already-fixed HEIC posting bug days
+// after the fix shipped -- they were still running the old bundle and had
+// no way to know it. Checking (and offering to apply) on every foreground
+// closes that gap instead of relying on users to know the difference between
+// backgrounding and force-quitting.
+let checkingForUpdate = false;
+async function checkForUpdateOnForeground(): Promise<void> {
+  if (__DEV__ || checkingForUpdate) return;
+  checkingForUpdate = true;
+  try {
+    const result = await Updates.checkForUpdateAsync();
+    if (!result.isAvailable) return;
+    await Updates.fetchUpdateAsync();
+    Alert.alert('Update available', 'A new version of Kalos is ready.', [
+      { text: 'Later', style: 'cancel' },
+      { text: 'Restart now', onPress: () => Updates.reloadAsync() },
+    ]);
+  } catch {
+    // Best-effort -- a failed check should never block using the app.
+  } finally {
+    checkingForUpdate = false;
+  }
 }
 
 function RootNavigator() {
@@ -92,6 +124,15 @@ function RootNavigator() {
   useEffect(() => {
     const sub = AppState.addEventListener('change', onAppStateChange);
     return () => sub.remove();
+  }, []);
+
+  // Covers a fresh cold launch too, not just later foreground transitions --
+  // the default "check on load" behavior downloads a pending update
+  // silently in the background but doesn't apply or announce it until the
+  // launch *after* that one, which is exactly the gap that let people keep
+  // hitting an already-fixed bug for days.
+  useEffect(() => {
+    void checkForUpdateOnForeground();
   }, []);
 
   if (loading) {

@@ -119,6 +119,14 @@ export default function NewPost() {
   const [posting, setPosting] = useState(false);
   /** Set when a permission was refused, so there's something to retry from. */
   const [blocked, setBlocked] = useState<string | null>(null);
+  /**
+   * True from the moment a photo's picked until the preview's ready to show.
+   * Without this, that gap was a totally bare screen -- long enough on a big
+   * photo or a slower device that people reasonably thought the app had
+   * reset and backed out, then retried a few times until one attempt
+   * finished fast enough to actually show up.
+   */
+  const [processing, setProcessing] = useState(false);
 
   const filter = getFilter(filterName) ?? FILTERS[0];
   const isNormal = filter.name === 'Normal';
@@ -188,6 +196,7 @@ export default function NewPost() {
       }
 
       const asset = result.assets[0];
+      setProcessing(true);
       // The preview runs against a downscaled copy sized to the screen's own
       // resolution (still far smaller than the original for most photos);
       // the full-resolution image is only touched once, at post time.
@@ -207,6 +216,7 @@ export default function NewPost() {
       setBlocked(e instanceof Error ? e.message : 'Could not open the camera.');
     } finally {
       picking.current = false;
+      setProcessing(false);
     }
   }, [router]);
 
@@ -325,8 +335,9 @@ export default function NewPost() {
   ) : null;
 
   if (!picked) {
-    // Nothing but a bare screen while the sheet and picker are up — anything
-    // drawn here would flash for the moment before they cover it.
+    // Bare while the native sheet/picker is up -- anything drawn here would
+    // flash for the moment before they cover it. Once a photo's actually
+    // been picked and is being processed, show that instead of nothing.
     return (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         {hideTabBar}
@@ -343,6 +354,10 @@ export default function NewPost() {
               onAction={launch}
             />
           </>
+        ) : processing ? (
+          <View style={styles.center}>
+            <ActivityIndicator />
+          </View>
         ) : null}
       </SafeAreaView>
     );
@@ -434,6 +449,7 @@ export default function NewPost() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: {
     height: 44,
     flexDirection: 'row',
