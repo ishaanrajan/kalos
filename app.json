@@ -41,6 +41,13 @@
           "microphonePermission": false
         }
       ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Kalos needs access to your photos so you can post them.",
+          "savePhotosPermission": false
+        }
+      ],
       "expo-notifications"
     ],
     "experiments": {

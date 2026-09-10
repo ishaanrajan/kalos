@@ -174,3 +174,11 @@ export interface ImageSize {
   width: number;
   height: number;
 }
+
+/** A crop region in an image's own pixel space (not display points). */
+export interface CropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}

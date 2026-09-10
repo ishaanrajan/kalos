@@ -25,7 +25,7 @@ import { File, Paths } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
 import { effectiveOverlay, lerpMatrix } from './filters';
-import type { Filter, FilterOverlay, ImageSize } from './types';
+import type { CropRect, Filter, FilterOverlay, ImageSize } from './types';
 
 export interface BakedImage extends ImageSize {
   /** `file://` URI of the written JPEG, inside the cache directory. */
@@ -41,6 +41,13 @@ export interface BakeOptions {
   maxEdge?: number;
   /** JPEG quality, 0–100. */
   quality?: number;
+  /**
+   * The region of the source image to bake, in the source's own pixel
+   * space (from CropAdjust's getCropRect()). Defaults to the whole image --
+   * every caller before the crop-adjust step existed relied on that default,
+   * and still can.
+   */
+  crop?: CropRect;
 }
 
 /** Blend modes exposed by `FilterOverlay`, mapped onto Skia's enum. */
@@ -113,6 +120,7 @@ function drawFiltered(
   filter: Filter,
   strength: number,
   size: ImageSize,
+  srcRect: CropRect,
 ): void {
   canvas.clear(Skia.Color('#00000000'));
 
@@ -122,7 +130,7 @@ function drawFiltered(
 
   canvas.drawImageRectCubic(
     image,
-    Skia.XYWHRect(0, 0, image.width(), image.height()),
+    Skia.XYWHRect(srcRect.x, srcRect.y, srcRect.width, srcRect.height),
     Skia.XYWHRect(0, 0, size.width, size.height),
     MITCHELL_B,
     MITCHELL_C,
@@ -185,10 +193,27 @@ async function ensureSkiaDecodable(uri: string): Promise<string> {
   return saved.uri;
 }
 
+/**
+ * Keeps a crop rect (computed against whatever dimensions CropAdjust was
+ * told the source was) from ever landing fractionally out of the actual
+ * decoded image's bounds -- rounding along the way is normal, trusting it
+ * blindly as a source rect for Skia isn't.
+ */
+function clampCropRect(rect: CropRect, bounds: ImageSize): CropRect {
+  const width = Math.min(rect.width, bounds.width);
+  const height = Math.min(rect.height, bounds.height);
+  return {
+    width,
+    height,
+    x: Math.max(0, Math.min(rect.x, bounds.width - width)),
+    y: Math.max(0, Math.min(rect.y, bounds.height - height)),
+  };
+}
+
 let bakeCounter = 0;
 
 /**
- * Applies a filter to the full-resolution source and writes a JPEG into the
+ * Applies a filter to a region of the source and writes a JPEG into the
  * cache directory. Returns the written file plus its baked dimensions.
  */
 export async function bakeFilteredImage({
@@ -197,9 +222,14 @@ export async function bakeFilteredImage({
   strength,
   maxEdge = 2560,
   quality = 100,
+  crop,
 }: BakeOptions): Promise<BakedImage> {
   const { image: source, data } = await decode(await ensureSkiaDecodable(uri));
-  const size = fitWithin({ width: source.width(), height: source.height() }, maxEdge);
+  const srcRect = clampCropRect(
+    crop ?? { x: 0, y: 0, width: source.width(), height: source.height() },
+    { width: source.width(), height: source.height() }
+  );
+  const size = fitWithin({ width: srcRect.width, height: srcRect.height }, maxEdge);
 
   let surface: SkSurface | undefined;
   let snapshot: SkImage | undefined;
@@ -207,7 +237,7 @@ export async function bakeFilteredImage({
 
   try {
     surface = makeSurface(size);
-    drawFiltered(surface.getCanvas(), source, filter, strength, size);
+    drawFiltered(surface.getCanvas(), source, filter, strength, size, srcRect);
     surface.flush();
 
     snapshot = surface.makeImageSnapshot();

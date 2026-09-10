@@ -15,6 +15,8 @@ import {
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as MediaLibrary from 'expo-media-library';
+import { Image } from 'expo-image';
 import { randomUUID } from 'expo-crypto';
 import { File } from 'expo-file-system';
 import { Tabs, useFocusEffect, useRouter } from 'expo-router';
@@ -23,6 +25,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { FilterStrip } from '../../components/FilterStrip';
 import { FilterPreview } from '../../components/FilterPreview';
 import { EmptyState } from '../../components/EmptyState';
+import { PhotoLibraryGrid } from '../../components/PhotoLibraryGrid';
+import { CropAdjust } from '../../components/CropAdjust';
+import type { CropAdjustHandle } from '../../components/CropAdjust';
 import { displayAspectRatio } from '../../components/PostCard';
 import { FILTERS, getFilter } from '../../lib/filters';
 import { bakeFilteredImage, downscaleForPreview } from '../../lib/bake';
@@ -30,6 +35,7 @@ import { supabase, PHOTOS_BUCKET } from '../../lib/supabase';
 import { useUpdateProfile } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
+import type { CropRect } from '../../lib/types';
 
 const SCREEN = Dimensions.get('window').width;
 // The composer preview is a single canvas (unlike FilterStrip's 18 at once,
@@ -39,13 +45,18 @@ const SCREEN = Dimensions.get('window').width;
 // rendered on.
 const PREVIEW_MAX_EDGE = Math.round(SCREEN * PixelRatio.get());
 
-type Picked = { uri: string; previewUri: string; width: number; height: number };
+/** The photo as picked, before any crop has been chosen. */
+type RawPick = { uri: string; width: number; height: number };
+/** The photo once its crop is locked in -- what the filter/share steps use. */
+type Picked = RawPick & { previewUri: string; crop: CropRect };
 
 /**
- * Two steps, the way the app this imitates did it: choose the look, then write
- * the caption.
+ * Four steps: pick (in-app library grid, or straight to the camera), adjust
+ * the framing, choose the look, then write the caption -- library and
+ * camera both funnel into the same adjust step so a photo always gets the
+ * same reframing chance regardless of where it came from.
  */
-type Step = 'filter' | 'share';
+type Step = 'library' | 'adjust' | 'filter' | 'share';
 
 type Source = 'camera' | 'library';
 
@@ -57,20 +68,21 @@ type Source = 'camera' | 'library';
  * the very first try, and every retry re-opens the whole source-choice
  * sheet from scratch.
  */
-async function requestPermissionWithRetry(
-  source: Source
-): Promise<ImagePicker.PermissionResponse> {
-  const request =
-    source === 'camera'
-      ? ImagePicker.requestCameraPermissionsAsync
-      : ImagePicker.requestMediaLibraryPermissionsAsync;
-  const get =
-    source === 'camera' ? ImagePicker.getCameraPermissionsAsync : ImagePicker.getMediaLibraryPermissionsAsync;
-
-  const first = await request();
+async function requestCameraPermissionWithRetry(): Promise<ImagePicker.PermissionResponse> {
+  const first = await ImagePicker.requestCameraPermissionsAsync();
   if (first.granted || !first.canAskAgain) return first;
   await new Promise((resolve) => setTimeout(resolve, 300));
-  return get();
+  return ImagePicker.getCameraPermissionsAsync();
+}
+
+/** Same retry shape as the camera one above, against expo-media-library's
+ * own separate permission system -- the in-app library grid reads the
+ * library directly, it doesn't go through expo-image-picker at all. */
+async function requestLibraryPermissionWithRetry(): Promise<MediaLibrary.PermissionResponse> {
+  const first = await MediaLibrary.requestPermissionsAsync();
+  if (first.granted || !first.canAskAgain) return first;
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  return MediaLibrary.getPermissionsAsync();
 }
 
 /**
@@ -112,30 +124,43 @@ export default function NewPost() {
   // the redirect in app/_layout.tsx.
   const isForcedFirstPost = !!profile && profile.onboarded === false;
 
-  const [picked, setPicked] = useState<Picked | null>(null);
+  // Not 'library' -- that branch below renders unconditionally on its own
+  // (unlike 'adjust', which also requires rawPicked), so defaulting to it
+  // would flash the grid open before launch() has even asked Take Photo vs.
+  // Choose from Library. 'filter' is safe as a placeholder: its branch sits
+  // behind the `!picked` guard, which is true until a crop is confirmed.
   const [step, setStep] = useState<Step>('filter');
+  const [rawPicked, setRawPicked] = useState<RawPick | null>(null);
+  const [picked, setPicked] = useState<Picked | null>(null);
   const [filterName, setFilterName] = useState(FILTERS[0].name);
   const [caption, setCaption] = useState('');
   const [posting, setPosting] = useState(false);
   /** Set when a permission was refused, so there's something to retry from. */
   const [blocked, setBlocked] = useState<string | null>(null);
   /**
-   * True from the moment a photo's picked until the preview's ready to show.
-   * Without this, that gap was a totally bare screen -- long enough on a big
-   * photo or a slower device that people reasonably thought the app had
-   * reset and backed out, then retried a few times until one attempt
-   * finished fast enough to actually show up.
+   * True while a selection is being turned into the next step -- resolving a
+   * library asset's real file, or downscaling a locked-in crop into the
+   * filter step's preview. Shown as a spinner in place of "Next" rather than
+   * a separate blank screen, so it never reads as the app having reset.
    */
   const [processing, setProcessing] = useState(false);
+
+  const [selectedAsset, setSelectedAsset] = useState<MediaLibrary.Asset | null>(null);
+  const [selectedPreviewUri, setSelectedPreviewUri] = useState<string | null>(null);
+  const cropRef = useRef<CropAdjustHandle>(null);
 
   const filter = getFilter(filterName) ?? FILTERS[0];
   const isNormal = filter.name === 'Normal';
   // Real dimensions once a photo's picked; 1 (square) beforehand -- this runs
-  // every render regardless of `picked` to keep hook order stable, same as
-  // every other hook in this component sitting above the early returns below.
+  // every render regardless of `rawPicked` to keep hook order stable, same
+  // as every other hook in this component sitting above the early returns
+  // below. picked.width/height are always copied straight from rawPicked
+  // (the crop only ever adds a sub-rect, never changes what "natural" means),
+  // so this one value is valid for both the adjust step's frame and the
+  // filter step's preview canvas.
   const aspectRatio = useMemo(
-    () => (picked ? displayAspectRatio(picked.width, picked.height) : 1),
-    [picked]
+    () => (rawPicked ? displayAspectRatio(rawPicked.width, rawPicked.height) : 1),
+    [rawPicked]
   );
 
   /** Guards the focus effect against re-entering while a picker is already up. */
@@ -143,16 +168,16 @@ export default function NewPost() {
 
   // useFocusEffect re-invokes its callback whenever the callback's identity
   // changes while the screen is still focused, not just on real navigation
-  // transitions. Closing over `picked`/`blocked` directly meant clearing them
-  // after a successful post (still on this screen, mid-navigate-away) looked
+  // transitions. Closing over this state directly meant clearing it after a
+  // successful post (still on this screen, mid-navigate-away) looked
   // identical to a fresh focus and relaunched the picker. Refs keep the
   // callback identity stable so only genuine focus events trigger it.
-  const pickedRef = useRef(picked);
+  const stepRef = useRef(step);
   const blockedRef = useRef(blocked);
   useEffect(() => {
-    pickedRef.current = picked;
+    stepRef.current = step;
     blockedRef.current = blocked;
-  }, [picked, blocked]);
+  }, [step, blocked]);
 
   const launch = useCallback(async () => {
     if (picking.current) return;
@@ -166,71 +191,110 @@ export default function NewPost() {
         return;
       }
 
-      const permission = await requestPermissionWithRetry(source);
-      if (!permission.granted) {
-        setBlocked(
-          source === 'camera'
-            ? 'Kalos needs camera access to take a photo.'
-            : 'Kalos needs photo library access to post.'
-        );
+      if (source === 'library') {
+        const permission = await requestLibraryPermissionWithRetry();
+        if (!permission.granted) {
+          setBlocked('Kalos needs photo library access to post.');
+          return;
+        }
+        setStep('library');
         return;
       }
 
-      // No forced crop -- a photo's natural shape carries through to the
-      // post; PostCard's displayAspectRatio() clamps the extremes (4:5 to
-      // 1.91:1, near-square snapped to square) the same way 2015 Instagram
-      // eventually did, rather than cropping to a fixed square up front.
-      const options: ImagePicker.ImagePickerOptions = {
+      const permission = await requestCameraPermissionWithRetry();
+      if (!permission.granted) {
+        setBlocked('Kalos needs camera access to take a photo.');
+        return;
+      }
+
+      // No forced crop here either -- CropAdjust is what gives a photo its
+      // framing now, uniformly for both camera and library.
+      const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
         allowsEditing: false,
         quality: 1,
-      };
-      const result =
-        source === 'camera'
-          ? await ImagePicker.launchCameraAsync(options)
-          : await ImagePicker.launchImageLibraryAsync(options);
-
+      });
       if (result.canceled || !result.assets[0]) {
         router.replace('/(tabs)');
         return;
       }
 
       const asset = result.assets[0];
-      setProcessing(true);
-      // The preview runs against a downscaled copy sized to the screen's own
-      // resolution (still far smaller than the original for most photos);
-      // the full-resolution image is only touched once, at post time.
-      const preview = await downscaleForPreview(asset.uri, PREVIEW_MAX_EDGE);
-      setPicked({
-        uri: asset.uri,
-        previewUri: preview.uri,
-        width: asset.width,
-        height: asset.height,
-      });
-      setStep('filter');
-      setFilterName(FILTERS[0].name);
-      setCaption('');
+      setRawPicked({ uri: asset.uri, width: asset.width, height: asset.height });
+      setStep('adjust');
     } catch (e) {
       // The simulator has no camera, and that surfaces here rather than as a
       // permission refusal.
       setBlocked(e instanceof Error ? e.message : 'Could not open the camera.');
     } finally {
       picking.current = false;
-      setProcessing(false);
     }
   }, [router]);
 
   useFocusEffect(
     useCallback(() => {
-      if (!pickedRef.current && !blockedRef.current) void launch();
+      if (!blockedRef.current && stepRef.current !== 'library' && stepRef.current !== 'adjust') {
+        void launch();
+      }
     }, [launch])
   );
 
   const discard = useCallback(() => {
+    // 'filter', not 'library' -- same reasoning as the initial state above.
+    // If this component doesn't fully unmount before the tab's focused
+    // again, a stale 'library'/'adjust' step would skip launch()'s
+    // Take Photo vs. Choose from Library sheet entirely.
+    setStep('filter');
+    setRawPicked(null);
     setPicked(null);
+    setSelectedAsset(null);
+    setSelectedPreviewUri(null);
     setCaption('');
     router.replace('/(tabs)');
   }, [router]);
+
+  const handleSelectAsset = useCallback((asset: MediaLibrary.Asset) => {
+    setSelectedAsset(asset);
+    setSelectedPreviewUri(null);
+    asset
+      .getUri()
+      .then(setSelectedPreviewUri)
+      .catch(() => undefined);
+  }, []);
+
+  const confirmLibrarySelection = useCallback(async () => {
+    if (!selectedAsset) return;
+    setProcessing(true);
+    try {
+      const info = await selectedAsset.getInfo();
+      setRawPicked({ uri: info.uri, width: info.width, height: info.height });
+      setStep('adjust');
+    } catch (e) {
+      Alert.alert('Could not use that photo', e instanceof Error ? e.message : undefined);
+    } finally {
+      setProcessing(false);
+    }
+  }, [selectedAsset]);
+
+  const confirmCrop = useCallback(async () => {
+    if (!rawPicked || !cropRef.current) return;
+    setProcessing(true);
+    try {
+      const crop = cropRef.current.getCropRect();
+      // The preview runs against a downscaled copy sized to the screen's own
+      // resolution (still far smaller than the original for most photos);
+      // the full-resolution image is only touched once, at post time.
+      const preview = await downscaleForPreview(rawPicked.uri, PREVIEW_MAX_EDGE);
+      setPicked({ ...rawPicked, previewUri: preview.uri, crop });
+      setStep('filter');
+      setFilterName(FILTERS[0].name);
+      setCaption('');
+    } catch (e) {
+      Alert.alert('Could not use that photo', e instanceof Error ? e.message : undefined);
+    } finally {
+      setProcessing(false);
+    }
+  }, [rawPicked]);
 
   const share = useCallback(async () => {
     if (!picked || !session) return;
@@ -246,6 +310,7 @@ export default function NewPost() {
         uri: picked.uri,
         filter,
         strength: 1,
+        crop: picked.crop,
       });
 
       const id = randomUUID();
@@ -334,10 +399,88 @@ export default function NewPost() {
     <Tabs.Screen options={{ tabBarStyle: { display: 'none' } }} />
   ) : null;
 
+  if (step === 'library') {
+    return (
+      <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
+        {hideTabBar}
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Pressable onPress={discard} hitSlop={12} disabled={processing}>
+            <Text style={[styles.headerAction, { color: colors.text }, processing && styles.disabled]}>
+              Cancel
+            </Text>
+          </Pressable>
+          <Text style={[styles.title, { color: colors.text }]}>New post</Text>
+          <Pressable onPress={confirmLibrarySelection} hitSlop={12} disabled={!selectedAsset || processing}>
+            {processing ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <Text
+                style={[
+                  styles.headerAction,
+                  styles.forward,
+                  { color: colors.accent },
+                  !selectedAsset && styles.disabled,
+                ]}
+              >
+                Next
+              </Text>
+            )}
+          </Pressable>
+        </View>
+
+        <View style={[styles.libraryPreview, { backgroundColor: '#000' }]}>
+          {selectedPreviewUri ? (
+            <Image source={selectedPreviewUri} style={styles.image} contentFit="contain" />
+          ) : null}
+        </View>
+
+        <PhotoLibraryGrid
+          selectedAssetId={selectedAsset?.id ?? null}
+          onSelect={handleSelectAsset}
+          onFirstLoad={handleSelectAsset}
+          containerWidth={SCREEN}
+          style={styles.grid}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  if (step === 'adjust' && rawPicked) {
+    const frame = { width: SCREEN, height: SCREEN / aspectRatio };
+    return (
+      <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
+        {hideTabBar}
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Pressable onPress={discard} hitSlop={12} disabled={processing}>
+            <Text style={[styles.headerAction, { color: colors.text }, processing && styles.disabled]}>
+              Cancel
+            </Text>
+          </Pressable>
+          <Text style={[styles.title, { color: colors.text }]}>New post</Text>
+          <Pressable onPress={confirmCrop} hitSlop={12} disabled={processing}>
+            {processing ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <Text style={[styles.headerAction, styles.forward, { color: colors.accent }]}>Next</Text>
+            )}
+          </Pressable>
+        </View>
+
+        <View style={styles.adjustBody}>
+          <CropAdjust
+            ref={cropRef}
+            uri={rawPicked.uri}
+            natural={{ width: rawPicked.width, height: rawPicked.height }}
+            frame={frame}
+          />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   if (!picked) {
-    // Bare while the native sheet/picker is up -- anything drawn here would
-    // flash for the moment before they cover it. Once a photo's actually
-    // been picked and is being processed, show that instead of nothing.
+    // Bare while the native camera/permission sheet is up -- anything drawn
+    // here would flash for the moment before it covers the screen.
     return (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         {hideTabBar}
@@ -354,10 +497,6 @@ export default function NewPost() {
               onAction={launch}
             />
           </>
-        ) : processing ? (
-          <View style={styles.center}>
-            <ActivityIndicator />
-          </View>
         ) : null}
       </SafeAreaView>
     );
@@ -465,6 +604,10 @@ const styles = StyleSheet.create({
   // Always black, not theme-driven -- this is photo letterboxing, the same
   // way a photo/video viewer's background stays black regardless of theme.
   preview: { backgroundColor: '#000' },
+  libraryPreview: { width: '100%', aspectRatio: 1 },
+  image: { width: '100%', height: '100%' },
+  grid: { flex: 1 },
+  adjustBody: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   shareBody: { flex: 1 },
   captionRow: { flexDirection: 'row', gap: 12, padding: 16 },
   thumb: { borderRadius: 3, overflow: 'hidden' },
