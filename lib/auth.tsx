@@ -23,23 +23,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        setSession(data.session);
+    let cancelled = false;
+
+    // A rejection here is almost always a transient network blip during
+    // token refresh -- e.g. right after an OTA reload, before connectivity
+    // has settled -- not evidence the user is actually signed out. Treating
+    // it as signed-out (as a previous fix did, to avoid an infinite
+    // bootstrap spinner on a truly corrupted session) was booting people who
+    // had a perfectly good session the moment the network hiccuped. Retry
+    // once after a beat before giving up.
+    const loadSession = async () => {
+      try {
+        return (await supabase.auth.getSession()).data.session;
+      } catch {
+        await new Promise((r) => setTimeout(r, 1500));
+        return (await supabase.auth.getSession()).data.session;
+      }
+    };
+
+    loadSession()
+      .then((s) => {
+        if (!cancelled) setSession(s);
       })
-      // A rejection here (corrupted AsyncStorage, a token refresh with no
-      // network) used to mean setLoading(false) never ran at all, leaving the
-      // app on its bootstrap spinner forever with no way out but a force
-      // quit. Failing to read a session is the same outcome as not having
-      // one -- fall through to signed-out and let the guard route to sign-in.
-      .catch(() => setSession(null))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!cancelled) setSession(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
     });
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   const userId = session?.user.id ?? null;

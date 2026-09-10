@@ -17,7 +17,12 @@ import { forwardRef, useImperativeHandle, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withTiming,
+} from 'react-native-reanimated';
 
 import type { CropRect, ImageSize } from '../lib/types';
 
@@ -58,6 +63,11 @@ export const CropAdjust = forwardRef<CropAdjustHandle, CropAdjustProps>(function
   const startScale = useSharedValue(1);
   const startX = useSharedValue(0);
   const startY = useSharedValue(0);
+  // Rule-of-thirds lines, shown only while a gesture is actually live -- a
+  // static overlay reads as decoration; one that appears with your finger
+  // reads as the tool telling you it's tracking you, the same cue every
+  // native photo-crop UI gives.
+  const gridOpacity = useSharedValue(0);
 
   // How far the image can be panned off-center, in points, at the given
   // scale, before its own edge would enter the frame.
@@ -73,16 +83,21 @@ export const CropAdjust = forwardRef<CropAdjustHandle, CropAdjustProps>(function
     .onStart(() => {
       startX.value = translateX.value;
       startY.value = translateY.value;
+      gridOpacity.value = withTiming(1, { duration: 120 });
     })
     .onUpdate((e) => {
       const m = maxOffset(scale.value);
       translateX.value = Math.min(m.x, Math.max(-m.x, startX.value + e.translationX));
       translateY.value = Math.min(m.y, Math.max(-m.y, startY.value + e.translationY));
+    })
+    .onFinalize(() => {
+      gridOpacity.value = withDelay(200, withTiming(0, { duration: 250 }));
     });
 
   const pinch = Gesture.Pinch()
     .onStart(() => {
       startScale.value = scale.value;
+      gridOpacity.value = withTiming(1, { duration: 120 });
     })
     .onUpdate((e) => {
       scale.value = Math.max(1, Math.min(MAX_ZOOM, startScale.value * e.scale));
@@ -92,9 +107,25 @@ export const CropAdjust = forwardRef<CropAdjustHandle, CropAdjustProps>(function
       const m = maxOffset(scale.value);
       translateX.value = Math.min(m.x, Math.max(-m.x, translateX.value));
       translateY.value = Math.min(m.y, Math.max(-m.y, translateY.value));
+    })
+    .onFinalize(() => {
+      gridOpacity.value = withDelay(200, withTiming(0, { duration: 250 }));
     });
 
-  const gesture = Gesture.Simultaneous(pan, pinch);
+  // A quick double-tap resets to the "cover" baseline -- the one thing a
+  // pinch-only crop can't do for you once you're zoomed in and have lost
+  // track of where "reset" even is. Tap needs no finger travel and Pan
+  // requires some, so Race lets a genuine double-tap win outright without
+  // a stray pixel of drag ever reaching the pan gesture above.
+  const doubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .onEnd(() => {
+      scale.value = withTiming(1, { duration: 200 });
+      translateX.value = withTiming(0, { duration: 200 });
+      translateY.value = withTiming(0, { duration: 200 });
+    });
+
+  const gesture = Gesture.Race(doubleTap, Gesture.Simultaneous(pan, pinch));
 
   const imageStyle = useAnimatedStyle(() => ({
     width: base.width,
@@ -105,6 +136,8 @@ export const CropAdjust = forwardRef<CropAdjustHandle, CropAdjustProps>(function
       { scale: scale.value },
     ],
   }));
+
+  const gridStyle = useAnimatedStyle(() => ({ opacity: gridOpacity.value }));
 
   useImperativeHandle(
     ref,
@@ -135,6 +168,12 @@ export const CropAdjust = forwardRef<CropAdjustHandle, CropAdjustProps>(function
           <Image source={uri} style={styles.image} contentFit="fill" />
         </Animated.View>
       </GestureDetector>
+      <Animated.View style={[styles.gridOverlay, gridStyle]} pointerEvents="none">
+        <View style={[styles.gridLine, styles.gridLineV, { left: '33.333%' }]} />
+        <View style={[styles.gridLine, styles.gridLineV, { left: '66.666%' }]} />
+        <View style={[styles.gridLine, styles.gridLineH, { top: '33.333%' }]} />
+        <View style={[styles.gridLine, styles.gridLineH, { top: '66.666%' }]} />
+      </Animated.View>
     </View>
   );
 });
@@ -142,6 +181,10 @@ export const CropAdjust = forwardRef<CropAdjustHandle, CropAdjustProps>(function
 const styles = StyleSheet.create({
   frame: { overflow: 'hidden', backgroundColor: '#000' },
   image: { width: '100%', height: '100%' },
+  gridOverlay: { ...StyleSheet.absoluteFill },
+  gridLine: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.65)' },
+  gridLineV: { top: 0, bottom: 0, width: StyleSheet.hairlineWidth },
+  gridLineH: { left: 0, right: 0, height: StyleSheet.hairlineWidth },
 });
 
 export default CropAdjust;

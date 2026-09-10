@@ -62,7 +62,14 @@ void SplashScreen.preventAutoHideAsync();
 
 onlineManager.setEventListener((setOnline) =>
   NetInfo.addEventListener((state) => {
-    setOnline(state.isConnected !== false && state.isInternetReachable !== false);
+    // isConnected only -- not isInternetReachable. That field is an active
+    // probe (a reachability request to a fixed host), not a passive read of
+    // the OS's own network state, and it's known to false-negative on
+    // ordinary wifi/cellular, VPNs, and anything reachability-adjacent that
+    // blocks or is slow to answer that one probe while every real request
+    // (Supabase included) goes through fine. Gating the banner on it was
+    // showing "No connection" on a perfectly working connection.
+    setOnline(state.isConnected !== false);
   })
 );
 

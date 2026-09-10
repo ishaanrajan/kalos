@@ -16,7 +16,6 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
-import { Image } from 'expo-image';
 import { randomUUID } from 'expo-crypto';
 import { File } from 'expo-file-system';
 import { Tabs, useFocusEffect, useRouter } from 'expo-router';
@@ -156,9 +155,8 @@ export default function NewPost() {
    */
   const [processing, setProcessing] = useState(false);
 
-  const [selectedAsset, setSelectedAsset] = useState<MediaLibrary.Asset | null>(null);
-  const [selectedPreviewUri, setSelectedPreviewUri] = useState<string | null>(null);
   const cropRef = useRef<CropAdjustHandle>(null);
+  const postingRef = useRef(false);
 
   const filter = getFilter(filterName) ?? FILTERS[0];
   const isNormal = filter.name === 'Normal';
@@ -287,34 +285,23 @@ export default function NewPost() {
     setStep('filter');
     setRawPicked(null);
     setPicked(null);
-    setSelectedAsset(null);
-    setSelectedPreviewUri(null);
     setCaption('');
     router.replace('/(tabs)');
   }, [router]);
 
-  const handleSelectAsset = useCallback((asset: MediaLibrary.Asset) => {
-    setSelectedAsset(asset);
-    setSelectedPreviewUri(null);
-    asset
-      .getUri()
-      .then(setSelectedPreviewUri)
-      .catch(() => undefined);
-  }, []);
-
-  const confirmLibrarySelection = useCallback(async () => {
-    if (!selectedAsset) return;
-    setProcessing(true);
+  // Fired the instant a grid cell's tapped -- there's no separate "selected,
+  // now confirm" step, since CropAdjust right after this is already a full
+  // preview of the photo. The grid itself shows a spinner on the tapped cell
+  // while this resolves and ignores further taps until it settles.
+  const pickFromLibrary = useCallback(async (asset: MediaLibrary.Asset) => {
     try {
-      const info = await selectedAsset.getInfo();
+      const info = await asset.getInfo();
       setRawPicked({ uri: info.uri, width: info.width, height: info.height });
       setStep('adjust');
     } catch (e) {
       Alert.alert('Could not use that photo', e instanceof Error ? e.message : undefined);
-    } finally {
-      setProcessing(false);
     }
-  }, [selectedAsset]);
+  }, []);
 
   const confirmCrop = useCallback(async () => {
     if (!rawPicked || !cropRef.current) return;
@@ -328,11 +315,16 @@ export default function NewPost() {
       // result is capped at SOURCE_MAX_EDGE so the original's full resolution
       // never has to be decoded again -- not for the preview, and not on the
       // JS thread at post time.
-      const source = await prepareSource(rawPicked.uri, crop);
-      // And the preview is a downscale *of that*, not of the original, so the
-      // filter you pick and the thumbnail beside the caption show the same
-      // composition that gets uploaded.
-      const preview = await downscaleForPreview(source.uri, PREVIEW_MAX_EDGE);
+      // Both files come out of one decode of the original: the capped source
+      // the bake reads, and the preview the filter step shows. They're the
+      // same pixels by construction, so the filter you pick and the thumbnail
+      // beside the caption match what actually gets uploaded.
+      const { source, preview } = await prepareSource(
+        rawPicked.uri,
+        crop,
+        { width: rawPicked.width, height: rawPicked.height },
+        PREVIEW_MAX_EDGE,
+      );
       setPicked({
         uri: source.uri,
         width: source.width,
@@ -351,7 +343,21 @@ export default function NewPost() {
 
   const share = useCallback(async () => {
     if (!picked || !session) return;
+    // `disabled={posting}` relies on a re-render landing before the next tap,
+    // which is exactly what a busy JS thread mid-bake can't promise. A ref
+    // flips synchronously, so a double tap can't start a second upload of
+    // the same photo.
+    if (postingRef.current) return;
+    postingRef.current = true;
     setPosting(true);
+
+    // Paths written to storage so far. If the post fails after an upload has
+    // landed, these are removed -- otherwise every retry mints a fresh UUID
+    // and abandons the previous pair in the bucket, billed forever, with no
+    // post to show for them and nothing that ever sweeps them up.
+    let uploaded: string[] = [];
+    // Which step we're on, so a failure can say so instead of just "could not post".
+    let stage = 'preparing';
 
     // An OTA update prompt landing mid-upload would offer "Restart now",
     // and reloadAsync() tears down the JS context immediately -- throwing
@@ -370,21 +376,25 @@ export default function NewPost() {
       // upright, size-capped file prepareSource() wrote at confirmCrop time,
       // so Skia decodes at most SOURCE_MAX_EDGE here instead of pulling a
       // 48MP original into native memory through JSI while the user waits.
+      // Real Instagram exports feed photos around 1080-1440px -- no phone
+      // screen renders a post wider than that. The previous 2560/quality-100
+      // default made every post a multi-MB near-lossless JPEG, which is what
+      // was making posting itself slow (and, on a flaky connection, more
+      // likely to drop mid-upload and surface as "something went wrong").
+      stage = 'filtering';
       const baked = await bakeFilteredImage({
         uri: picked.uri,
         filter,
         strength: 1,
         preNormalized: true,
+        maxEdge: 1440,
+        quality: 90,
       });
 
       const id = randomUUID();
       const path = `${session.user.id}/${id}.jpg`;
-      const bytes = await new File(baked.uri).bytes();
-
-      const { error: uploadError } = await supabase.storage
-        .from(PHOTOS_BUCKET)
-        .upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
-      if (uploadError) throw uploadError;
+      const thumbPath = `${session.user.id}/${id}_thumb.jpg`;
+      uploaded = [];
 
       // A small derivative for grid contexts (Explore, profile grids) --
       // generated from the already-filtered bake output so it matches what
@@ -392,15 +402,38 @@ export default function NewPost() {
       // every ~130pt grid tile was decoding the same full-quality
       // (maxEdge 2560, quality 100) image as the feed, which is what made
       // scrolling those grids sluggish, especially on Android.
+      stage = 'thumbnail';
       const thumb = await downscaleForPreview(baked.uri, 400);
-      const thumbPath = `${session.user.id}/${id}_thumb.jpg`;
-      const thumbBytes = await new File(thumb.uri).bytes();
+      const [bytes, thumbBytes] = await Promise.all([
+        new File(baked.uri).bytes(),
+        new File(thumb.uri).bytes(),
+      ]);
 
-      const { error: thumbUploadError } = await supabase.storage
-        .from(PHOTOS_BUCKET)
-        .upload(thumbPath, thumbBytes, { contentType: 'image/jpeg', upsert: false });
-      if (thumbUploadError) throw thumbUploadError;
+      // Both uploads at once. They're independent objects in the same folder
+      // and the full-size one is by far the longer wait, so running the
+      // 50KB thumbnail behind it was adding a round trip to every post for
+      // no reason.
+      stage = 'upload';
+      const [main, thumbUpload] = await Promise.all([
+        supabase.storage
+          .from(PHOTOS_BUCKET)
+          .upload(path, bytes, { contentType: 'image/jpeg', upsert: false })
+          .then((r) => {
+            if (!r.error) uploaded.push(path);
+            return r;
+          }),
+        supabase.storage
+          .from(PHOTOS_BUCKET)
+          .upload(thumbPath, thumbBytes, { contentType: 'image/jpeg', upsert: false })
+          .then((r) => {
+            if (!r.error) uploaded.push(thumbPath);
+            return r;
+          }),
+      ]);
+      if (main.error) throw main.error;
+      if (thumbUpload.error) throw thumbUpload.error;
 
+      stage = 'saving';
       const { error: insertError } = await supabase.from('posts').insert({
         author_id: session.user.id,
         image_path: path,
@@ -412,11 +445,34 @@ export default function NewPost() {
       });
       if (insertError) throw insertError;
     } catch (e) {
-      Alert.alert('Could not post', e instanceof Error ? e.message : 'Something went wrong.');
+      if (uploaded.length) {
+        await supabase.storage
+          .from(PHOTOS_BUCKET)
+          .remove(uploaded)
+          .catch(() => undefined);
+      }
+      // Name the stage that actually failed. "Could not post" plus a bare
+      // message is unactionable when the pipeline is bake -> 2 uploads ->
+      // insert and any of the four can throw: the uploads can succeed and
+      // the insert still fail, which looks identical from here.
+      const detail =
+        e && typeof e === 'object'
+          ? [
+              (e as { message?: string }).message,
+              (e as { code?: string }).code && `code ${(e as { code?: string }).code}`,
+              (e as { details?: string }).details,
+              (e as { hint?: string }).hint,
+            ]
+              .filter(Boolean)
+              .join('\n')
+          : String(e);
+      Alert.alert(`Could not post (${stage})`, detail || 'Something went wrong.');
       setPosting(false);
+      postingRef.current = false;
       setUpdatePromptSuppressed(false);
       return;
     }
+    postingRef.current = false;
     setUpdatePromptSuppressed(false);
 
     qc.invalidateQueries({ queryKey: ['home_feed'] });
@@ -432,8 +488,6 @@ export default function NewPost() {
     setStep('filter');
     setRawPicked(null);
     setPicked(null);
-    setSelectedAsset(null);
-    setSelectedPreviewUri(null);
     setCaption('');
     router.replace('/(tabs)');
 
@@ -480,43 +534,18 @@ export default function NewPost() {
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         {hideTabBar}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <Pressable onPress={discard} hitSlop={12} disabled={processing}>
-            <Text style={[styles.headerAction, { color: colors.text }, processing && styles.disabled]}>
-              Cancel
-            </Text>
+          <Pressable onPress={discard} hitSlop={12}>
+            <Text style={[styles.headerAction, { color: colors.text }]}>Cancel</Text>
           </Pressable>
           <Text style={[styles.title, { color: colors.text }]}>New post</Text>
-          <Pressable onPress={confirmLibrarySelection} hitSlop={12} disabled={!selectedAsset || processing}>
-            {processing ? (
-              <ActivityIndicator size="small" />
-            ) : (
-              <Text
-                style={[
-                  styles.headerAction,
-                  styles.forward,
-                  { color: colors.accent },
-                  !selectedAsset && styles.disabled,
-                ]}
-              >
-                Next
-              </Text>
-            )}
-          </Pressable>
+          {/* No forward action here -- tapping a photo below picks it and
+              advances straight to the crop step, so there's nothing left to
+              confirm from the header. An empty view of the same footprint as
+              the other steps' trailing button keeps the title centered. */}
+          <View style={styles.headerSpacer} />
         </View>
 
-        <View style={[styles.libraryPreview, { backgroundColor: '#000' }]}>
-          {selectedPreviewUri ? (
-            <Image source={selectedPreviewUri} style={styles.image} contentFit="contain" />
-          ) : null}
-        </View>
-
-        <PhotoLibraryGrid
-          selectedAssetId={selectedAsset?.id ?? null}
-          onSelect={handleSelectAsset}
-          onFirstLoad={handleSelectAsset}
-          containerWidth={SCREEN}
-          style={styles.grid}
-        />
+        <PhotoLibraryGrid onPick={pickFromLibrary} containerWidth={SCREEN} style={styles.grid} />
       </SafeAreaView>
     );
   }
@@ -680,8 +709,9 @@ const styles = StyleSheet.create({
   // Always black, not theme-driven -- this is photo letterboxing, the same
   // way a photo/video viewer's background stays black regardless of theme.
   preview: { backgroundColor: '#000' },
-  libraryPreview: { width: '100%', aspectRatio: 1 },
-  image: { width: '100%', height: '100%' },
+  // Same width as the trailing Text/ActivityIndicator on every other step's
+  // header, so "New post" lands in the same spot regardless of step.
+  headerSpacer: { width: 32 },
   grid: { flex: 1 },
   adjustBody: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   shareBody: { flex: 1 },

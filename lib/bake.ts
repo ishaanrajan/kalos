@@ -326,26 +326,27 @@ export async function bakeFilteredImage({
  */
 export async function prepareSource(
   uri: string,
-  crop?: CropRect,
+  crop: CropRect | undefined,
+  natural: ImageSize,
+  previewMaxEdge: number,
   maxEdge: number = SOURCE_MAX_EDGE,
-): Promise<BakedImage> {
-  const context = ImageManipulator.manipulate(uri);
-
-  // Probe render, same trick downscaleForPreview uses: the crop rect was
-  // computed against the upright photo the user was looking at, so it has to
-  // be clamped against the upright dimensions, and this is the only thing
-  // that reports them authoritatively. The asset's own width/height (from
-  // MediaLibrary.getInfo) agree on iOS but not dependably on Android, where
-  // whether the values are pre-rotated varies by OEM.
-  const probe = await context.renderAsync();
-  const upright: ImageSize = { width: probe.width, height: probe.height };
-
-  const rect = clampCropRect(crop ?? { x: 0, y: 0, ...upright }, upright);
+): Promise<{ source: BakedImage; preview: BakedImage }> {
+  // `natural` rather than a probe render. The crop rect was computed by
+  // CropAdjust against exactly these dimensions (new.tsx passes rawPicked's
+  // width/height into it as `natural`), so clamping against them is
+  // consistent by construction -- and a probe here meant decoding the
+  // full-resolution original twice, once to read two integers we already
+  // had and once to actually do the work. On a 48MP photo that decode is
+  // the single most expensive thing in the composer.
+  const rect = clampCropRect(crop ?? { x: 0, y: 0, ...natural }, natural);
   const target = fitWithin({ width: rect.width, height: rect.height }, maxEdge);
 
-  let chain = context
-    .reset()
-    .crop({ originX: rect.x, originY: rect.y, width: rect.width, height: rect.height });
+  let chain = ImageManipulator.manipulate(uri).crop({
+    originX: rect.x,
+    originY: rect.y,
+    width: rect.width,
+    height: rect.height,
+  });
 
   if (target.width !== rect.width || target.height !== rect.height) {
     // One axis only -- ImageManipulator derives the other from the source
@@ -360,7 +361,34 @@ export async function prepareSource(
   // the filter bake, and generation loss added here would be baked into the
   // upload permanently.
   const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 1 });
-  return { uri: saved.uri, width: saved.width, height: saved.height };
+  const source: BakedImage = { uri: saved.uri, width: saved.width, height: saved.height };
+
+  // The preview comes off the same decoded ref rather than re-reading the
+  // file we just wrote. Previously the caller followed this with a separate
+  // downscaleForPreview(source.uri, ...), which decoded that 2560px JPEG
+  // twice more -- so a single crop confirmation cost four full decodes. Now
+  // it costs one.
+  const previewTarget = fitWithin(source, previewMaxEdge);
+  const previewRendered =
+    previewTarget.width === source.width && previewTarget.height === source.height
+      ? rendered
+      : await ImageManipulator.manipulate(rendered)
+          .resize(
+            previewTarget.width >= previewTarget.height
+              ? { width: previewTarget.width }
+              : { height: previewTarget.height },
+          )
+          .renderAsync();
+
+  const previewSaved = await previewRendered.saveAsync({
+    format: SaveFormat.JPEG,
+    compress: 0.9,
+  });
+
+  return {
+    source,
+    preview: { uri: previewSaved.uri, width: previewSaved.width, height: previewSaved.height },
+  };
 }
 
 /**
@@ -373,25 +401,30 @@ export async function prepareSource(
  * orientation.
  */
 export async function downscaleForPreview(uri: string, maxEdge: number): Promise<BakedImage> {
-  const context = ImageManipulator.manipulate(uri);
+  // One decode, then everything else works from the decoded ref.
+  //
+  // This used to render a throwaway "probe" purely to read the dimensions and
+  // then call .reset(), which re-decodes from the URI -- so every call paid
+  // for two full decodes of the same image. renderAsync() already hands back
+  // an ImageRef carrying width/height, and manipulate() accepts a
+  // SharedRef<'image'> as its source, so the second pass can chain off the
+  // pixels already in memory instead of going back to disk.
+  const decoded = await ImageManipulator.manipulate(uri).renderAsync();
+  const original: ImageSize = { width: decoded.width, height: decoded.height };
+  const target = fitWithin(original, maxEdge);
 
-  const probe = await context.renderAsync();
-  const original: ImageSize = { width: probe.width, height: probe.height };
-
-  if (Math.max(original.width, original.height) <= maxEdge) {
-    // Small enough to skip the resize, but not to skip the normalising pass:
-    // the caller is handing this straight to Skia, which would otherwise draw
-    // an EXIF-rotated photo on its side no matter how small it is.
-    const decodableUri = await normalizeForSkia(uri);
-    return { uri: decodableUri, width: original.width, height: original.height };
-  }
-
-  const rendered = await context
-    .reset()
-    .resize(
-      original.width >= original.height ? { width: maxEdge } : { height: maxEdge },
-    )
-    .renderAsync();
+  // Already small enough: the render above has *also* normalised orientation
+  // (which is why the old explicit normalizeForSkia call on this path is
+  // gone), so saving the decoded ref straight out is both correct and one
+  // fewer native round trip.
+  const rendered =
+    target.width === original.width && target.height === original.height
+      ? decoded
+      : await ImageManipulator.manipulate(decoded)
+          .resize(
+            original.width >= original.height ? { width: target.width } : { height: target.height },
+          )
+          .renderAsync();
 
   const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.85 });
   return { uri: saved.uri, width: saved.width, height: saved.height };
