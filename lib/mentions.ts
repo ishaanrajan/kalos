@@ -11,30 +11,78 @@
  */
 
 export interface MentionSegment {
-  type: 'text' | 'mention';
-  /** The literal text to render, "@" included for a mention. */
+  type: 'text' | 'mention' | 'hashtag';
+  /** The literal text to render, "@" or "#" included. */
   value: string;
   /** Only set for `mention` segments -- the username, lowercased, no "@". */
   username?: string;
+  /** Only set for `hashtag` segments -- the tag, lowercased, no "#". */
+  hashtag?: string;
 }
 
 const MENTION_RE = /@([a-z0-9._]{3,30})/gi;
 
+/**
+ * Mentions and hashtags in one pass, so segments come out in the order they
+ * appear rather than needing two passes reconciled afterwards.
+ *
+ * The two halves deliberately have different rules:
+ *
+ * - The mention branch is character-for-character the old MENTION_RE, so
+ *   this change can't quietly alter which @handles linkify (or which ones
+ *   notify's matching copy agrees with).
+ * - Hashtags require a boundary before the "#" and exclude dots from the
+ *   tag charset. Dots are legal in usernames but end a hashtag -- "#nyc.jpg"
+ *   is the tag "nyc" followed by ".jpg", which is what Instagram does and
+ *   what anyone writing a filename in a caption expects.
+ *
+ * That boundary is matched as a captured character rather than a lookbehind
+ * on purpose: lookbehind support in Hermes isn't something to bet caption
+ * rendering on. The captured character is ordinary text and gets handed back
+ * to the preceding text segment below.
+ */
+const TOKEN_RE = /@([a-z0-9._]{3,30})|(^|[^\w#])#([a-z0-9_]{1,60})/gi;
+
 export function parseMentions(text: string): MentionSegment[] {
   const segments: MentionSegment[] = [];
   let lastIndex = 0;
-  for (const match of text.matchAll(MENTION_RE)) {
-    const start = match.index ?? 0;
-    if (start > lastIndex) {
-      segments.push({ type: 'text', value: text.slice(lastIndex, start) });
+
+  for (const match of text.matchAll(TOKEN_RE)) {
+    const matchStart = match.index ?? 0;
+    const isMention = match[1] !== undefined;
+    // For a hashtag the pattern also consumed the character before the "#".
+    // That character isn't part of the tag, so the token really starts after
+    // it and it belongs to the text run in front.
+    const lead = isMention ? '' : (match[2] ?? '');
+    const tokenStart = matchStart + lead.length;
+
+    if (tokenStart > lastIndex) {
+      segments.push({ type: 'text', value: text.slice(lastIndex, tokenStart) });
     }
-    segments.push({ type: 'mention', value: match[0], username: match[1]!.toLowerCase() });
-    lastIndex = start + match[0].length;
+
+    if (isMention) {
+      segments.push({ type: 'mention', value: match[0], username: match[1]!.toLowerCase() });
+      lastIndex = tokenStart + match[0].length;
+    } else {
+      const tag = match[3]!;
+      segments.push({ type: 'hashtag', value: `#${tag}`, hashtag: tag.toLowerCase() });
+      lastIndex = tokenStart + tag.length + 1;
+    }
   }
+
   if (lastIndex < text.length) {
     segments.push({ type: 'text', value: text.slice(lastIndex) });
   }
   return segments;
+}
+
+/** Every distinct #hashtag in `text`, lowercased, deduplicated. */
+export function extractHashtags(text: string): string[] {
+  const tags = new Set<string>();
+  for (const segment of parseMentions(text)) {
+    if (segment.type === 'hashtag') tags.add(segment.hashtag!);
+  }
+  return [...tags];
 }
 
 /** Every distinct username @mentioned in `text`, lowercased, deduplicated. */
