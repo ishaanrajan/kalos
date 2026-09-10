@@ -22,9 +22,18 @@ export interface CommentRowProps {
   username?: string;
   /** Renders a small heart on the right when defined. */
   liked?: boolean;
-  onPressAuthor?: () => void;
-  onPressLike?: () => void;
-  onLongPress?: () => void;
+  /**
+   * The three handlers below are handed the comment they fired on. A comment
+   * list can then pass one callback identity to every row instead of a fresh
+   * `() => doThing(item)` per row, which is what the React.memo() at the
+   * bottom needs to actually skip anything: FlatList hands VirtualizedList a
+   * new `renderItem` on every render (its non-strictMode `_renderer`), so
+   * each row's props are rebuilt whenever the screen re-renders at all.
+   * Callers that don't need the argument can still pass a `() => void`.
+   */
+  onPressAuthor?: (comment: Comment) => void;
+  onPressLike?: (comment: Comment) => void;
+  onLongPress?: (comment: Comment) => void;
   /** Tapping an @mention in the comment body. */
   onPressMention?: (username: string) => void;
   /** Avatar diameter. Defaults to 32. */
@@ -61,7 +70,7 @@ export function formatCommentAge(iso: Timestamp, now: number = Date.now()): stri
   return `${Math.floor(elapsed / WEEK)}w`;
 }
 
-export function CommentRow({
+function CommentRowImpl({
   comment,
   avatarUrl,
   username: usernameOverride,
@@ -79,10 +88,28 @@ export function CommentRow({
   const body = comment.body;
   const age = useMemo(() => formatCommentAge(comment.created_at), [comment.created_at]);
 
+  // Bound to this row's comment here rather than at the call site, for the
+  // same two reasons as PostCard's useBoundToPost: RN press handlers pass a
+  // synthetic event (a caller's `(comment) => ...` would receive a
+  // GestureResponderEvent), and `undefined` has to survive -- the row's
+  // Pressable and the heart both branch on whether a handler exists at all.
+  const handlePressAuthor = useMemo(
+    () => (onPressAuthor ? () => onPressAuthor(comment) : undefined),
+    [onPressAuthor, comment],
+  );
+  const handlePressLike = useMemo(
+    () => (onPressLike ? () => onPressLike(comment) : undefined),
+    [onPressLike, comment],
+  );
+  const handleLongPress = useMemo(
+    () => (onLongPress ? () => onLongPress(comment) : undefined),
+    [onLongPress, comment],
+  );
+
   return (
     <Pressable
-      onLongPress={onLongPress}
-      disabled={!onLongPress}
+      onLongPress={handleLongPress}
+      disabled={!handleLongPress}
       testID={testID}
       accessibilityLabel={`${username}: ${body}`}
       style={[styles.root, style]}
@@ -91,7 +118,7 @@ export function CommentRow({
         url={avatarUrl}
         username={username}
         size={avatarSize}
-        onPress={onPressAuthor}
+        onPress={handlePressAuthor}
         style={styles.avatar}
       />
 
@@ -99,7 +126,7 @@ export function CommentRow({
         <Text style={[typography.body, { color: colors.text }]}>
           <Text
             style={[typography.bodyStrong, { color: colors.text }]}
-            onPress={onPressAuthor}
+            onPress={handlePressAuthor}
             suppressHighlighting
           >
             {username}
@@ -115,9 +142,9 @@ export function CommentRow({
         ) : null}
       </View>
 
-      {onPressLike ? (
+      {handlePressLike ? (
         <Pressable
-          onPress={onPressLike}
+          onPress={handlePressLike}
           hitSlop={10}
           accessibilityRole="button"
           accessibilityLabel={liked ? 'Unlike comment' : 'Like comment'}
@@ -134,6 +161,18 @@ export function CommentRow({
     </Pressable>
   );
 }
+
+/**
+ * Memoized because the post screen re-renders on far more than new comments.
+ *
+ * Every render of app/post/[id].tsx used to rebuild every mounted row -- and
+ * with the draft text living in that screen's state, that was once per
+ * keystroke on a thread of any length. The draft now lives in the composer,
+ * but the screen still re-renders whenever the post or the mutation state
+ * changes, and each of those re-renders would otherwise re-run MentionText's
+ * parse and the age formatting for every row on screen.
+ */
+export const CommentRow = React.memo(CommentRowImpl);
 
 const styles = StyleSheet.create({
   root: {

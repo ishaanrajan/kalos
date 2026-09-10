@@ -85,7 +85,13 @@ export default function Explore() {
     );
   }
 
-  if (isError) {
+  // Only when the grid is empty. Same bug as the home feed: React Query's
+  // "error" reducer sets status: 'error' unconditionally and retains
+  // state.data, so a single failed background refetch of an already-loaded
+  // grid used to replace it -- pages of thumbnails and the scroll position
+  // included -- with a full-screen error, and "Try again" restarted from
+  // page 1. With posts in hand the failure goes in the banner below instead.
+  if (isError && !data) {
     return (
       <SafeAreaView style={[styles.center, { backgroundColor: colors.surface }]} edges={['top']}>
         <EmptyState
@@ -106,6 +112,23 @@ export default function Explore() {
       </View>
 
       {searchBar}
+
+      {/* The non-destructive half of the fix above: report the failed refetch
+          in one line and keep the grid the reader is already looking at. */}
+      {isError ? (
+        <Pressable
+          onPress={() => refetch()}
+          style={[styles.errorBanner, { backgroundColor: colors.surfaceAlt, borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+          accessibilityLabel="Couldn't refresh Explore. Tap to try again."
+        >
+          <Feather name="alert-circle" size={14} color={colors.textSecondary} />
+          <Text style={[styles.errorBannerText, { color: colors.textSecondary }]} numberOfLines={1}>
+            Couldn't refresh — showing what's already loaded.
+          </Text>
+          <Text style={[styles.errorBannerAction, { color: colors.accent }]}>Retry</Text>
+        </Pressable>
+      ) : null}
 
       <PhotoGrid
         posts={posts}
@@ -149,4 +172,17 @@ const styles = StyleSheet.create({
   searchPlaceholder: { fontSize: 15 },
   title: { fontSize: 17, fontWeight: '600' },
   footerSpinner: { marginVertical: 24 },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  errorBannerText: { flex: 1, fontSize: 13 },
+  errorBannerAction: { fontSize: 13, fontWeight: '600' },
 });

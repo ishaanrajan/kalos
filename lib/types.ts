@@ -118,6 +118,11 @@ export interface DMMessage {
   created_at: Timestamp;
   /** Set by the recipient when they open the thread — drives read receipts. */
   read_at: Timestamp | null;
+  /** Id of whoever hearted this message, if anyone — either thread member
+   * can like any message, including their own. Single slot, not a set: a
+   * DM thread only ever has two participants, so there's at most one other
+   * person who could ever like a given message besides its sender. */
+  liked_by: UUID | null;
   /**
    * Every thread is still keyed to one human, but more than one account can
    * now post into it (ishaan, or a bot like the Drake account) -- this is

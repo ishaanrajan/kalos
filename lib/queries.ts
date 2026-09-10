@@ -199,7 +199,21 @@ export function useToggleLike() {
       }
     },
     onMutate: async ({ postId, liked }) => {
-      await qc.cancelQueries();
+      // Scoped on purpose. An unfiltered cancelQueries() matches *every* query
+      // in the cache and cancels each one with revert:true, so tapping a heart
+      // killed whatever else happened to be in flight -- most visibly the
+      // feed's own fetchNextPage(): the footer spinner vanished, hasNextPage
+      // stayed true, and because onEndReached had already fired for that
+      // offset nothing loaded again until you scrolled up and back down. Same
+      // shape of bug on the post screen, where liking mid-load left the
+      // comment list empty. Cancel only the three key prefixes this mutation
+      // actually writes to below -- those are the ones whose in-flight
+      // responses could land after the optimistic patch and clobber it.
+      await Promise.all([
+        qc.cancelQueries({ queryKey: ['home_feed'] }),
+        qc.cancelQueries({ queryKey: ['explore_feed'] }),
+        qc.cancelQueries({ queryKey: ['post', postId] }),
+      ]);
       const patch = (p: FeedPost): FeedPost =>
         p.id === postId
           ? { ...p, viewer_has_liked: !liked, like_count: p.like_count + (liked ? -1 : 1) }
@@ -357,12 +371,58 @@ export function useToggleFollow() {
           .eq('followee_id', profileId);
         if (error) throw error;
       } else {
+        // upsert, not insert: `follows` is keyed on (follower_id,
+        // followee_id), so any path that fires a follow when one already
+        // exists -- two fast taps, a cache that hasn't caught up -- used to
+        // surface `duplicate key value violates unique constraint
+        // "follows_pkey"` verbatim in an alert. Following someone you
+        // already follow is a no-op, not an error, so say that in SQL.
         const { error } = await supabase
           .from('follows')
-          .insert({ follower_id: userId!, followee_id: profileId });
+          .upsert(
+            { follower_id: userId!, followee_id: profileId },
+            { onConflict: 'follower_id,followee_id', ignoreDuplicates: true }
+          );
         if (error) throw error;
       }
     },
+
+    // Follow is the one social action with no visible latency budget: the
+    // button is the feedback. Without this the label stayed on "Follow"
+    // until the write AND a refetch of ['following'] both landed, which on
+    // cellular is a second or more of a button that looks broken -- so
+    // people tapped again. useToggleLike right above does the same thing
+    // for hearts; this brings follow in line.
+    onMutate: async ({ profileId, following }) => {
+      const followingKey = ['following', userId, profileId];
+      await qc.cancelQueries({ queryKey: followingKey });
+
+      const previousFollowing = qc.getQueryData<boolean>(followingKey);
+      qc.setQueryData(followingKey, !following);
+
+      // The count next to the button lives on the cached profile row, which
+      // is keyed by username rather than id -- so find it by scanning the
+      // profile entries rather than guessing the key.
+      const profileSnapshots = qc.getQueriesData<Profile>({ queryKey: ['profile'] });
+      for (const [key, profile] of profileSnapshots) {
+        if (profile?.id !== profileId) continue;
+        qc.setQueryData<Profile>(key, {
+          ...profile,
+          follower_count: Math.max(0, profile.follower_count + (following ? -1 : 1)),
+        });
+      }
+
+      return { followingKey, previousFollowing, profileSnapshots };
+    },
+
+    onError: (_err, _vars, ctx) => {
+      if (!ctx) return;
+      qc.setQueryData(ctx.followingKey, ctx.previousFollowing);
+      for (const [key, profile] of ctx.profileSnapshots) {
+        qc.setQueryData(key, profile);
+      }
+    },
+
     onSuccess: (_d, { profileId }) => {
       qc.invalidateQueries({ queryKey: ['following', userId, profileId] });
       qc.invalidateQueries({ queryKey: ['profile'] });
@@ -479,6 +539,18 @@ export function useDMThread(threadUserId: string | undefined, threadWithId: stri
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'dm_messages', filter: `thread_user_id=eq.${threadUserId}` },
+        (payload) => {
+          if ((payload.new as { thread_with_id?: string }).thread_with_id === threadWithId) {
+            qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId, threadWithId] });
+          }
+        },
+      )
+      // UPDATE too, not just INSERT -- a like from the other participant
+      // (or read_at flipping) needs to show up live, the same as a new
+      // message does, not just next time this screen happens to refetch.
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'dm_messages', filter: `thread_user_id=eq.${threadUserId}` },
         (payload) => {
           if ((payload.new as { thread_with_id?: string }).thread_with_id === threadWithId) {
             qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId, threadWithId] });
@@ -630,6 +702,49 @@ export function useMarkDMRead(threadUserId: string | undefined, threadWithId: st
       qc.invalidateQueries({ queryKey: ['dm-thread', threadUserId, threadWithId] });
       qc.invalidateQueries({ queryKey: ['dm-inbox'] });
       qc.invalidateQueries({ queryKey: ['dm-my-threads'] });
+    },
+  });
+}
+
+/**
+ * Hearting a message -- either thread member can like any message,
+ * including their own (unlike read_at, which only the recipient may set;
+ * see 0023_dm_message_likes.sql for why that needed a trigger, not just a
+ * row policy). Tapping a message you've already liked un-likes it.
+ */
+export function useToggleMessageLike(
+  threadUserId: string | undefined,
+  threadWithId: string | undefined
+) {
+  const qc = useQueryClient();
+  const userId = useUserId();
+  const queryKey = ['dm-thread', threadUserId, threadWithId];
+
+  return useMutation({
+    mutationFn: async ({ messageId, likedByMe }: { messageId: string; likedByMe: boolean }) => {
+      const { error } = await supabase
+        .from('dm_messages')
+        .update({ liked_by: likedByMe ? null : userId! })
+        .eq('id', messageId);
+      if (error) throw error;
+    },
+    // Optimistic -- a double-tap should feel instant, not wait on a round
+    // trip. The Realtime UPDATE subscription (useDMThread) will also
+    // invalidate this same query once the other side's client sees it,
+    // which is fine: it just re-confirms what's already on screen.
+    onMutate: async ({ messageId, likedByMe }) => {
+      await qc.cancelQueries({ queryKey });
+      const previous = qc.getQueryData<DMMessage[]>(queryKey);
+      qc.setQueryData<DMMessage[]>(queryKey, (old) =>
+        old?.map((m) => (m.id === messageId ? { ...m, liked_by: likedByMe ? null : userId! } : m))
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) qc.setQueryData(queryKey, context.previous);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey });
     },
   });
 }

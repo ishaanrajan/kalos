@@ -150,6 +150,21 @@ Deno.serve(async (req) => {
       role: m.sender_id === bot.id ? ('assistant' as const) : ('user' as const),
       content: m.body,
     }));
+  // The other half of the same requirement: the conversation has to *start*
+  // on a user turn too, and unlike the ending that isn't something the code
+  // above can guarantee. Drake almost always speaks first -- the drake-dm
+  // cron opens every thread with his own 'hey. you up?' -- so on the human's
+  // very first reply the entire history is that one assistant message, the
+  // API rejects it, and the catch below turns the 400 into a silent
+  // no-reply. That's the single most common path through this function, so
+  // it was failing more often than not. Dropping the leading assistant turns
+  // costs nothing: an opener nobody has answered yet carries no
+  // conversational context beyond the line itself, and the system prompt
+  // already establishes the voice.
+  while (messages.length > 0 && messages[0].role === 'assistant') {
+    messages.shift();
+  }
+
   // Always the guaranteed final turn, so the conversation reliably ends on
   // 'user' regardless of what the history query above found.
   messages.push({ role: 'user', content: r.body });
@@ -160,7 +175,18 @@ Deno.serve(async (req) => {
   try {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-5',
-      max_tokens: 150,
+      // Thinking is off explicitly rather than by omission: on Sonnet 5,
+      // leaving `thinking` out runs adaptive thinking, and thinking tokens
+      // are charged against max_tokens -- so a tight cap can be spent
+      // entirely on reasoning and the response comes back with no text block
+      // at all. That lands in the 'empty reply' branch below and queues
+      // nothing, which reads to the human as Drake intermittently ignoring
+      // them. A one-line flirt has nothing to reason about, so disabling it
+      // is both the fix and the cheaper call. max_tokens is raised off the
+      // old 150 anyway to leave headroom -- the ~20-word cap is enforced by
+      // the system prompt, not by truncating the model mid-sentence.
+      thinking: { type: 'disabled' },
+      max_tokens: 400,
       output_config: { effort: 'low' },
       system: SYSTEM_PROMPT,
       messages,

@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useCallback } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
 import { Avatar } from '../../components/Avatar';
@@ -24,14 +24,24 @@ export default function Activity() {
   const markRead = useMarkActivityRead();
   const { colors } = useTheme();
 
-  // Opening this tab is what "read" means here — once per mount is enough,
-  // deliberately not reacting to markRead's own identity. AuthContext's
-  // profile is separate state from react-query's cache, so the mutation's
-  // own invalidation doesn't touch it -- refresh it explicitly or the red
-  // dot (driven by profile.activity_read_at) never clears.
-  useEffect(() => {
-    markRead.mutate(undefined, { onSuccess: () => refreshProfile() });
-  }, []);
+  // Opening this tab is what "read" means here. This has to be tied to
+  // *focus*, not mount: bottom-tab screens mount on first focus and are never
+  // unmounted (no unmountOnBlur in (tabs)/_layout.tsx), so a mount effect ran
+  // exactly once per app launch. Open Activity at 9am, get a like at 10am --
+  // useActivity refetches on focus and lights the red dot, but returning to
+  // this already-mounted tab re-ran nothing, so activity_read_at never
+  // advanced and the dot stayed lit for the rest of the session.
+  //
+  // The callback deliberately takes no dependencies: markRead is a new object
+  // every render, and depending on it would re-fire the effect mid-focus.
+  // AuthContext's profile is separate state from react-query's cache, so the
+  // mutation's own invalidation doesn't touch it -- refresh it explicitly or
+  // the red dot (driven by profile.activity_read_at) never clears.
+  useFocusEffect(
+    useCallback(() => {
+      markRead.mutate(undefined, { onSuccess: () => refreshProfile() });
+    }, [])
+  );
 
   if (isLoading) {
     return (

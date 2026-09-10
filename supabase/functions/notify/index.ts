@@ -1,9 +1,11 @@
 // Supabase Edge Function: notify
 //
 // Triggered by Database Webhooks (see 0009_notifications.sql) on insert into
-// dm_messages, likes, comments, and follows. Resolves who should hear about
-// it, skips notifying someone about their own action, and pushes through
-// Expo's push API to every token that person has registered.
+// dm_messages, likes, comments, and follows, plus a second webhook on
+// dm_messages UPDATE (0023_dm_message_likes.sql) for message reactions.
+// Resolves who should hear about it, skips notifying someone about their
+// own action, and pushes through Expo's push API to every token that
+// person has registered.
 //
 // Deploy via the Supabase Dashboard -> Edge Functions -> New Function
 // (paste this file), or `supabase functions deploy notify` if the CLI is
@@ -17,9 +19,11 @@ const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const db = createClient(supabaseUrl, serviceRoleKey);
 
 interface WebhookPayload {
-  type: 'INSERT';
+  type: 'INSERT' | 'UPDATE';
   table: 'dm_messages' | 'likes' | 'comments' | 'follows';
   record: Record<string, any>;
+  /** Only present on UPDATE -- the row's values before this change. */
+  old_record?: Record<string, any>;
 }
 
 interface Notification {
@@ -58,6 +62,26 @@ function extractMentionedUsernames(body: string): string[] {
 // author, both filtered out below).
 async function resolve(payload: WebhookPayload): Promise<Notification[]> {
   const r = payload.record;
+
+  // The only UPDATE this function currently cares about -- a DM message
+  // being hearted (see 0023_dm_message_likes.sql). Needs its own Database
+  // Webhook (dm_messages, event Update) alongside the existing Insert one,
+  // since Dashboard webhooks are scoped to a single event type each.
+  if (payload.type === 'UPDATE' && payload.table === 'dm_messages') {
+    const old = payload.old_record;
+    if (!old || r.liked_by === old.liked_by) return []; // not a like/unlike
+    if (!r.liked_by) return []; // unliked -- no notification for that
+    if (r.liked_by === r.sender_id) return []; // liking your own message
+    const likerUsername = await usernameOf(r.liked_by);
+    return [
+      {
+        recipientId: r.sender_id,
+        title: 'Kalos',
+        body: `${likerUsername} liked your message`,
+        url: `/dm/${likerUsername}`,
+      },
+    ];
+  }
 
   switch (payload.table) {
     case 'dm_messages': {

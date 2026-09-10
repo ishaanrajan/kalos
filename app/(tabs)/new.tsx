@@ -30,12 +30,12 @@ import { CropAdjust } from '../../components/CropAdjust';
 import type { CropAdjustHandle } from '../../components/CropAdjust';
 import { displayAspectRatio } from '../../components/PostCard';
 import { FILTERS, getFilter } from '../../lib/filters';
-import { bakeFilteredImage, downscaleForPreview } from '../../lib/bake';
+import { bakeFilteredImage, downscaleForPreview, prepareSource } from '../../lib/bake';
 import { supabase, PHOTOS_BUCKET } from '../../lib/supabase';
 import { useUpdateProfile } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
-import type { CropRect } from '../../lib/types';
+import { setUpdatePromptSuppressed } from '../../lib/updates';
 
 const SCREEN = Dimensions.get('window').width;
 // The composer preview is a single canvas (unlike FilterStrip's 18 at once,
@@ -47,8 +47,19 @@ const PREVIEW_MAX_EDGE = Math.round(SCREEN * PixelRatio.get());
 
 /** The photo as picked, before any crop has been chosen. */
 type RawPick = { uri: string; width: number; height: number };
-/** The photo once its crop is locked in -- what the filter/share steps use. */
-type Picked = RawPick & { previewUri: string; crop: CropRect };
+/**
+ * The photo once its crop is locked in -- what the filter/share steps use.
+ *
+ * `uri`/`width`/`height` describe the *prepared* image (see prepareSource in
+ * lib/bake), not the original pick: already cropped to the framed region,
+ * turned upright, and capped at SOURCE_MAX_EDGE. That matters because these
+ * are the numbers that become the posted row's width/height and the preview's
+ * aspect ratio, and after a crop the original's dimensions describe an image
+ * nobody is going to see. There's deliberately no crop rect here any more --
+ * the crop is already in the pixels, so there is no second place it could be
+ * applied inconsistently.
+ */
+type Picked = { uri: string; width: number; height: number; previewUri: string };
 
 /**
  * Four steps: pick (in-app library grid, or straight to the camera), adjust
@@ -151,16 +162,26 @@ export default function NewPost() {
 
   const filter = getFilter(filterName) ?? FILTERS[0];
   const isNormal = filter.name === 'Normal';
-  // Real dimensions once a photo's picked; 1 (square) beforehand -- this runs
-  // every render regardless of `rawPicked` to keep hook order stable, same
-  // as every other hook in this component sitting above the early returns
-  // below. picked.width/height are always copied straight from rawPicked
-  // (the crop only ever adds a sub-rect, never changes what "natural" means),
-  // so this one value is valid for both the adjust step's frame and the
-  // filter step's preview canvas.
-  const aspectRatio = useMemo(
+  // Real dimensions once a photo's picked; 1 (square) beforehand -- these run
+  // every render regardless of `rawPicked`/`picked` to keep hook order stable,
+  // same as every other hook in this component sitting above the early returns
+  // below.
+  //
+  // Two ratios, not one. The adjust step's frame is the shape the user is
+  // choosing a crop *into*, so it comes from the original's dimensions. The
+  // filter step's canvas shows an image that has already been cropped to that
+  // frame, so it has to come from the prepared image's own dimensions. They
+  // land on nearly the same number by construction, but only nearly: the crop
+  // rect gets rounded to whole pixels and displayAspectRatio clamps and snaps
+  // to square, so deriving the preview's shape from the pre-crop numbers is
+  // how you get a canvas that letterboxes an image that already fits it.
+  const frameAspectRatio = useMemo(
     () => (rawPicked ? displayAspectRatio(rawPicked.width, rawPicked.height) : 1),
     [rawPicked]
+  );
+  const previewAspectRatio = useMemo(
+    () => (picked ? displayAspectRatio(picked.width, picked.height) : 1),
+    [picked]
   );
 
   /** Guards the focus effect against re-entering while a picker is already up. */
@@ -174,10 +195,14 @@ export default function NewPost() {
   // callback identity stable so only genuine focus events trigger it.
   const stepRef = useRef(step);
   const blockedRef = useRef(blocked);
+  const rawPickedRef = useRef(rawPicked);
+  const pickedRef = useRef(picked);
   useEffect(() => {
     stepRef.current = step;
     blockedRef.current = blocked;
-  }, [step, blocked]);
+    rawPickedRef.current = rawPicked;
+    pickedRef.current = picked;
+  }, [step, blocked, rawPicked, picked]);
 
   const launch = useCallback(async () => {
     if (picking.current) return;
@@ -233,9 +258,24 @@ export default function NewPost() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!blockedRef.current && stepRef.current !== 'library' && stepRef.current !== 'adjust') {
-        void launch();
+      // Only ever auto-launch into a genuinely empty composer. This tab is
+      // never unmounted, so every trip to another tab and back is a focus
+      // event, and the old test -- "any step other than library/adjust" --
+      // treated a half-written post on the filter or share step as if it were
+      // a cold start. That put the Take Photo / Choose from Library sheet on
+      // top of the user's own work, and backing out of that sheet runs
+      // launch()'s cancel path, which replaces the route and throws away the
+      // photo they had already framed. A photo in hand (either the raw pick
+      // mid-adjust or the prepared one) means there is nothing to launch.
+      if (
+        blockedRef.current ||
+        rawPickedRef.current ||
+        pickedRef.current ||
+        stepRef.current === 'library'
+      ) {
+        return;
       }
+      void launch();
     }, [launch])
   );
 
@@ -281,11 +321,24 @@ export default function NewPost() {
     setProcessing(true);
     try {
       const crop = cropRef.current.getCropRect();
-      // The preview runs against a downscaled copy sized to the screen's own
-      // resolution (still far smaller than the original for most photos);
-      // the full-resolution image is only touched once, at post time.
-      const preview = await downscaleForPreview(rawPicked.uri, PREVIEW_MAX_EDGE);
-      setPicked({ ...rawPicked, previewUri: preview.uri, crop });
+      // Bake the framing into a real file right here, once, and let every
+      // later step read from that. The rect the user just chose is applied
+      // natively (which also turns an EXIF-rotated photo upright, since the
+      // rect was measured in the upright space they were looking at), and the
+      // result is capped at SOURCE_MAX_EDGE so the original's full resolution
+      // never has to be decoded again -- not for the preview, and not on the
+      // JS thread at post time.
+      const source = await prepareSource(rawPicked.uri, crop);
+      // And the preview is a downscale *of that*, not of the original, so the
+      // filter you pick and the thumbnail beside the caption show the same
+      // composition that gets uploaded.
+      const preview = await downscaleForPreview(source.uri, PREVIEW_MAX_EDGE);
+      setPicked({
+        uri: source.uri,
+        width: source.width,
+        height: source.height,
+        previewUri: preview.uri,
+      });
       setStep('filter');
       setFilterName(FILTERS[0].name);
       setCaption('');
@@ -300,17 +353,28 @@ export default function NewPost() {
     if (!picked || !session) return;
     setPosting(true);
 
+    // An OTA update prompt landing mid-upload would offer "Restart now",
+    // and reloadAsync() tears down the JS context immediately -- throwing
+    // away the photo, the filter and the caption, right at the moment the
+    // user has the most invested in them. Hold the prompt until this is
+    // done; the foreground check will simply ask on the next foreground.
+    setUpdatePromptSuppressed(true);
+
     // The post itself lives or dies here. Once the insert succeeds, the post
     // is real and done -- nothing after this point is allowed to make it
     // look like posting failed, because a user told "could not post" will
     // reasonably retry, and retrying re-runs this whole function, which
     // would upload a second copy and insert a second row.
     try {
+      // No `crop` and no re-normalising: picked.uri is already the cropped,
+      // upright, size-capped file prepareSource() wrote at confirmCrop time,
+      // so Skia decodes at most SOURCE_MAX_EDGE here instead of pulling a
+      // 48MP original into native memory through JSI while the user waits.
       const baked = await bakeFilteredImage({
         uri: picked.uri,
         filter,
         strength: 1,
-        crop: picked.crop,
+        preNormalized: true,
       });
 
       const id = randomUUID();
@@ -350,14 +414,26 @@ export default function NewPost() {
     } catch (e) {
       Alert.alert('Could not post', e instanceof Error ? e.message : 'Something went wrong.');
       setPosting(false);
+      setUpdatePromptSuppressed(false);
       return;
     }
+    setUpdatePromptSuppressed(false);
 
     qc.invalidateQueries({ queryKey: ['home_feed'] });
     qc.invalidateQueries({ queryKey: ['profile-posts'] });
     qc.invalidateQueries({ queryKey: ['profile'] });
     qc.invalidateQueries({ queryKey: ['posted-today'] });
+    // Clear everything, not just `picked` -- the focus effect now decides
+    // whether to relaunch the picker by asking whether a photo is in hand, so
+    // a leftover rawPicked from the post that just succeeded would read as
+    // work-in-progress forever and the tab would stop opening the source
+    // sheet at all. 'filter' as the resting step for the same reason it's the
+    // initial one: see discard() above.
+    setStep('filter');
+    setRawPicked(null);
     setPicked(null);
+    setSelectedAsset(null);
+    setSelectedPreviewUri(null);
     setCaption('');
     router.replace('/(tabs)');
 
@@ -446,7 +522,7 @@ export default function NewPost() {
   }
 
   if (step === 'adjust' && rawPicked) {
-    const frame = { width: SCREEN, height: SCREEN / aspectRatio };
+    const frame = { width: SCREEN, height: SCREEN / frameAspectRatio };
     return (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         {hideTabBar}
@@ -521,7 +597,7 @@ export default function NewPost() {
             uri={picked.previewUri}
             filter={filter}
             strength={1}
-            size={{ width: SCREEN, height: SCREEN / aspectRatio }}
+            size={{ width: SCREEN, height: SCREEN / previewAspectRatio }}
             style={styles.preview}
           />
 

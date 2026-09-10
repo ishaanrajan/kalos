@@ -19,9 +19,25 @@ interface Props {
 export function ProfileView({ profile, isSelf, onSignOut }: Props) {
   const router = useRouter();
   const { data: posts, isLoading } = useProfilePosts(profile.id);
-  const { data: following } = useIsFollowing(isSelf ? undefined : profile.id);
+  const { data: following, isLoading: followingLoading } = useIsFollowing(
+    isSelf ? undefined : profile.id
+  );
   const toggleFollow = useToggleFollow();
   const { colors } = useTheme();
+
+  // Until useIsFollowing resolves, `data` is undefined -- rendering that as
+  // "Follow" was a lie that routed the tap into the INSERT branch, and
+  // follows' primary key (follower_id, followee_id) turned a tap on someone
+  // you already follow into a raw "duplicate key value violates unique
+  // constraint" alert. So the button waits for a real answer rather than
+  // guessing at one.
+  //
+  // The label itself needs no local optimism: useToggleFollow patches
+  // ['following', ...] and the cached profile's follower_count in onMutate
+  // (and rolls both back on error), so `following` already flips on tap and
+  // the count moves with it.
+  const isFollowing = following;
+  const followKnown = isFollowing !== undefined;
 
   const header = (
     <View style={[styles.header, { backgroundColor: colors.surface }]}>
@@ -70,21 +86,31 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
         ) : (
           <>
             <Button
-              variant={following ? 'outline' : 'primary'}
-              label={following ? 'Following' : 'Follow'}
-              onPress={() =>
+              variant={isFollowing ? 'outline' : 'primary'}
+              label={isFollowing ? 'Following' : 'Follow'}
+              onPress={() => {
+                // `disabled` below guarantees the read has resolved by the
+                // time this can fire, so `following` is a real answer here
+                // and not the undefined that used to force an INSERT.
+                const wasFollowing = following === true;
                 toggleFollow.mutate(
-                  { profileId: profile.id, following: following ?? false },
+                  { profileId: profile.id, following: wasFollowing },
                   {
-                    onError: (e) =>
+                    onError: (e) => {
+                      // The cache rollback is handled in useToggleFollow's
+                      // own onError; this is just telling the user why.
                       Alert.alert(
-                        following ? 'Could not unfollow' : 'Could not follow',
+                        wasFollowing ? 'Could not unfollow' : 'Could not follow',
                         e instanceof Error ? e.message : undefined
-                      ),
+                      );
+                    },
                   }
-                )
-              }
-              disabled={toggleFollow.isPending}
+                );
+              }}
+              // A spinner rather than a wrong label while we don't yet know
+              // which way this button goes.
+              loading={!followKnown && followingLoading}
+              disabled={!followKnown || toggleFollow.isPending}
               style={styles.action}
             />
             {/* The only other account (besides ishaan) allowed to write into

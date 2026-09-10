@@ -23,13 +23,29 @@ export default function DMInbox() {
 function IshaanInbox() {
   const { profile: me } = useAuth();
   const router = useRouter();
-  const { data: threads, isLoading } = useDMInbox();
+  const { data: threads, isLoading, isError, error, refetch } = useDMInbox();
   const { colors } = useTheme();
 
   if (isLoading) {
     return (
       <View style={[styles.center, { backgroundColor: colors.surface }]}>
         <ActivityIndicator />
+      </View>
+    );
+  }
+
+  // Without this a failed load renders the empty-inbox state below, which
+  // tells someone with a full inbox that nobody has messaged them.
+  if (isError) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.surface }]}>
+        <EmptyState
+          icon="alert-circle"
+          title="Couldn't load messages"
+          body={error instanceof Error ? error.message : 'Something went wrong.'}
+          actionLabel="Try again"
+          onAction={() => refetch()}
+        />
       </View>
     );
   }
@@ -89,9 +105,46 @@ function MyThreads() {
   const { profile: me } = useAuth();
   const router = useRouter();
   const { colors } = useTheme();
-  const { data: latestByThread, isLoading: threadsLoading } = useMyDMThreads();
-  const { data: ishaan, isLoading: ishaanLoading } = useProfile('ishaan');
-  const { data: bot, isLoading: botLoading } = useProfile('prosecco_daddy');
+  const {
+    data: latestByThread,
+    isLoading: threadsLoading,
+    isError: threadsError,
+    refetch: refetchThreads,
+  } = useMyDMThreads();
+  const {
+    data: ishaan,
+    isLoading: ishaanLoading,
+    isError: ishaanError,
+    refetch: refetchIshaan,
+  } = useProfile('ishaan');
+  const {
+    data: bot,
+    isLoading: botLoading,
+    isError: botError,
+    refetch: refetchBot,
+  } = useProfile('prosecco_daddy');
+
+  // Both rows are built from these two profile lookups, so if either fails
+  // there is nothing to render -- and the guard below can't tell that apart
+  // from "still loading" (isLoading goes false, the data never arrives), so
+  // this screen used to spin forever on a dropped connection.
+  if (ishaanError || botError || threadsError) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.surface }]}>
+        <EmptyState
+          icon="alert-circle"
+          title="Couldn't load messages"
+          body="Check your connection and try again."
+          actionLabel="Try again"
+          onAction={() => {
+            refetchIshaan();
+            refetchBot();
+            refetchThreads();
+          }}
+        />
+      </View>
+    );
+  }
 
   if (threadsLoading || ishaanLoading || botLoading || !ishaan || !bot) {
     return (

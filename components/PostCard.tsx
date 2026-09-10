@@ -53,15 +53,25 @@ export interface PostCardProps {
   /**
    * Toggles the like. The heart button always calls it; a double-tap only calls
    * it when the post is not already liked, so double-tapping never un-likes.
+   *
+   * Every handler below is handed the post it fired on, so a list can give the
+   * same callback identity to all of its cards instead of minting a fresh
+   * `() => doThing(item)` closure per row on every render. That matters
+   * because FlatList's non-strictMode `_renderer` hands VirtualizedList a
+   * brand-new `renderItem` on each render, which defeats the PureComponent
+   * check in VirtualizedListCellRenderer and re-invokes renderItem for every
+   * mounted cell -- so per-row closures would re-render every card through
+   * the React.memo() below no matter how stable renderItem itself is.
+   * Callers that don't need the argument can still pass a plain `() => void`.
    */
-  onLike: () => void;
-  onPressAuthor?: () => void;
-  onPressComments?: () => void;
-  onPressLikes?: () => void;
-  onPressImage?: () => void;
-  onPressOptions?: () => void;
+  onLike: (post: FeedPost) => void;
+  onPressAuthor?: (post: FeedPost) => void;
+  onPressComments?: (post: FeedPost) => void;
+  onPressLikes?: (post: FeedPost) => void;
+  onPressImage?: (post: FeedPost) => void;
+  onPressOptions?: (post: FeedPost) => void;
   /** Tapping the Explore reason chip. */
-  onPressReason?: () => void;
+  onPressReason?: (post: FeedPost) => void;
   /** Tapping an @mention in the caption or a previewed comment. */
   onPressMention?: (username: string) => void;
 
@@ -150,7 +160,27 @@ function formatCount(count: number, singular: string, pluralWord: string): strin
 const BURST_SIZE = 96;
 const BURST_SPRING = { damping: 11, stiffness: 240, mass: 0.6 };
 
-export function PostCard({
+// --- handler binding --------------------------------------------------------
+
+/**
+ * Binds one of the `(post) => void` props above to this card's post.
+ *
+ * Two reasons this happens here rather than at the call site. First, RN's
+ * press handlers pass a synthetic event: handing `onPressAuthor` straight to
+ * `<Text onPress>` would call a caller's `(post) => ...` with a
+ * GestureResponderEvent. Second, `undefined` has to survive -- Avatar,
+ * Pressable and the reason chip all branch on "is there a handler?" to decide
+ * whether they're pressable at all, so an always-defined wrapper would
+ * quietly make dead affordances tappable.
+ */
+function useBoundToPost(
+  handler: ((post: FeedPost) => void) | undefined,
+  post: FeedPost,
+): (() => void) | undefined {
+  return useMemo(() => (handler ? () => handler(post) : undefined), [handler, post]);
+}
+
+function PostCardImpl({
   post,
   imageUrl,
   avatarUrl,
@@ -188,6 +218,17 @@ export function PostCard({
   );
   const timestamp = useMemo(() => formatPostTimestamp(createdAt), [createdAt]);
 
+  // Bound once per post instead of inline at each usage: these identities feed
+  // the photoGesture memo below, and rebuilding a Gesture object on every
+  // render is exactly the cost this card is trying not to pay.
+  const handleLike = useCallback(() => onLike(post), [onLike, post]);
+  const handlePressAuthor = useBoundToPost(onPressAuthor, post);
+  const handlePressComments = useBoundToPost(onPressComments, post);
+  const handlePressLikes = useBoundToPost(onPressLikes, post);
+  const handlePressImage = useBoundToPost(onPressImage, post);
+  const handlePressOptions = useBoundToPost(onPressOptions, post);
+  const handlePressReason = useBoundToPost(onPressReason, post);
+
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [captionOverflows, setCaptionOverflows] = useState(false);
 
@@ -213,9 +254,9 @@ export function PostCard({
     playBurst();
     if (!likedRef.current) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-      onLike();
+      handleLike();
     }
-  }, [playBurst, onLike]);
+  }, [playBurst, handleLike]);
 
   // `.runOnJS(true)` keeps the callbacks on the JS thread so they can call the
   // props directly. Assigning a shared value from JS still runs the animation
@@ -235,13 +276,13 @@ export function PostCard({
       .numberOfTaps(1)
       .runOnJS(true)
       .onEnd((_event, success) => {
-        if (success && onPressImage) {
-          onPressImage();
+        if (success && handlePressImage) {
+          handlePressImage();
         }
       });
 
     return Gesture.Exclusive(doubleTap, singleTap);
-  }, [handleDoubleTap, onPressImage]);
+  }, [handleDoubleTap, handlePressImage]);
 
   const burstStyle = useAnimatedStyle(() => {
     'worklet';
@@ -273,8 +314,8 @@ export function PostCard({
       {/* Explore reason chip */}
       {reasonLabel ? (
         <Pressable
-          onPress={onPressReason}
-          disabled={!onPressReason}
+          onPress={handlePressReason}
+          disabled={!handlePressReason}
           style={[styles.reasonRow, { borderBottomWidth: hairlineWidth, borderBottomColor: colors.border }]}
           accessibilityRole="text"
           accessibilityLabel={reasonLabel}
@@ -296,7 +337,7 @@ export function PostCard({
           url={avatarUrl}
           username={authorUsername}
           size={32}
-          onPress={onPressAuthor}
+          onPress={handlePressAuthor}
         />
 
         {/* The line under the username is where a location would go, if this
@@ -305,16 +346,16 @@ export function PostCard({
           <Text
             style={[typography.username, { color: colors.text }]}
             numberOfLines={1}
-            onPress={onPressAuthor}
+            onPress={handlePressAuthor}
             suppressHighlighting
           >
             {authorUsername}
           </Text>
         </View>
 
-        {onPressOptions ? (
+        {handlePressOptions ? (
           <Pressable
-            onPress={onPressOptions}
+            onPress={handlePressOptions}
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel="Post options"
@@ -350,11 +391,11 @@ export function PostCard({
 
       {/* Actions */}
       <View style={styles.actions}>
-        <LikeButton liked={liked} onPress={onLike} size={26} style={styles.action} />
+        <LikeButton liked={liked} onPress={handleLike} size={26} style={styles.action} />
 
         <Pressable
-          onPress={onPressComments}
-          disabled={!onPressComments}
+          onPress={handlePressComments}
+          disabled={!handlePressComments}
           hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel="Comment"
@@ -368,7 +409,7 @@ export function PostCard({
         {likeCount > 0 ? (
           <Text
             style={[typography.bodyStrong, { color: colors.text }]}
-            onPress={onPressLikes}
+            onPress={handlePressLikes}
             suppressHighlighting
           >
             {formatCount(likeCount, 'like', 'likes')}
@@ -383,7 +424,7 @@ export function PostCard({
             >
               <Text
                 style={[typography.bodyStrong, { color: colors.text }]}
-                onPress={onPressAuthor}
+                onPress={handlePressAuthor}
                 suppressHighlighting
               >
                 {authorUsername}
@@ -419,7 +460,7 @@ export function PostCard({
         {showCommentPreview && commentCount > 0 ? (
           <Text
             style={[typography.meta, styles.viewComments, { color: colors.textSecondary }]}
-            onPress={onPressComments}
+            onPress={handlePressComments}
             suppressHighlighting
           >
             {commentCount === 1
@@ -433,7 +474,7 @@ export function PostCard({
             key={comment.id}
             style={[typography.body, styles.previewComment, { color: colors.text }]}
             numberOfLines={2}
-            onPress={onPressComments}
+            onPress={handlePressComments}
             suppressHighlighting
           >
             <Text style={[typography.bodyStrong, { color: colors.text }]}>
@@ -453,6 +494,22 @@ export function PostCard({
     </View>
   );
 }
+
+/**
+ * Memoized because the feed re-renders the whole screen on every like.
+ *
+ * A like fires at least two mutation state transitions, each of which
+ * re-renders app/(tabs)/index.tsx; FlatList then re-invokes renderItem for
+ * every mounted cell (see the note on the handler props above). Without this
+ * memo that means every visible card rebuilds its expo-image, its Gesture
+ * objects and its hidden caption-measurement <Text> -- for a like on a post
+ * that may not even be on screen. The memo only pays off while the props
+ * stay referentially stable, which is what `useBoundToPost` and the
+ * `(post) => void` handler signatures are for; `post` itself is safe because
+ * the optimistic like patch in useToggleLike returns untouched posts by
+ * reference.
+ */
+export const PostCard = React.memo(PostCardImpl);
 
 const styles = StyleSheet.create({
   root: {

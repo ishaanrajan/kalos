@@ -45,6 +45,13 @@ export default function Feed() {
     setRefreshing(false);
   }, [refetch]);
 
+  // Every callback below depends on `.mutate` rather than on the mutation
+  // object, because useMutation() returns `{ ...result, mutate, mutateAsync }`
+  // -- a brand-new object on every render, including the two render passes a
+  // single like triggers. Depending on the object made `renderItem` change
+  // identity on every render, which re-rendered every mounted card (see the
+  // React.memo note in components/PostCard.tsx). `mutate` itself is a
+  // useCallback keyed on the observer, so it is stable for the screen's life.
   const deleteOwnPost = useCallback(
     (post: FeedPost) => {
       confirmDestructive('Delete post?', 'Delete Post', () => {
@@ -53,7 +60,7 @@ export default function Feed() {
         });
       });
     },
-    [deletePost]
+    [deletePost.mutate]
   );
 
   const showPostOptions = useCallback(
@@ -66,22 +73,41 @@ export default function Feed() {
     [router, deleteOwnPost]
   );
 
+  // One identity per handler for the whole list, not one per card per render:
+  // PostCard's handlers take the post they fired on precisely so these can be
+  // hoisted out of renderItem, which is what lets its React.memo skip the
+  // cards a like didn't touch.
+  const likePost = useCallback(
+    (post: FeedPost) => toggleLike.mutate({ postId: post.id, liked: post.viewer_has_liked }),
+    [toggleLike.mutate]
+  );
+  const openAuthor = useCallback(
+    (post: FeedPost) => router.push(`/profile/${post.author_username}`),
+    [router]
+  );
+  const openComments = useCallback((post: FeedPost) => router.push(`/post/${post.id}`), [router]);
+  const openLikes = useCallback((post: FeedPost) => router.push(`/likes/${post.id}`), [router]);
+  const openMention = useCallback(
+    (username: string) => router.push(`/profile/${username}`),
+    [router]
+  );
+
   const renderItem = useCallback(
     ({ item }: { item: FeedPost }) => (
       <PostCard
         post={item}
         imageUrl={photoUrl(item.image_path)}
         avatarUrl={avatarUrl(item.author_avatar_path)}
-        onLike={() => toggleLike.mutate({ postId: item.id, liked: item.viewer_has_liked })}
-        onPressAuthor={() => router.push(`/profile/${item.author_username}`)}
-        onPressComments={() => router.push(`/post/${item.id}`)}
-        onPressLikes={() => router.push(`/likes/${item.id}`)}
-        onPressOptions={item.author_id === userId ? () => showPostOptions(item) : undefined}
-        onPressMention={(username) => router.push(`/profile/${username}`)}
+        onLike={likePost}
+        onPressAuthor={openAuthor}
+        onPressComments={openComments}
+        onPressLikes={openLikes}
+        onPressOptions={item.author_id === userId ? showPostOptions : undefined}
+        onPressMention={openMention}
         previewComments={item.preview_comments}
       />
     ),
-    [router, toggleLike, userId, showPostOptions]
+    [likePost, openAuthor, openComments, openLikes, openMention, userId, showPostOptions]
   );
 
   if (isLoading) {
@@ -92,7 +118,15 @@ export default function Feed() {
     );
   }
 
-  if (isError) {
+  // Only when there is nothing to show. React Query's "error" reducer sets
+  // status: 'error' unconditionally and *keeps* state.data, so isError is
+  // true even for a feed that is fully loaded and six pages deep -- and with
+  // `retry: 1` in app/_layout.tsx, two failed requests in a tunnel is all it
+  // takes. Gating the full-screen state on isError alone meant a pull to
+  // refresh could throw away every loaded post and the scroll position with
+  // them, and "Try again" then refetched from page 1. When we already have
+  // posts the failure is reported in the banner below instead.
+  if (isError && !data) {
     return (
       <SafeAreaView style={[styles.center, { backgroundColor: colors.surface }]} edges={['top']}>
         <EmptyState
@@ -134,6 +168,24 @@ export default function Feed() {
           </Pressable>
         </View>
       </View>
+
+      {/* The non-destructive half of the fix above: a refresh that failed
+          against an already-loaded feed says so in one line and offers the
+          retry, leaving the list -- and the reader's place in it -- alone. */}
+      {isError ? (
+        <Pressable
+          onPress={() => refetch()}
+          style={[styles.errorBanner, { backgroundColor: colors.surfaceAlt, borderBottomColor: colors.border }]}
+          accessibilityRole="button"
+          accessibilityLabel="Couldn't refresh your feed. Tap to try again."
+        >
+          <Feather name="alert-circle" size={14} color={colors.textSecondary} />
+          <Text style={[styles.errorBannerText, { color: colors.textSecondary }]} numberOfLines={1}>
+            Couldn't refresh — showing what's already loaded.
+          </Text>
+          <Text style={[styles.errorBannerAction, { color: colors.accent }]}>Retry</Text>
+        </Pressable>
+      ) : null}
 
       <FlatList
         ref={listRef}
@@ -189,4 +241,14 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
   },
   footerSpinner: { marginVertical: 24 },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  errorBannerText: { flex: 1, fontSize: 13 },
+  errorBannerAction: { fontSize: 13, fontWeight: '600' },
 });

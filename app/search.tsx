@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { EmptyState } from '../components/EmptyState';
 import { UserRow } from '../components/UserRow';
@@ -23,11 +23,36 @@ export default function Search() {
   const { intent } = useLocalSearchParams<{ intent?: string }>();
   const isDmIntent = intent === 'dm';
   const [q, setQ] = useState('');
-  const isSearching = q.trim().length > 0;
-  const { data: results } = useSearchProfiles(q);
+  const [debouncedQ, setDebouncedQ] = useState('');
+  const term = q.trim();
+
+  // useSearchProfiles keys its cache on the term, so every keystroke used to
+  // be a brand-new cache entry with `data === undefined` -- the list blanked
+  // and claimed "No accounts found" for a half-typed name before repopulating,
+  // which reads as "this person doesn't exist". It also meant one
+  // search_profiles RPC per character. Wait for a pause in typing before the
+  // term reaches the hook; the list keeps showing the previous term's results
+  // in the meantime rather than flashing empty.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQ(term), 250);
+    return () => clearTimeout(timer);
+  }, [term]);
+
+  const isSearching = term.length > 0;
+  const {
+    data: results,
+    isFetching: searchFetching,
+    isError: searchError,
+    refetch: refetchSearch,
+  } = useSearchProfiles(debouncedQ);
   const { data: suggested } = useSuggestedProfiles();
   const { colors } = useTheme();
   const data = isSearching ? results ?? [] : suggested ?? [];
+
+  // "We have an answer for the term that's actually in the box." Anything
+  // else -- still debouncing, request in flight, never asked -- is a spinner,
+  // never an empty state.
+  const resultsSettled = !searchFetching && results !== undefined && debouncedQ === term;
 
   return (
     <View style={[styles.root, { backgroundColor: colors.surface }]}>
@@ -54,7 +79,21 @@ export default function Search() {
         }
         ListEmptyComponent={
           isSearching ? (
-            <EmptyState icon="search" title="No accounts found" body={`Nothing matching "${q}".`} />
+            // A failed RPC has no results and isn't fetching either, so
+            // without this arm the spinner below would never end.
+            searchError ? (
+              <EmptyState
+                icon="alert-circle"
+                title="Couldn't search"
+                body="Check your connection and try again."
+                actionLabel="Try again"
+                onAction={() => refetchSearch()}
+              />
+            ) : resultsSettled ? (
+              <EmptyState icon="search" title="No accounts found" body={`Nothing matching "${term}".`} />
+            ) : (
+              <ActivityIndicator style={styles.searching} />
+            )
           ) : null
         }
         renderItem={({ item }) => (
@@ -72,6 +111,7 @@ export default function Search() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  searching: { marginTop: 32 },
   input: {
     margin: 12,
     borderRadius: 8,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,13 +12,21 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { formatCommentAge } from '../../components/CommentRow';
 import { EmptyState } from '../../components/EmptyState';
 import { Avatar } from '../../components/Avatar';
-import { useDMThread, useMarkDMRead, useProfile, useSendDM, useTypingIndicator } from '../../lib/queries';
+import {
+  useDMThread,
+  useMarkDMRead,
+  useProfile,
+  useSendDM,
+  useToggleMessageLike,
+  useTypingIndicator,
+} from '../../lib/queries';
 import { avatarUrl } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
 import { nativeHeaderHeight, useTheme } from '../../lib/theme';
@@ -49,7 +57,13 @@ export default function DMThread() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const router = useRouter();
   const { profile: me } = useAuth();
-  const { data: other, isLoading: otherLoading } = useProfile(username);
+  const {
+    data: other,
+    isLoading: otherLoading,
+    isError: otherError,
+    error: otherErrorValue,
+    refetch: refetchOther,
+  } = useProfile(username);
   const [draft, setDraft] = useState('');
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
@@ -62,12 +76,41 @@ export default function DMThread() {
   const { data: messages, isLoading: messagesLoading } = useDMThread(threadUserId, threadWithId);
   const sendDM = useSendDM(threadUserId, threadWithId);
   const markRead = useMarkDMRead(threadUserId, threadWithId);
+  const toggleMessageLike = useToggleMessageLike(threadUserId, threadWithId);
   const { otherTyping, notifyTyping } = useTypingIndicator(threadUserId, threadWithId, me?.id ?? null);
 
-  // Opening the thread is what "read" means -- mark whatever's here now.
-  useEffect(() => {
-    if (threadUserId && threadWithId) markRead.mutate();
-  }, [threadUserId, threadWithId]);
+  const handleToggleLike = useCallback(
+    (message: DMMessage) => {
+      // A single heart slot per message (see 0023_dm_message_likes.sql) --
+      // if the other person already holds it, there's nothing for a tap
+      // here to do; the DB trigger would reject it anyway.
+      if (message.liked_by && message.liked_by !== me?.id) return;
+      toggleMessageLike.mutate({ messageId: message.id, likedByMe: message.liked_by === me?.id });
+    },
+    [toggleMessageLike, me?.id]
+  );
+
+  // Opening the thread is what "read" means -- but "opening" can't be a mount
+  // effect here. Two ways that missed: this screen can stay mounted while you
+  // navigate away and back, and the thread is live -- a Realtime subscription
+  // invalidates it on INSERT, so a message that lands while you're looking
+  // straight at it was never marked read and lit the feed's DM badge for
+  // something already on screen. Re-mark on every focus, and again whenever
+  // the newest message changes while focused.
+  //
+  // Keyed on the newest message's *id* rather than the array itself: the
+  // array is a fresh object on every refetch, including the one this
+  // mutation's own invalidation kicks off, which would loop. Stamping
+  // read_at on existing rows doesn't change which message is newest, so it
+  // settles after one pass.
+  const newestMessageId = messages?.[messages.length - 1]?.id ?? null;
+  useFocusEffect(
+    useCallback(() => {
+      if (threadUserId && threadWithId) markRead.mutate();
+      // markRead is a new object every render and is deliberately not a
+      // dependency -- it would re-fire this on every render instead.
+    }, [threadUserId, threadWithId, newestMessageId])
+  );
 
   function submit() {
     const body = draft.trim();
@@ -86,6 +129,24 @@ export default function DMThread() {
     sendDM.mutate(BIG_HEART, {
       onError: (e) => Alert.alert('Could not send', e instanceof Error ? e.message : undefined),
     });
+  }
+
+  // A failed profile lookup used to fall straight through to the spinner
+  // below and stay there forever -- isLoading goes false, `other` never
+  // arrives. Say so, and give the person the retry the query already
+  // supports.
+  if (otherError) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.surface }]}>
+        <EmptyState
+          icon="alert-circle"
+          title="Couldn't open this conversation"
+          body={otherErrorValue instanceof Error ? otherErrorValue.message : 'Something went wrong.'}
+          actionLabel="Try again"
+          onAction={() => refetchOther()}
+        />
+      </View>
+    );
   }
 
   if (otherLoading || !me || !other) {
@@ -158,6 +219,7 @@ export default function DMThread() {
               // change from the message above, same grouping iMessage uses.
               showSender={!mine && item.sender_id !== prev?.sender_id}
               showSeen={index === (messages?.length ?? 0) - 1 && mine && !!item.read_at}
+              onToggleLike={() => handleToggleLike(item)}
             />
           );
         }}
@@ -180,6 +242,14 @@ export default function DMThread() {
           }}
           onSubmitEditing={submit}
           returnKeyType="send"
+          // Without this, RN resolves submitBehavior to 'newline' for any
+          // multiline input that sets neither submitBehavior nor
+          // blurOnSubmit -- the return key inserted a line break and never
+          // fired onSubmitEditing, while still rendering as a key labelled
+          // "send". 'submit' (rather than 'blurAndSubmit') fires the handler
+          // and keeps the keyboard up, which is what you want when the next
+          // thing you do is type another message.
+          submitBehavior="submit"
           multiline
         />
         {draft.trim() ? (
@@ -207,14 +277,29 @@ function Bubble({
   mine,
   showSender,
   showSeen,
+  onToggleLike,
 }: {
   message: DMMessage;
   mine: boolean;
   showSender: boolean;
   showSeen: boolean;
+  onToggleLike: () => void;
 }) {
   const { colors } = useTheme();
   const isBigHeart = message.body.trim() === BIG_HEART;
+  const liked = !!message.liked_by;
+
+  // Same double-tap shape as PostCard's photo -- numberOfTaps(2) with a
+  // short maxDuration so a real double-tap doesn't get swallowed by two
+  // separate single-tap recognitions first.
+  const doubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .maxDuration(260)
+    .runOnJS(true)
+    .onEnd((_event, success) => {
+      if (success) onToggleLike();
+    });
+
   return (
     <View style={[styles.bubbleRow, mine && styles.bubbleRowMine]}>
       {showSender && message.sender && (
@@ -225,25 +310,45 @@ function Bubble({
           </Text>
         </View>
       )}
-      {isBigHeart ? (
-        // No bubble chrome at all -- old Instagram's tap-to-send heart
-        // rendered as just a big glyph, not a normal message bubble. A real
-        // vector icon here instead of the stored emoji character itself --
-        // the platform's color-emoji glyph reads as cartoonish next to the
-        // app's own icon language (the same Ionicons heart everywhere else).
-        <Ionicons name="heart" size={64} color={colors.heart} />
-      ) : (
-        <View
-          style={[
-            styles.bubble,
-            { backgroundColor: mine ? colors.accent : colors.surfaceAlt },
-          ]}
-        >
-          <Text style={[styles.bubbleText, { color: mine ? '#ffffff' : colors.text }]}>
-            {message.body}
-          </Text>
+      <GestureDetector gesture={doubleTap}>
+        <View style={styles.reactable}>
+          {isBigHeart ? (
+            // No bubble chrome at all -- old Instagram's tap-to-send heart
+            // rendered as just a big glyph, not a normal message bubble. A
+            // real vector icon here instead of the stored emoji character
+            // itself -- the platform's color-emoji glyph reads as cartoonish
+            // next to the app's own icon language (the same Ionicons heart
+            // everywhere else).
+            <Ionicons name="heart" size={64} color={colors.heart} />
+          ) : (
+            <View
+              style={[
+                styles.bubble,
+                { backgroundColor: mine ? colors.accent : colors.surfaceAlt },
+              ]}
+            >
+              <Text style={[styles.bubbleText, { color: mine ? '#ffffff' : colors.text }]}>
+                {message.body}
+              </Text>
+            </View>
+          )}
+          {/* Sits on the corner away from the bubble's own alignment edge,
+              like Instagram's -- a "mine" bubble hugs the right edge, so the
+              reaction reads better hanging off its bottom-left, and vice
+              versa for a received one. */}
+          {liked ? (
+            <View
+              style={[
+                styles.reactionBadge,
+                mine ? styles.reactionBadgeMine : styles.reactionBadgeTheirs,
+                { backgroundColor: colors.surface, borderColor: colors.surface },
+              ]}
+            >
+              <Ionicons name="heart" size={11} color={colors.heart} />
+            </View>
+          ) : null}
         </View>
-      )}
+      </GestureDetector>
       <Text style={[styles.age, { color: colors.textSecondary }, mine && styles.ageMine]}>
         {formatCommentAge(message.created_at)}
       </Text>
@@ -303,6 +408,19 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   bubbleText: { fontSize: 15, lineHeight: 20 },
+  reactable: { position: 'relative' },
+  reactionBadge: {
+    position: 'absolute',
+    bottom: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reactionBadgeMine: { left: -6 },
+  reactionBadgeTheirs: { right: -6 },
   age: { fontSize: 11, marginTop: 3, marginHorizontal: 4 },
   ageMine: { alignSelf: 'flex-end' },
   seen: { fontSize: 11, marginTop: 1, marginHorizontal: 4, alignSelf: 'flex-end' },

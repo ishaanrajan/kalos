@@ -48,7 +48,20 @@
           "savePhotosPermission": false
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#fafafa",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#000000"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

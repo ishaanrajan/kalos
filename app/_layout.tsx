@@ -1,15 +1,35 @@
-import { useEffect } from 'react';
-import { ActivityIndicator, Alert, AppState, View } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { ActivityIndicator, AppState, StyleSheet, View } from 'react-native';
 import type { AppStateStatus } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
+import type { ErrorBoundaryProps } from 'expo-router';
 import * as Notifications from 'expo-notifications';
-import * as Updates from 'expo-updates';
+import NetInfo from '@react-native-community/netinfo';
+import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager, onlineManager } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '../lib/auth';
 import { useTheme } from '../lib/theme';
+import { EmptyState } from '../components/EmptyState';
+import { OfflineBanner } from '../components/OfflineBanner';
+import { checkForUpdateOnForeground } from '../lib/updates';
+
+/**
+ * The only routes a push is ever allowed to open. `url` arrives from the
+ * notify Edge Function, i.e. from the server, and used to be handed to
+ * router.push() behind an `as never` cast that defeated the typed-routes
+ * checking app.json turns on -- a renamed route or a malformed payload put
+ * the user on Expo Router's stock "Unmatched Route" screen. These three
+ * shapes are exactly what notify emits (`/dm/:username`, `/post/:id`,
+ * `/profile/:username`); anything else is dropped on the floor.
+ */
+const PUSH_ROUTE_RE = /^\/(?:dm|post|profile)\/[A-Za-z0-9._-]{1,64}$/;
+
+function toPushRoute(url: unknown): string | null {
+  return typeof url === 'string' && PUSH_ROUTE_RE.test(url) ? url : null;
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,33 +47,24 @@ function onAppStateChange(status: AppStateStatus) {
   }
 }
 
-// expo-updates' default "check on load" only fires once per cold JS start --
-// backgrounding and reopening from the app switcher (as opposed to a real
-// force-quit) never re-triggers it, so someone who never fully force-quits
-// can be stuck running a stale bundle indefinitely. This is what actually
-// caused several people to hit the same already-fixed HEIC posting bug days
-// after the fix shipped -- they were still running the old bundle and had
-// no way to know it. Checking (and offering to apply) on every foreground
-// closes that gap instead of relying on users to know the difference between
-// backgrounding and force-quitting.
-let checkingForUpdate = false;
-async function checkForUpdateOnForeground(): Promise<void> {
-  if (__DEV__ || checkingForUpdate) return;
-  checkingForUpdate = true;
-  try {
-    const result = await Updates.checkForUpdateAsync();
-    if (!result.isAvailable) return;
-    await Updates.fetchUpdateAsync();
-    Alert.alert('Update available', 'A new version of Kalos is ready.', [
-      { text: 'Later', style: 'cancel' },
-      { text: 'Restart now', onPress: () => Updates.reloadAsync() },
-    ]);
-  } catch {
-    // Best-effort -- a failed check should never block using the app.
-  } finally {
-    checkingForUpdate = false;
-  }
-}
+// React Native has no navigator.onLine, so react-query's onlineManager
+// assumes "always online" unless it's explicitly bridged. Without this,
+// mutations never enter the paused state (they fail on the first attempt
+// instead of resuming when signal returns), refetchOnReconnect never fires,
+// and queries burn their single retry immediately and land in isError. Set
+// up once at module scope, before any query can run.
+// Hold the native splash until auth has actually resolved. Expo Router would
+// otherwise hide it the moment the navigator is ready, which is well before
+// we know whether to show the feed or sign-in -- so a cold launch went
+// splash -> bootstrap spinner -> content, and in dark mode the spinner's
+// screen was a white flash between two dark ones.
+void SplashScreen.preventAutoHideAsync();
+
+onlineManager.setEventListener((setOnline) =>
+  NetInfo.addEventListener((state) => {
+    setOnline(state.isConnected !== false && state.isInternetReachable !== false);
+  })
+);
 
 function RootNavigator() {
   const { session, profile, loading } = useAuth();
@@ -93,20 +104,40 @@ function RootNavigator() {
     }
   }, [session, profile, loading, segments, router]);
 
-  // The notify Edge Function attaches { url } to every push it sends;
-  // tapping one just needs to hand that straight to the router. Dismissing
-  // it and clearing the badge afterward is separate from that navigation --
-  // tapping a delivered notification doesn't reliably clear it from the
-  // tray/Notification Center on its own, so it's done explicitly here.
+  // The notify Edge Function attaches { url } to every push it sends, and
+  // tapping one navigates there. This deliberately does NOT use
+  // addNotificationResponseReceivedListener: on a cold start the OS queues
+  // the tap and replays it the instant the JS module attaches (iOS
+  // NotificationCenterManager.pendingResponses, Android
+  // NotificationsEmitter.lastNotificationResponseBundle), which is long
+  // before auth has resolved -- and this component renders no navigator
+  // until it has. Pushing then threw "Attempted to navigate before mounting
+  // the Root Layout component" out of expo-router's assertIsReady, with no
+  // error boundary to catch it, so tapping a DM notification on a
+  // force-quit app was a hard crash. useLastNotificationResponse holds the
+  // response instead of firing it at us, so we can navigate on our own
+  // terms: once loading is false there is always a <Stack> mounted below.
+  const lastResponse = Notifications.useLastNotificationResponse();
+  const handledNotificationRef = useRef<string | null>(null);
+
   useEffect(() => {
-    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-      const url = response.notification.request.content.data?.url;
-      if (typeof url === 'string') router.push(url as never);
-      Notifications.dismissNotificationAsync(response.notification.request.identifier).catch(() => undefined);
-      Notifications.setBadgeCountAsync(0).catch(() => undefined);
-    });
-    return () => sub.remove();
-  }, [router]);
+    // Wait for the navigator, and for the guard above to have settled --
+    // deep-linking a signed-out user into /dm/... only to replace it with
+    // sign-in a tick later is worse than not deep-linking at all.
+    if (loading || !session || !lastResponse) return;
+
+    const id = lastResponse.notification.request.identifier;
+    if (handledNotificationRef.current === id) return;
+    handledNotificationRef.current = id;
+
+    const target = toPushRoute(lastResponse.notification.request.content.data?.url);
+    if (target) router.push(target as never);
+
+    // Tapping a delivered notification doesn't reliably clear it from the
+    // tray/Notification Center on its own, so it's done explicitly.
+    Notifications.dismissNotificationAsync(id).catch(() => undefined);
+    Notifications.setBadgeCountAsync(0).catch(() => undefined);
+  }, [lastResponse, loading, session, router]);
 
   // A push arriving while the app is already open is the one case AppState
   // focus can't catch on its own -- nothing "returns to foreground" if you
@@ -135,37 +166,86 @@ function RootNavigator() {
     void checkForUpdateOnForeground();
   }, []);
 
-  if (loading) {
-    return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
+  // Hand off from the native splash only once there's real content behind
+  // it, so the user never sees the bootstrap gate at all on a normal launch.
+  useEffect(() => {
+    if (!loading) void SplashScreen.hideAsync();
+  }, [loading]);
 
+  // The bootstrap spinner is an overlay, not an early return. Returning it
+  // instead of the <Stack> meant that during auth bootstrap there was no
+  // navigator mounted at all, so anything that navigated in that window --
+  // a tapped push notification, most of all -- threw out of expo-router's
+  // assertIsReady and took the app down. Keeping <Stack> rendered from the
+  // very first frame makes navigationRef.isReady() true throughout.
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        headerBackButtonDisplayMode: 'minimal',
-        headerStyle: { backgroundColor: colors.surface },
-        headerTintColor: colors.text,
-        headerTitleStyle: { color: colors.text },
-      }}
-    >
-      <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="onboarding-avatar" />
-      <Stack.Screen name="post/[id]" options={{ headerShown: true, title: 'Post' }} />
-      <Stack.Screen name="profile/[username]" options={{ headerShown: true, title: '' }} />
-      <Stack.Screen name="follows/[username]" options={{ headerShown: true, title: '' }} />
-      <Stack.Screen name="likes/[postId]" options={{ headerShown: true, title: 'Likes' }} />
-      <Stack.Screen name="edit-profile" options={{ headerShown: true, title: 'Edit profile' }} />
-      <Stack.Screen name="edit-caption/[id]" options={{ headerShown: true, title: 'Edit caption' }} />
-      <Stack.Screen name="search" options={{ headerShown: true, title: 'Search' }} />
-      <Stack.Screen name="dm/index" options={{ headerShown: true, title: 'Messages' }} />
-      <Stack.Screen name="dm/[username]" options={{ headerShown: true, title: '' }} />
-    </Stack>
+    <>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          headerBackButtonDisplayMode: 'minimal',
+          headerStyle: { backgroundColor: colors.surface },
+          headerTintColor: colors.text,
+          headerTitleStyle: { color: colors.text },
+        }}
+      >
+        <Stack.Screen name="(auth)" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="onboarding-avatar" />
+        <Stack.Screen name="post/[id]" options={{ headerShown: true, title: 'Post' }} />
+        <Stack.Screen name="profile/[username]" options={{ headerShown: true, title: '' }} />
+        <Stack.Screen name="follows/[username]" options={{ headerShown: true, title: '' }} />
+        <Stack.Screen name="likes/[postId]" options={{ headerShown: true, title: 'Likes' }} />
+        <Stack.Screen name="edit-profile" options={{ headerShown: true, title: 'Edit profile' }} />
+        <Stack.Screen name="edit-caption/[id]" options={{ headerShown: true, title: 'Edit caption' }} />
+        <Stack.Screen name="search" options={{ headerShown: true, title: 'Search' }} />
+        <Stack.Screen name="dm/index" options={{ headerShown: true, title: 'Messages' }} />
+        <Stack.Screen name="dm/[username]" options={{ headerShown: true, title: '' }} />
+      </Stack>
+
+      {loading ? (
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            styles.gate,
+            // Without an explicit background this inherited the platform
+            // default (white), so a dark-mode cold launch flashed a white
+            // rectangle before the app's own near-black UI appeared.
+            { backgroundColor: colors.background },
+          ]}
+        >
+          <ActivityIndicator />
+        </View>
+      ) : null}
+
+      <OfflineBanner />
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  gate: { alignItems: 'center', justifyContent: 'center' },
+  errorRoot: { flex: 1, justifyContent: 'center' },
+});
+
+/**
+ * Expo Router renders this in place of any route that throws while
+ * rendering. Without it a single bad row from Supabase -- a null author, a
+ * caption that trips the mention parser -- was an unrecoverable white
+ * screen in a production build, force quit the only way out.
+ */
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  const { colors } = useTheme();
+  return (
+    <View style={[styles.errorRoot, { backgroundColor: colors.background }]}>
+      <EmptyState
+        icon="alert-triangle"
+        title="Something went wrong"
+        body={error.message}
+        actionLabel="Try again"
+        onAction={() => void retry()}
+      />
+    </View>
   );
 }
 

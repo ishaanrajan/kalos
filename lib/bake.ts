@@ -46,8 +46,20 @@ export interface BakeOptions {
    * space (from CropAdjust's getCropRect()). Defaults to the whole image --
    * every caller before the crop-adjust step existed relied on that default,
    * and still can.
+   *
+   * The composer no longer uses this: it crops once up front via
+   * prepareSource() so that the preview and the bake are the same pixels.
+   * It stays supported for anything that only has an original plus a rect.
    */
   crop?: CropRect;
+  /**
+   * Set when `uri` already came out of `prepareSource()` (or another
+   * ImageManipulator save), so the EXIF-normalising pass below can be
+   * skipped. It is not a correctness flag -- normalising twice is harmless,
+   * just a wasted full-size decode/re-encode on the post path, which is the
+   * one place we're trying hardest not to spend memory.
+   */
+  preNormalized?: boolean;
 }
 
 /** Blend modes exposed by `FilterOverlay`, mapped onto Skia's enum. */
@@ -59,6 +71,14 @@ const BLEND_MODES: Record<FilterOverlay['blend'], BlendMode> = {
   color: BlendMode.Color,
   luminosity: BlendMode.Luminosity,
 };
+
+/**
+ * Longest edge of the image the composer works from, and of the JPEG we
+ * upload. Everything downstream of prepareSource() is bounded by this, which
+ * is the whole reason a 48MP source never has to exist as pixels on the JS
+ * side: at 2560 the worst case is ~26MB of RGBA rather than ~190MB.
+ */
+export const SOURCE_MAX_EDGE = 2560;
 
 /** Mitchell cubic resampling — the good downscale kernel. */
 const MITCHELL_B = 1 / 3;
@@ -174,20 +194,32 @@ async function decode(uri: string): Promise<{ image: SkImage; data: SkData }> {
 }
 
 /**
- * Skia's built-in codecs don't include HEIC/HEIF -- Apple's default capture
- * format since iOS 11 -- so a photo picked straight from the library with no
- * edit step (see new.tsx: allowsEditing is now false) can hand Skia a file
- * it simply can't decode. `expo-image-manipulator`'s native codec (CoreImage
- * on iOS) does understand HEIC; a no-op render-and-save through it converts
- * to JPEG at full resolution and quality. JPEG/PNG sources skip this
- * entirely -- Skia already decodes those natively and losslessly.
+ * Runs the image through `expo-image-manipulator`'s native codec and back out
+ * as a JPEG. This exists for two reasons, and both of them are about Skia
+ * seeing the same picture everything else in the app sees:
+ *
+ * 1. Skia's built-in codecs don't include HEIC/HEIF -- Apple's default
+ *    capture format since iOS 11 -- so a photo picked straight from the
+ *    library with no edit step (see new.tsx: allowsEditing is now false) can
+ *    hand Skia a file it simply can't decode. The native codec (CoreImage on
+ *    iOS) does understand HEIC.
+ * 2. `Skia.Image.MakeImageFromEncoded` ignores the codec's EXIF origin, while
+ *    every other surface in the app -- expo-image in the library grid and
+ *    CropAdjust, ImageManipulator in downscaleForPreview -- applies it. A
+ *    JPEG shot in portrait on an Android camera, or one that arrived over
+ *    AirDrop, carries orientation 6/8 rather than baked-in rotation, so Skia
+ *    alone would draw it on its side. Worse, a crop rect picked in the
+ *    upright space the user actually saw would then be applied to un-rotated
+ *    pixels and clampCropRect would silently shrink it to fit, cropping a
+ *    region nobody chose.
+ *
+ * This used to be gated on a `.heic`/`.heif` filename test, which caught (1)
+ * and missed (2) entirely -- orientation metadata is not a HEIC thing, and
+ * the extension is unknowable for content:// and ph:// URIs anyway. Rendering
+ * unconditionally costs one native re-encode of an already-small image on the
+ * paths that reach here, which is the cheaper mistake by a wide margin.
  */
-function isHeic(uri: string): boolean {
-  return /\.(heic|heif)(\?.*)?$/i.test(uri);
-}
-
-async function ensureSkiaDecodable(uri: string): Promise<string> {
-  if (!isHeic(uri)) return uri;
+async function normalizeForSkia(uri: string): Promise<string> {
   const rendered = await ImageManipulator.manipulate(uri).renderAsync();
   const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 1 });
   return saved.uri;
@@ -198,15 +230,19 @@ async function ensureSkiaDecodable(uri: string): Promise<string> {
  * told the source was) from ever landing fractionally out of the actual
  * decoded image's bounds -- rounding along the way is normal, trusting it
  * blindly as a source rect for Skia isn't.
+ *
+ * The result is whole pixels: ImageManipulator's native crop takes integers
+ * and the v57 docs say nothing about how it treats fractions, so we decide
+ * that here rather than letting two platforms each round their own way.
  */
 function clampCropRect(rect: CropRect, bounds: ImageSize): CropRect {
-  const width = Math.min(rect.width, bounds.width);
-  const height = Math.min(rect.height, bounds.height);
+  const width = Math.max(1, Math.min(Math.round(rect.width), bounds.width));
+  const height = Math.max(1, Math.min(Math.round(rect.height), bounds.height));
   return {
     width,
     height,
-    x: Math.max(0, Math.min(rect.x, bounds.width - width)),
-    y: Math.max(0, Math.min(rect.y, bounds.height - height)),
+    x: Math.max(0, Math.min(Math.round(rect.x), bounds.width - width)),
+    y: Math.max(0, Math.min(Math.round(rect.y), bounds.height - height)),
   };
 }
 
@@ -220,11 +256,14 @@ export async function bakeFilteredImage({
   uri,
   filter,
   strength,
-  maxEdge = 2560,
+  maxEdge = SOURCE_MAX_EDGE,
   quality = 100,
   crop,
+  preNormalized = false,
 }: BakeOptions): Promise<BakedImage> {
-  const { image: source, data } = await decode(await ensureSkiaDecodable(uri));
+  const { image: source, data } = await decode(
+    preNormalized ? uri : await normalizeForSkia(uri)
+  );
   const srcRect = clampCropRect(
     crop ?? { x: 0, y: 0, width: source.width(), height: source.height() },
     { width: source.width(), height: source.height() }
@@ -261,6 +300,70 @@ export async function bakeFilteredImage({
 }
 
 /**
+ * Turns the photo the user picked plus the region they framed into the one
+ * image the rest of the composer works from: EXIF-upright, already cropped,
+ * and capped at `maxEdge`.
+ *
+ * This runs once, when the crop is confirmed, and it is what makes the
+ * composer honest. Before it existed the crop rect was carried around as a
+ * number and only applied at the very end, so the filter step, the filter
+ * strip and the caption thumbnail all rendered the *whole* photo (centre-
+ * cropped by the preview's own layout) -- you chose a filter against a
+ * composition that was not the one you framed, and then posted a third thing
+ * again. Collapsing all of it into a single file up front means preview and
+ * upload are the same pixels by construction, not by two code paths agreeing.
+ *
+ * It is also where the full-resolution decode stops being the JS thread's
+ * problem. The crop and the downscale both happen inside ImageManipulator's
+ * native pipeline; Skia only ever sees the ≤2560px result, so baking no
+ * longer allocates a 190MB bitmap through JSI on a phone that was already
+ * close to being jettisoned.
+ *
+ * The dimensions come back measured, not predicted -- callers need them for
+ * the preview's aspect ratio and for the posted row's width/height, and after
+ * an orientation fix plus a crop plus a resize, guessing is how you get a
+ * feed row whose height doesn't match its image.
+ */
+export async function prepareSource(
+  uri: string,
+  crop?: CropRect,
+  maxEdge: number = SOURCE_MAX_EDGE,
+): Promise<BakedImage> {
+  const context = ImageManipulator.manipulate(uri);
+
+  // Probe render, same trick downscaleForPreview uses: the crop rect was
+  // computed against the upright photo the user was looking at, so it has to
+  // be clamped against the upright dimensions, and this is the only thing
+  // that reports them authoritatively. The asset's own width/height (from
+  // MediaLibrary.getInfo) agree on iOS but not dependably on Android, where
+  // whether the values are pre-rotated varies by OEM.
+  const probe = await context.renderAsync();
+  const upright: ImageSize = { width: probe.width, height: probe.height };
+
+  const rect = clampCropRect(crop ?? { x: 0, y: 0, ...upright }, upright);
+  const target = fitWithin({ width: rect.width, height: rect.height }, maxEdge);
+
+  let chain = context
+    .reset()
+    .crop({ originX: rect.x, originY: rect.y, width: rect.width, height: rect.height });
+
+  if (target.width !== rect.width || target.height !== rect.height) {
+    // One axis only -- ImageManipulator derives the other from the source
+    // ratio, which keeps it from stretching by a rounded pixel.
+    chain = chain.resize(
+      target.width >= target.height ? { width: target.width } : { height: target.height },
+    );
+  }
+
+  const rendered = await chain.renderAsync();
+  // compress 1, not the 0.85 the preview copy uses: this file is the input to
+  // the filter bake, and generation loss added here would be baked into the
+  // upload permanently.
+  const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 1 });
+  return { uri: saved.uri, width: saved.width, height: saved.height };
+}
+
+/**
  * Cheap downscaled copy of a photo, used for the composer preview and for the
  * filter strip thumbnails so we never hand 18 canvases a full-res bitmap.
  *
@@ -276,7 +379,10 @@ export async function downscaleForPreview(uri: string, maxEdge: number): Promise
   const original: ImageSize = { width: probe.width, height: probe.height };
 
   if (Math.max(original.width, original.height) <= maxEdge) {
-    const decodableUri = await ensureSkiaDecodable(uri);
+    // Small enough to skip the resize, but not to skip the normalising pass:
+    // the caller is handing this straight to Skia, which would otherwise draw
+    // an EXIF-rotated photo on its side no matter how small it is.
+    const decodableUri = await normalizeForSkia(uri);
     return { uri: decodableUri, width: original.width, height: original.height };
   }
 

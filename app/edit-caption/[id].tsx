@@ -12,8 +12,9 @@ import {
 import { StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { EmptyState } from '../../components/EmptyState';
 import { usePost, useUpdatePostCaption } from '../../lib/queries';
-import { photoUrl } from '../../lib/supabase';
+import { photoThumbUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
 
@@ -26,7 +27,7 @@ export default function EditCaption() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const userId = useUserId();
-  const { data: post, isLoading } = usePost(id);
+  const { data: post, isLoading, isError, error, refetch } = usePost(id);
   const updateCaption = useUpdatePostCaption();
   const { colors } = useTheme();
 
@@ -51,6 +52,23 @@ export default function EditCaption() {
         onSuccess: () => router.back(),
         onError: (e) => Alert.alert('Could not save', e instanceof Error ? e.message : undefined),
       }
+    );
+  }
+
+  // A failed load leaves isLoading false and `post` undefined, which the
+  // guard below can't tell apart from "still fetching" -- the screen sat on
+  // a spinner that would never resolve.
+  if (isError) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.surface }]}>
+        <EmptyState
+          icon="alert-circle"
+          title="Couldn't load this post"
+          body={error instanceof Error ? error.message : 'Something went wrong.'}
+          actionLabel="Try again"
+          onAction={() => refetch()}
+        />
+      </View>
     );
   }
 
@@ -97,8 +115,13 @@ export default function EditCaption() {
           screen than writing it the first time, and it keeps the actual post
           in view instead of just a bare text box. */}
       <View style={styles.captionRow}>
+        {/* The small derivative, not the full-size original -- this is a
+            72pt box, and pulling several megabytes through it just to
+            downscale them costs a visible beat on the edit screen.
+            photoThumbUrl falls back to image_path for posts made before
+            thumbnails existed. */}
         <Image
-          source={photoUrl(post.image_path)}
+          source={photoThumbUrl(post)}
           style={[styles.thumb, { backgroundColor: colors.imagePlaceholder }]}
           contentFit="cover"
         />

@@ -23,10 +23,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        setSession(data.session);
+      })
+      // A rejection here (corrupted AsyncStorage, a token refresh with no
+      // network) used to mean setLoading(false) never ran at all, leaving the
+      // app on its bootstrap spinner forever with no way out but a force
+      // quit. Failing to read a session is the same outcome as not having
+      // one -- fall through to signed-out and let the guard route to sign-in.
+      .catch(() => setSession(null))
+      .finally(() => setLoading(false));
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
@@ -42,9 +50,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     let cancelled = false;
-    loadProfile(userId).then((p) => {
-      if (!cancelled) setProfile(p);
-    });
+    loadProfile(userId)
+      .then((p) => {
+        if (!cancelled) setProfile(p);
+      })
+      .catch(() => {
+        if (!cancelled) setProfile(null);
+      });
     return () => {
       cancelled = true;
     };
