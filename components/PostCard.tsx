@@ -406,7 +406,7 @@ function PostCardImpl({
 
       {/* Meta */}
       <View style={styles.meta}>
-        {likeCount > 0 ? (
+        {likeCount !== 0 ? (
           <Text
             style={[typography.bodyStrong, { color: colors.text }]}
             onPress={handlePressLikes}
