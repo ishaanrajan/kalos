@@ -17,13 +17,55 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import type { ListRenderItemInfo, StyleProp, ViewStyle } from 'react-native';
 import { Image } from 'expo-image';
-import { Asset, AssetField, MediaType, Query } from 'expo-media-library';
+import { Album, Asset, AssetField, MediaType, Query } from 'expo-media-library';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import Feather from '@expo/vector-icons/Feather';
 
-import { useTheme } from '../lib/theme';
+import { hairlineWidth, spacing, useTheme } from '../lib/theme';
+
+/**
+ * What the grid is currently listing. 'recents' and 'favorites' are both
+ * plain field predicates on Query (AssetField.IS_FAVORITE, no album
+ * involved) rather than PHAssetCollection smart albums -- expo-media-
+ * library's Album API only surfaces PHAssetCollectionType.album (regular,
+ * user-created albums); it never fetches .smartAlbum collections, so there
+ * is no Album object for Favorites/Recents/Camera Roll to filter by even
+ * though those are exactly what Instagram's own picker offers first. Recents
+ * needs no filter at all -- it's just every photo, newest first, which is
+ * already this grid's default query.
+ */
+type PhotoSource =
+  | { kind: 'recents' }
+  | { kind: 'favorites' }
+  | { kind: 'album'; id: string; title: string };
+
+function sourceLabel(source: PhotoSource): string {
+  switch (source.kind) {
+    case 'recents':
+      return 'Recents';
+    case 'favorites':
+      return 'Favorites';
+    case 'album':
+      return source.title;
+  }
+}
+
+function sameSource(a: PhotoSource, b: PhotoSource): boolean {
+  if (a.kind !== b.kind) return false;
+  return a.kind === 'album' && b.kind === 'album' ? a.id === b.id : true;
+}
 
 const COLUMNS = 4;
 const PAGE_SIZE = 60;
@@ -143,46 +185,98 @@ export interface PhotoLibraryGridProps {
 }
 
 export function PhotoLibraryGrid({ onPick, containerWidth, style }: PhotoLibraryGridProps) {
-  const { colors } = useTheme();
+  const { colors, typography } = useTheme();
+  const [source, setSource] = useState<PhotoSource>({ kind: 'recents' });
   const [assets, setAssets] = useState<Asset[]>([]);
   const [page, setPage] = useState(0);
   const [hasNextPage, setHasNextPage] = useState(true);
+  const [loading, setLoading] = useState(true);
   // The one cell currently resolving getInfo() after a tap -- shown with a
   // spinner in place of the thumbnail, and taps elsewhere are ignored while
   // it's set so a second tap can't race the first into the adjust step.
   const [pickingId, setPickingId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // null = not fetched yet (lazy -- most composer opens never touch the
+  // switcher, so there's no reason to pay Album.getAll() + a getTitle() per
+  // album on every single one).
+  const [albumOptions, setAlbumOptions] = useState<{ id: string; title: string }[] | null>(null);
+  const [albumsLoading, setAlbumsLoading] = useState(false);
   const loadingRef = useRef(false);
-  // Guards the very first page load against React's dev-mode double-invoke
-  // of effects.
-  const startedRef = useRef(false);
+  // Bumped on every source switch. loadPage captures the version it was
+  // called with and drops its results if the source has moved on by the time
+  // they arrive -- otherwise a slow in-flight load for the *previous* source
+  // (e.g. a big album, mid-network-bound iCloud fetches) could land after the
+  // switch and get appended onto the new source's results. Also subsumes the
+  // old dev-mode-double-invoke guard: StrictMode's extra mount just bumps the
+  // version again, and the first call's results get discarded the same way.
+  const sourceVersionRef = useRef(0);
 
-  const loadPage = useCallback(async (pageToLoad: number) => {
-    if (loadingRef.current) return;
-    loadingRef.current = true;
-    try {
-      const results = await new Query()
-        .eq(AssetField.MEDIA_TYPE, MediaType.IMAGE)
-        .orderBy({ key: AssetField.CREATION_TIME, ascending: false })
-        .limit(PAGE_SIZE)
-        .offset(pageToLoad * PAGE_SIZE)
-        .exe();
-      setAssets((prev) => (pageToLoad === 0 ? results : [...prev, ...results]));
-      setHasNextPage(results.length === PAGE_SIZE);
-      setPage(pageToLoad);
-    } finally {
-      loadingRef.current = false;
-    }
-  }, []);
+  const loadPage = useCallback(
+    async (pageToLoad: number) => {
+      if (loadingRef.current) return;
+      loadingRef.current = true;
+      const version = sourceVersionRef.current;
+      try {
+        let query = new Query().eq(AssetField.MEDIA_TYPE, MediaType.IMAGE);
+        if (source.kind === 'favorites') {
+          query = query.eq(AssetField.IS_FAVORITE, true);
+        } else if (source.kind === 'album') {
+          query = query.album(new Album(source.id));
+        }
+        const results = await query
+          .orderBy({ key: AssetField.CREATION_TIME, ascending: false })
+          .limit(PAGE_SIZE)
+          .offset(pageToLoad * PAGE_SIZE)
+          .exe();
+        if (version !== sourceVersionRef.current) return;
+        setAssets((prev) => (pageToLoad === 0 ? results : [...prev, ...results]));
+        setHasNextPage(results.length === PAGE_SIZE);
+        setPage(pageToLoad);
+      } finally {
+        if (version === sourceVersionRef.current) {
+          loadingRef.current = false;
+          setLoading(false);
+        }
+      }
+    },
+    [source]
+  );
 
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
+    sourceVersionRef.current += 1;
+    loadingRef.current = false; // abandon any in-flight load for the previous source
+    setAssets([]);
+    setHasNextPage(true);
+    setPage(0);
+    setLoading(true);
     void loadPage(0);
   }, [loadPage]);
 
   const onEndReached = useCallback(() => {
     if (hasNextPage) void loadPage(page + 1);
   }, [hasNextPage, page, loadPage]);
+
+  const openPicker = useCallback(() => {
+    setPickerOpen(true);
+    if (albumOptions !== null || albumsLoading) return;
+    setAlbumsLoading(true);
+    Album.getAll()
+      .then((albums) => Promise.all(albums.map(async (a) => ({ id: a.id, title: await a.getTitle() }))))
+      .then((withTitles) => {
+        withTitles.sort((a, b) => a.title.localeCompare(b.title));
+        setAlbumOptions(withTitles);
+      })
+      .catch(() => setAlbumOptions([]))
+      .finally(() => setAlbumsLoading(false));
+  }, [albumOptions, albumsLoading]);
+
+  const selectSource = useCallback(
+    (next: PhotoSource) => {
+      setPickerOpen(false);
+      if (!sameSource(source, next)) setSource(next);
+    },
+    [source]
+  );
 
   const handlePress = useCallback(
     (asset: Asset) => {
@@ -224,24 +318,110 @@ export function PhotoLibraryGrid({ onPick, containerWidth, style }: PhotoLibrary
   const keyExtractor = useCallback((item: Asset) => item.id, []);
 
   return (
-    <FlatList
-      data={assets}
-      renderItem={renderItem}
-      keyExtractor={keyExtractor}
-      numColumns={COLUMNS}
-      columnWrapperStyle={styles.row}
-      contentContainerStyle={styles.content}
-      style={[{ backgroundColor: colors.surface }, style]}
-      onEndReached={onEndReached}
-      onEndReachedThreshold={0.6}
-      showsVerticalScrollIndicator={false}
-      getItemLayout={getItemLayout}
-      initialNumToRender={24}
-      maxToRenderPerBatch={12}
-      updateCellsBatchingPeriod={50}
-      windowSize={5}
-      removeClippedSubviews
-    />
+    <View style={[{ backgroundColor: colors.surface }, style]}>
+      <Pressable
+        onPress={openPicker}
+        style={[styles.sourceRow, { borderBottomColor: colors.border }]}
+        hitSlop={8}
+      >
+        <Text style={[typography.bodyStrong, { color: colors.text }]}>{sourceLabel(source)}</Text>
+        <Feather
+          name="chevron-down"
+          size={16}
+          color={colors.text}
+          style={styles.sourceChevron}
+        />
+      </Pressable>
+
+      <FlatList
+        data={assets}
+        renderItem={renderItem}
+        keyExtractor={keyExtractor}
+        numColumns={COLUMNS}
+        columnWrapperStyle={styles.row}
+        contentContainerStyle={styles.content}
+        style={[styles.list, { backgroundColor: colors.surface }]}
+        onEndReached={onEndReached}
+        onEndReachedThreshold={0.6}
+        showsVerticalScrollIndicator={false}
+        getItemLayout={getItemLayout}
+        initialNumToRender={24}
+        maxToRenderPerBatch={12}
+        updateCellsBatchingPeriod={50}
+        windowSize={5}
+        removeClippedSubviews
+        ListEmptyComponent={
+          !loading ? (
+            <View style={styles.emptyState}>
+              <Text style={[typography.body, { color: colors.textSecondary }]}>
+                {source.kind === 'favorites' ? 'No favorites yet' : 'No photos here'}
+              </Text>
+            </View>
+          ) : null
+        }
+      />
+
+      <Modal
+        visible={pickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPickerOpen(false)}
+      >
+        <Pressable
+          style={[styles.backdrop, { backgroundColor: colors.scrim }]}
+          onPress={() => setPickerOpen(false)}
+          accessibilityLabel="Close"
+        />
+        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+          <ScrollView bounces={false}>
+            <SourceOption
+              label="Recents"
+              selected={source.kind === 'recents'}
+              onPress={() => selectSource({ kind: 'recents' })}
+            />
+            <SourceOption
+              label="Favorites"
+              selected={source.kind === 'favorites'}
+              onPress={() => selectSource({ kind: 'favorites' })}
+            />
+            {albumsLoading ? (
+              <ActivityIndicator style={styles.albumsLoading} color={colors.textSecondary} />
+            ) : null}
+            {(albumOptions ?? []).map((album) => (
+              <SourceOption
+                key={album.id}
+                label={album.title}
+                selected={source.kind === 'album' && source.id === album.id}
+                onPress={() => selectSource({ kind: 'album', id: album.id, title: album.title })}
+              />
+            ))}
+          </ScrollView>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+/** One row in the source-switcher sheet -- a label, and a checkmark on
+ * whatever's currently selected, matching the OS's own picker convention. */
+function SourceOption({
+  label,
+  selected,
+  onPress,
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const { colors, typography } = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.sourceOption, { borderBottomColor: colors.border }]}
+    >
+      <Text style={[typography.body, { color: colors.text }]}>{label}</Text>
+      {selected ? <Feather name="check" size={18} color={colors.accent} /> : null}
+    </Pressable>
   );
 }
 
@@ -317,6 +497,7 @@ function GridCell({
 const styles = StyleSheet.create({
   row: { gap: GUTTER },
   content: { gap: GUTTER },
+  list: { flex: 1 },
   image: { width: '100%', height: '100%' },
   pickingOverlay: {
     ...StyleSheet.absoluteFill,
@@ -327,6 +508,45 @@ const styles = StyleSheet.create({
   dimOverlay: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  sourceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+    borderBottomWidth: hairlineWidth,
+  },
+  sourceChevron: {
+    marginLeft: spacing.xs,
+  },
+  emptyState: {
+    paddingVertical: spacing.xxl,
+    alignItems: 'center',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+  },
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: '70%',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xl,
+  },
+  sourceOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderBottomWidth: hairlineWidth,
+  },
+  albumsLoading: {
+    paddingVertical: spacing.lg,
   },
 });
 
