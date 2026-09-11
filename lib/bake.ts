@@ -363,32 +363,20 @@ export async function prepareSource(
   const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 1 });
   const source: BakedImage = { uri: saved.uri, width: saved.width, height: saved.height };
 
-  // The preview comes off the same decoded ref rather than re-reading the
-  // file we just wrote. Previously the caller followed this with a separate
-  // downscaleForPreview(source.uri, ...), which decoded that 2560px JPEG
-  // twice more -- so a single crop confirmation cost four full decodes. Now
-  // it costs one.
-  const previewTarget = fitWithin(source, previewMaxEdge);
-  const previewRendered =
-    previewTarget.width === source.width && previewTarget.height === source.height
-      ? rendered
-      : await ImageManipulator.manipulate(rendered)
-          .resize(
-            previewTarget.width >= previewTarget.height
-              ? { width: previewTarget.width }
-              : { height: previewTarget.height },
-          )
-          .renderAsync();
+  // A fresh manipulate() pass off the file just written, not off `rendered`
+  // itself. `rendered` is a native ImageRef, and it turns out to be
+  // single-use: whichever operation touches it first -- saveAsync() above,
+  // or a further manipulate() call -- consumes its underlying image context,
+  // so a second use throws "ImageContextLostException: Image context has
+  // been lost" out of ImageFixOrientationTransformer. That used to be
+  // "optimized" into reusing `rendered` a second time here to build the
+  // preview, which crashed on essentially every crop confirmation (any time
+  // previewMaxEdge is smaller than the cropped source, i.e. almost always) --
+  // this is the "Could not use that photo" a lot of people hit. source.uri
+  // is already ≤maxEdge, so the extra decode this costs is cheap.
+  const preview = await downscaleForPreview(source.uri, previewMaxEdge);
 
-  const previewSaved = await previewRendered.saveAsync({
-    format: SaveFormat.JPEG,
-    compress: 0.9,
-  });
-
-  return {
-    source,
-    preview: { uri: previewSaved.uri, width: previewSaved.width, height: previewSaved.height },
-  };
+  return { source, preview };
 }
 
 /**
