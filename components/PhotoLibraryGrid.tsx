@@ -21,6 +21,7 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-
 import type { ListRenderItemInfo, StyleProp, ViewStyle } from 'react-native';
 import { Image } from 'expo-image';
 import { Asset, AssetField, MediaType, Query } from 'expo-media-library';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
 import { useTheme } from '../lib/theme';
 
@@ -29,20 +30,48 @@ const PAGE_SIZE = 60;
 const GUTTER = 1;
 
 /**
- * asset.getUri() is a native-bridge round trip per call. FlatList's own
- * windowing unmounts cells that scroll out of range (see `windowSize` below)
- * and remounts them from scratch on the way back in -- without a cache kept
- * outside any one cell's lifetime, scrolling back up over photos already
- * seen this session re-paid that round trip for every single one of them,
- * which is what "scrolling and it lags a lot" was: a burst of native calls
- * queued up behind every direction change.
+ * A grid cell only ever needs to show a photo at ~90pt. asset.getUri()
+ * hands back the *original* file, though -- a real camera roll is full of
+ * 12-48MP HEICs, and asking expo-image to decode one per cell for every
+ * photo scrolled past is what "scrolling back a lot feels like it's trying
+ * to render every photo and crashes" actually was: dozens of full-resolution
+ * decodes resident at once under a fast fling, with no ceiling that scales
+ * with library size. Instagram's own picker (and every other one) never
+ * touches the original for a grid tile -- it asks the OS for a thumbnail.
+ * expo-media-library's SDK 57 rewrite doesn't expose that (no
+ * getThumbnailUri, no targetSize), so this generates the equivalent once via
+ * ImageManipulator: a tiny on-disk JPEG, decoded once, from then on serving
+ * every re-view of that photo (scrolling back up, or opening the composer
+ * again this session) at a bounded ~2 KB-ish cost instead of a full decode.
  *
- * Module-level, not per-grid-instance -- the id -> uri mapping is stable for
- * the life of the app (an asset's uri doesn't change), so there's no reason
- * to lose it when this screen unmounts and pay for it again next time the
- * composer opens.
+ * Module-level, not per-grid-instance -- the id -> thumbnail-uri mapping is
+ * stable for the life of the app, so there's no reason to lose it when this
+ * screen unmounts and regenerate it next time the composer opens.
  */
 const uriCache = new Map<string, string>();
+
+/**
+ * ~2-3x a grid cell's on-screen size on the densest phones -- plenty sharp
+ * for a ~90pt tile, and small enough that decoding it is effectively free.
+ * A single-axis resize (not {width, height} together, which would stretch a
+ * non-square photo instead of preserving its aspect ratio -- see the same
+ * convention in lib/bake.ts) means a landscape photo's untouched axis can
+ * land a bit under this, which is fine: contentFit="cover" is already
+ * cropping the result into a square cell either way.
+ */
+const THUMB_EDGE = 320;
+
+async function resolveGridThumbnail(asset: Asset): Promise<string> {
+  const cached = uriCache.get(asset.id);
+  if (cached) return cached;
+  const original = await asset.getUri();
+  const rendered = await ImageManipulator.manipulate(original)
+    .resize({ width: THUMB_EDGE })
+    .renderAsync();
+  const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.6 });
+  uriCache.set(asset.id, saved.uri);
+  return saved.uri;
+}
 
 export interface PhotoLibraryGridProps {
   /** Fired the moment a photo's tapped. The grid doesn't track a "selected"
@@ -147,8 +176,10 @@ export function PhotoLibraryGrid({ onPick, containerWidth, style }: PhotoLibrary
       showsVerticalScrollIndicator={false}
       getItemLayout={getItemLayout}
       initialNumToRender={24}
-      maxToRenderPerBatch={24}
-      windowSize={9}
+      maxToRenderPerBatch={12}
+      updateCellsBatchingPeriod={50}
+      windowSize={5}
+      removeClippedSubviews
     />
   );
 }
@@ -184,10 +215,8 @@ function GridCell({
       return;
     }
     let cancelled = false;
-    asset
-      .getUri()
+    resolveGridThumbnail(asset)
       .then((resolved) => {
-        uriCache.set(asset.id, resolved);
         if (!cancelled) setUri(resolved);
       })
       .catch(() => undefined);
