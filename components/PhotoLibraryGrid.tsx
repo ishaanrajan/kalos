@@ -61,16 +61,77 @@ const uriCache = new Map<string, string>();
  */
 const THUMB_EDGE = 320;
 
-async function resolveGridThumbnail(asset: Asset): Promise<string> {
-  const cached = uriCache.get(asset.id);
-  if (cached) return cached;
+/**
+ * asset.getUri() sets isNetworkAccessAllowed = true on iOS -- for an older
+ * photo that's been iCloud-optimized off the device (the default once local
+ * storage fills up, so exactly the photos a fast scroll-back goes looking
+ * for), that's a real network download, not a fast local lookup, before the
+ * resize/encode below even starts.
+ *
+ * A fast fling mounts and unmounts many cells in quick succession. Without a
+ * cap, every one of them fired off its own getUri()+manipulate() chain
+ * immediately, and unmounting a cell doesn't cancel the native work already
+ * in flight -- so scrolling quickly could queue up dozens of concurrent
+ * iCloud downloads for photos already scrolled past, which then sat ahead of
+ * (and starved) the request for whatever's actually on screen now. That's
+ * "scroll fast and older photos never render": not a hang, a backlog with no
+ * fairness to what's currently visible.
+ *
+ * Fix: cap how many of these run at once, and -- since a cell that's been
+ * unmounted before its turn even comes up is a photo nobody's looking at
+ * anymore -- drop still-queued work for it instead of starting it.
+ */
+const MAX_CONCURRENT_THUMBNAILS = 3;
+let activeThumbnails = 0;
+const thumbnailQueue: Array<{
+  asset: Asset;
+  cancelled: { value: boolean };
+  resolve: (uri: string) => void;
+  reject: (e: unknown) => void;
+}> = [];
+
+function drainThumbnailQueue() {
+  while (activeThumbnails < MAX_CONCURRENT_THUMBNAILS && thumbnailQueue.length > 0) {
+    // LIFO, not FIFO: the most recently requested cell is the one most
+    // likely to still be on screen once a fling settles, so it should jump
+    // ahead of requests queued earlier in the same fling rather than wait
+    // behind a backlog of cells that have probably scrolled past by now.
+    const next = thumbnailQueue.pop()!;
+    if (next.cancelled.value) continue; // abandoned before its turn -- skip entirely
+    activeThumbnails++;
+    generateThumbnail(next.asset)
+      .then(next.resolve, next.reject)
+      .finally(() => {
+        activeThumbnails--;
+        drainThumbnailQueue();
+      });
+  }
+}
+
+async function generateThumbnail(asset: Asset): Promise<string> {
   const original = await asset.getUri();
   const rendered = await ImageManipulator.manipulate(original)
     .resize({ width: THUMB_EDGE })
     .renderAsync();
   const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.6 });
-  uriCache.set(asset.id, saved.uri);
   return saved.uri;
+}
+
+function resolveGridThumbnail(asset: Asset, cancelled: { value: boolean }): Promise<string> {
+  const cached = uriCache.get(asset.id);
+  if (cached) return Promise.resolve(cached);
+  return new Promise<string>((resolve, reject) => {
+    thumbnailQueue.push({
+      asset,
+      cancelled,
+      resolve: (uri) => {
+        uriCache.set(asset.id, uri);
+        resolve(uri);
+      },
+      reject,
+    });
+    drainThumbnailQueue();
+  });
 }
 
 export interface PhotoLibraryGridProps {
@@ -214,14 +275,14 @@ function GridCell({
       setUri(cached);
       return;
     }
-    let cancelled = false;
-    resolveGridThumbnail(asset)
+    const cancelled = { value: false };
+    resolveGridThumbnail(asset, cancelled)
       .then((resolved) => {
-        if (!cancelled) setUri(resolved);
+        if (!cancelled.value) setUri(resolved);
       })
       .catch(() => undefined);
     return () => {
-      cancelled = true;
+      cancelled.value = true;
     };
   }, [asset]);
 
