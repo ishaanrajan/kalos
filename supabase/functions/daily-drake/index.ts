@@ -82,13 +82,22 @@ const PHOTOS = [
   'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-47.jpg',
 ];
 
-// A mix of three things, same categories the account owner asked for when
-// this pool was rewritten: real Drake lyrics/lines, meme references people
-// will actually recognize, and extremely flirty originals in the same
-// voice. A vague paraphrase ("started from the bottom, still here") reads as
-// nobody in particular; these are supposed to be unmistakably him.
+// A mix of three things, same categories the account owner asked for: real
+// Drake lyrics/lines, meme references people will actually recognize, and
+// extremely flirty originals in the same voice. The original short lines
+// ('no new friends, just new fits', 'in my feelings again', 'views from the
+// 6', 'prosecco o’clock', 'another one for the vibes', 'certified lover boy
+// behavior') stay -- those were never the problem. The one that got cut
+// ('started from the bottom, still here') was the one vague paraphrase in
+// the original set; everything added alongside it is meant to be
+// unmistakably him the way those already are.
 const CAPTIONS = [
-  'started from the bottom, now we’re here',
+  'no new friends, just new fits',
+  'certified lover boy behavior',
+  'in my feelings again',
+  'views from the 6',
+  'prosecco o’clock',
+  'another one for the vibes',
   'you used to call me on my cell phone',
   'kiki, do you love me? are you riding?',
   'I only love my bed and my momma, I’m sorry',
