@@ -82,14 +82,24 @@ const PHOTOS = [
   'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-47.jpg',
 ];
 
+// A mix of three things, same categories the account owner asked for when
+// this pool was rewritten: real Drake lyrics/lines, meme references people
+// will actually recognize, and extremely flirty originals in the same
+// voice. A vague paraphrase ("started from the bottom, still here") reads as
+// nobody in particular; these are supposed to be unmistakably him.
 const CAPTIONS = [
-  'started from the bottom, still here',
-  'no new friends, just new fits',
-  'certified lover boy behavior',
-  'in my feelings again',
-  'views from the 6',
-  'prosecco o’clock',
-  'another one for the vibes',
+  'started from the bottom, now we’re here',
+  'you used to call me on my cell phone',
+  'kiki, do you love me? are you riding?',
+  'I only love my bed and my momma, I’m sorry',
+  '0 to 100, real quick',
+  'know yourself, know your worth',
+  'you only live once: that’s the motto',
+  'worst behavior',
+  'certified lover boy, but you’d have to certify me first',
+  'no new friends, but I’d make an exception for you',
+  'views from the 6, but the 6 is wherever you are',
+  'take care -- of yourself, and maybe consider taking care of me too',
   null,
   null,
 ];
