@@ -72,6 +72,14 @@ const PHOTOS = [
   'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-37.jpg',
   'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-38.jpg',
   'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-39.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-40.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-41.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-42.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-43.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-44.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-45.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-46.jpg',
+  'https://snmnhlxletlgeorzwbvt.supabase.co/storage/v1/object/public/photos/b6d198a2-5079-4d94-a17d-298448e9da6d/source-47.jpg',
 ];
 
 const CAPTIONS = [
