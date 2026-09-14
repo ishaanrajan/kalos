@@ -132,7 +132,7 @@ function CommentRowImpl({
         {gif ? (
           <>
             <Text
-              style={[typography.bodyStrong, { color: colors.text }]}
+              style={[typography.bodyStrong, { color: colors.accent }]}
               onPress={handlePressAuthor}
               suppressHighlighting
             >
@@ -150,7 +150,7 @@ function CommentRowImpl({
         ) : (
           <Text style={[typography.body, { color: colors.text }]}>
             <Text
-              style={[typography.bodyStrong, { color: colors.text }]}
+              style={[typography.bodyStrong, { color: colors.accent }]}
               onPress={handlePressAuthor}
               suppressHighlighting
             >

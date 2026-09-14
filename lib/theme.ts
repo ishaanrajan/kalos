@@ -52,6 +52,11 @@ export const palette = {
   tabBarBackground: '#000000',
   tabBarIconActive: '#ffffff',
   tabBarIconInactive: '#8e8e8e',
+  /** Fixed header chrome, same "always this color, regardless of theme"
+   *  reasoning as the tab bar tokens above -- 2015 Instagram's top bar was
+   *  the same blue as its camera button, not a whited-out theme surface. */
+  headerBackground: '#3897f0',
+  headerIcon: '#ffffff',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -161,16 +166,23 @@ export const fontFamily: string | undefined = Platform.select({
  * reads wrong for the one piece of hand-lettered logotype a 2015 user would
  * have actually seen.
  *
+ * iOS gets the named `-Black` cut of Snell Roundhand specifically, not the
+ * base face plus a numeric `fontWeight` -- RN's weight-matching machinery is
+ * unreliable for non-standard system faces like this one, and iOS itself
+ * exposes the heavier cuts as distinct PostScript names rather than a
+ * weight axis. The logo's strokes are meant to read as thick, hand-lettered
+ * script, not the thin default cut.
+ *
  * 'cursive' is one of Android's generic font family names (alongside
  * 'sans-serif'/'serif'/'monospace') -- it resolves to whatever script face
- * the device ships, same idea as iOS's named system font below, just an
+ * the device ships, same idea as iOS's named system font above, just an
  * alias instead of a specific face. An earlier version of this left Android
  * out of the Platform.select entirely, which silently fell through to
  * `default: fontFamily` -- the wordmark rendered in plain Helvetica Neue on
  * Android with no error to notice it by.
  */
 export const wordmarkFontFamily: string | undefined = Platform.select({
-  ios: 'Snell Roundhand',
+  ios: 'Snell Roundhand-Black',
   android: 'cursive',
   web: '"Segoe Script", "Bradley Hand", cursive',
   default: fontFamily,

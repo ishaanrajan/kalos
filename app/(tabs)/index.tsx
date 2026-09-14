@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, StyleShe
 import { useFocusEffect, useRouter, useScrollToTop } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { setStatusBarStyle } from 'expo-status-bar';
 import { PostCard } from '../../components/PostCard';
 import { EndOfFeed } from '../../components/EndOfFeed';
 import { EmptyState } from '../../components/EmptyState';
@@ -10,7 +11,7 @@ import { useDeletePost, useHasUnreadDMs, useHomeFeed, useToggleLike } from '../.
 import { photoUrl, avatarUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
 import { confirmDestructive, showActionSheet } from '../../lib/actionSheet';
-import { useTheme } from '../../lib/theme';
+import { palette, useTheme } from '../../lib/theme';
 import * as Linking from 'expo-linking';
 import { useMusic } from '../../lib/audio';
 import type { FeedPost } from '../../lib/types';
@@ -54,6 +55,21 @@ export default function Feed() {
   // top, matching standard tab-bar behavior -- this hook listens for that
   // "already focused" tab press itself, no manual wiring in _layout.tsx.
   useScrollToTop(listRef);
+
+  // Home's header is a fixed blue regardless of theme (see palette.headerBackground),
+  // so it needs light status bar content specifically while this tab is
+  // focused -- every other screen keeps app/_layout.tsx's theme-driven
+  // "auto". Imperative rather than a declarative <StatusBar> here: Home
+  // stays mounted in the background when another tab is selected (React
+  // Navigation doesn't unmount tab screens on blur), so a mount-based
+  // override would never hand control back to "auto" on tab switch. Focus
+  // effects fire on blur too, which is what actually reverts it.
+  useFocusEffect(
+    useCallback(() => {
+      setStatusBarStyle('light');
+      return () => setStatusBarStyle('auto');
+    }, [])
+  );
 
   const posts = useMemo(() => data?.pages.flat() ?? [], [data]);
 
@@ -204,13 +220,18 @@ export default function Feed() {
   }
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+    <SafeAreaView style={[styles.root, { backgroundColor: palette.headerBackground }]} edges={['top']}>
+      {/* Fixed blue, not theme-driven -- same reasoning as the tab bar
+          (palette.headerBackground's own doc comment): 2015 Instagram's top
+          bar didn't whiten out in light mode or blacken out in dark mode,
+          it was just always this blue. No visible seam under it either, so
+          the border color matches rather than using colors.border. */}
+      <View style={[styles.header, { backgroundColor: palette.headerBackground, borderBottomColor: palette.headerBackground }]}>
         {/* Empty spacer, same width as the one on the right -- keeps the
             wordmark centered now that this side has no icon. The bottom tab
             bar's camera tab already goes to the same place this one did. */}
         <View style={styles.headerSpacer} />
-        <Text style={[styles.wordmark, { color: colors.text, fontFamily: wordmarkFontFamily }]}>
+        <Text style={[styles.wordmark, { color: palette.headerIcon, fontFamily: wordmarkFontFamily }]}>
           Kalos
         </Text>
         <View style={styles.headerSpacer}>
@@ -220,8 +241,10 @@ export default function Feed() {
             accessibilityRole="button"
             accessibilityLabel={hasUnreadDMs ? 'Messages, unread' : 'Messages'}
           >
-            <Feather name="inbox" size={22} color={colors.text} />
-            {hasUnreadDMs ? <View style={[styles.dot, { backgroundColor: colors.heart, borderColor: colors.surface }]} /> : null}
+            <Feather name="inbox" size={22} color={palette.headerIcon} />
+            {hasUnreadDMs ? (
+              <View style={[styles.dot, { backgroundColor: colors.heart, borderColor: palette.headerBackground }]} />
+            ) : null}
           </Pressable>
         </View>
       </View>
@@ -289,7 +312,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerSpacer: { width: 24, alignItems: 'flex-end' },
-  wordmark: { fontSize: 24, fontWeight: '300', letterSpacing: 0.5 },
+  // '700' is what actually thickens the strokes on Android/web, where
+  // wordmarkFontFamily resolves to a real weight-able font ('cursive'/Segoe
+  // Script) -- iOS ignores this and gets its thickness from the specific
+  // 'Snell Roundhand-Black' font name instead (see lib/theme.ts).
+  wordmark: { fontSize: 24, fontWeight: '700', letterSpacing: 0.5 },
   dot: {
     position: 'absolute',
     top: -1,

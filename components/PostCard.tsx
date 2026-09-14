@@ -367,7 +367,7 @@ function PostCardImpl({
             name. */}
         <View style={styles.headerText}>
           <Text
-            style={[typography.username, { color: colors.text }]}
+            style={[typography.username, { color: colors.accent }]}
             numberOfLines={1}
             onPress={handlePressAuthor}
             suppressHighlighting
@@ -487,7 +487,7 @@ function PostCardImpl({
               numberOfLines={captionExpanded ? undefined : captionNumberOfLines}
             >
               <Text
-                style={[typography.bodyStrong, { color: colors.text }]}
+                style={[typography.bodyStrong, { color: colors.accent }]}
                 onPress={handlePressAuthor}
                 suppressHighlighting
               >
@@ -541,7 +541,7 @@ function PostCardImpl({
             onPress={handlePressComments}
             suppressHighlighting
           >
-            <Text style={[typography.bodyStrong, { color: colors.text }]}>
+            <Text style={[typography.bodyStrong, { color: colors.accent }]}>
               {comment.username}
             </Text>
             {'  '}
