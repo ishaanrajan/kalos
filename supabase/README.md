@@ -75,6 +75,7 @@ so re-applying a file after a tweak is safe.
 | `0027_dm_peer_sandbox.sql` | `dm_peer_pairs` — sandboxed peer-to-peer DMs between two non-hub accounts, starting with `alex` ↔ `cmcclel7`. RLS + `my_dm_thread_previews()` updated to recognize an allowlisted pair; add more later with a plain insert |
 | `0028_music_everyone.sql` | Repeals `0025_music_ishaan_only.sql` — `posts_insert_own` goes back to a plain ownership check, so any account can post with music |
 | `0029_comment_gif.sql` | `comments.gif` — GIF-only comments via GIPHY (see `lib/giphy.ts`). `comments.body` becomes nullable; `home_feed`/`activity_feed` coalesce a GIF comment's preview text to `[GIF]` |
+| `0030_fix_drake_comment_reply_cron.sql` | Reschedules `drake-comment-reply-flush-every-minute`, which had silently stopped running — re-run if that job ever goes quiet again |
 
 ### Option A — SQL editor (no tooling required)
 
