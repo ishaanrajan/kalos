@@ -128,10 +128,14 @@ async function resolve(payload: WebhookPayload): Promise<Notification[]> {
       const notifications: Notification[] = [];
 
       if (post.author_id !== r.author_id) {
+        // r.body is null for a GIF-only comment (0029_comment_gif.sql) --
+        // truncate() assumes a string, so this has to be guarded before it
+        // ever reaches that call, not just at display time on the client.
+        const commentText = r.body != null ? truncate(r.body, 100) : 'sent a GIF';
         notifications.push({
           recipientId: post.author_id,
           title: 'Kalos',
-          body: `${commenterUsername}: ${truncate(r.body, 100)}`,
+          body: `${commenterUsername}: ${commentText}`,
           url: `/post/${r.post_id}`,
         });
       }

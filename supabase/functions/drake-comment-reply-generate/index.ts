@@ -48,7 +48,12 @@ const MAX_DELAY_SECONDS = 180;
 // separately).
 const MENTION_RE = /@([a-z0-9._]{3,30})/gi;
 
-function mentionsUsername(body: string, username: string): boolean {
+function mentionsUsername(body: string | null, username: string): boolean {
+  // body is null for a GIF-only comment (0029_comment_gif.sql) -- this
+  // webhook fires for every comment insert, not just ones that mention the
+  // bot, so a GIF comment reaching here with no guard would throw before
+  // the mention check itself ever runs.
+  if (!body) return false;
   for (const match of body.matchAll(MENTION_RE)) {
     if (match[1].toLowerCase() === username.toLowerCase()) return true;
   }
@@ -151,7 +156,11 @@ Deno.serve(async (req) => {
     .reverse()
     .map((c) => ({
       role: c.author_id === bot.id ? ('assistant' as const) : ('user' as const),
-      content: c.body,
+      // c.body is null for a GIF-only comment (0029_comment_gif.sql) --
+      // Claude's API rejects a null content turn, and this thread's history
+      // can easily contain one even when it's not the comment that
+      // triggered this reply.
+      content: c.body ?? '[GIF]',
     }));
   // Claude rejects a conversation that doesn't start on a user turn. Drake's
   // own sporadic comment (drake-comment) can easily be the first comment on
