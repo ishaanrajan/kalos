@@ -33,8 +33,12 @@ export default function Explore() {
   const posts = useMemo(() => data?.pages.flat() ?? [], [data]);
 
   // The search bar is the only way into /search that isn't the DM compose
-  // button -- it stays reachable even while the photo grid itself is locked,
-  // so a locked-out day doesn't cut someone off from the rest of the app.
+  // button. It stays reachable through the *daily* re-lock (needsPostToday)
+  // -- a locked-out day shouldn't cut someone off from the rest of the app
+  // -- but not through the one-time 5-post threshold (needsMorePosts):
+  // that's a brand-new-account gate, not a daily nudge, so it blocks search
+  // too until it's cleared. See the `locked` branch below for where this
+  // distinction is actually applied.
   const searchBar = (
     <Pressable
       style={[styles.searchBar, { backgroundColor: colors.surfaceAlt }]}
@@ -65,7 +69,7 @@ export default function Explore() {
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.text }]}>Explore</Text>
         </View>
-        {searchBar}
+        {needsMorePosts ? null : searchBar}
         <EmptyState
           icon="lock"
           title="Explore is locked"
