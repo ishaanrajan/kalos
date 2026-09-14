@@ -220,7 +220,7 @@ export default function Feed() {
             accessibilityRole="button"
             accessibilityLabel={hasUnreadDMs ? 'Messages, unread' : 'Messages'}
           >
-            <Feather name="send" size={22} color={colors.text} />
+            <Feather name="inbox" size={22} color={colors.text} />
             {hasUnreadDMs ? <View style={[styles.dot, { backgroundColor: colors.heart, borderColor: colors.surface }]} /> : null}
           </Pressable>
         </View>
