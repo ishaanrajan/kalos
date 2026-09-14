@@ -72,6 +72,9 @@ so re-applying a file after a tweak is safe.
 | `0019_drake_reply.sql` | `drake_pending_replies` + a `pg_cron` schedule that flushes it every minute — see [Drake replies](#drake-replies) below |
 | `0020_drake_reply_thread_with_id.sql` | Adds `drake_pending_replies.thread_with_id` — a queued reply now preserves its real thread identity instead of assuming `thread_with_id` is always the bot's own id, which broke ishaan's thread with Drake specifically (see the note in [Drake replies](#drake-replies)) |
 | `0021_activity_mentions.sql` | `activity_feed()` gains a `'mention'` kind — a live scan over `comments` for `@you`, on any post, not just your own. Backfills automatically since nothing is stored, it's a query |
+| `0027_dm_peer_sandbox.sql` | `dm_peer_pairs` — sandboxed peer-to-peer DMs between two non-hub accounts, starting with `alex` ↔ `cmcclel7`. RLS + `my_dm_thread_previews()` updated to recognize an allowlisted pair; add more later with a plain insert |
+| `0028_music_everyone.sql` | Repeals `0025_music_ishaan_only.sql` — `posts_insert_own` goes back to a plain ownership check, so any account can post with music |
+| `0029_comment_gif.sql` | `comments.gif` — GIF-only comments via GIPHY (see `lib/giphy.ts`). `comments.body` becomes nullable; `home_feed`/`activity_feed` coalesce a GIF comment's preview text to `[GIF]` |
 
 ### Option A — SQL editor (no tooling required)
 
@@ -144,6 +147,24 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOi...   # anon / public
 The `EXPO_PUBLIC_*` pair is what the app itself uses; the unprefixed pair is
 what the seed script uses. Keeping them separate makes it obvious which key is
 allowed to reach the device.
+
+### External APIs
+
+Two third-party catalogs are searched directly from the device rather than
+through an Edge Function -- see the doc comments in `lib/music.ts` and
+`lib/giphy.ts` for why (mainly: per-IP/per-key rate limits that a shared
+server-side budget would exhaust immediately).
+
+- **Music** (`lib/music.ts`) — Apple's iTunes Search API. Free, unauthenticated,
+  no env var needed.
+- **GIF comments** (`lib/giphy.ts`, `0029_comment_gif.sql`) — GIPHY's search
+  API. Needs a free key from <https://developers.giphy.com>, added to `.env` as:
+  ```dotenv
+  EXPO_PUBLIC_GIPHY_API_KEY=...
+  ```
+  GIPHY's own docs expect this key to ship client-side, same as the Supabase
+  anon key above. Without it, GIF search fails with a normal error message
+  in the picker (not a crash).
 
 ---
 

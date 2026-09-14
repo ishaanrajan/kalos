@@ -44,16 +44,68 @@ export interface Post {
   caption: string | null;
   /** Name of the filter applied at capture time, e.g. "Valencia". */
   filter_name: string | null;
+  /** Track attached at capture time, or null. Chosen once, like the filter. */
+  music: PostMusic | null;
   like_count: number;
   comment_count: number;
   created_at: Timestamp;
 }
 
+/**
+ * A track attached to a post.
+ *
+ * Stored in Postgres as a single jsonb column (see 0024_post_music.sql) rather
+ * than a spread of nullable scalars, so a post either has complete music or
+ * none -- there is no half-attached state for the UI to defend against.
+ *
+ * The audio is a 30-second preview hosted by Apple. `start_ms` is the offset
+ * into that preview where this post's clip begins; the clip runs for
+ * MUSIC_CLIP_SECONDS and loops for as long as the post is on screen.
+ */
+export interface PostMusic {
+  /** Catalog-native id, kept as a string so a future catalog isn't forced to use ints. */
+  track_id: string;
+  title: string;
+  artist: string;
+  artwork_url: string | null;
+  /** Streamed, never downloaded to disk -- Apple licenses previews for streaming. */
+  preview_url: string;
+  /** The track's Store page. Attribution requires it be reachable from the post. */
+  store_url: string;
+  start_ms: number;
+}
+
+/** How much of a track's preview plays on a post. */
+export const MUSIC_CLIP_SECONDS = 15;
+
+/**
+ * A GIF attached to a comment, from GIPHY (see lib/giphy.ts).
+ *
+ * Stored as one jsonb column on comments, same reasoning as PostMusic: a
+ * comment either has a complete GIF or it has none (see
+ * 0029_comment_gif.sql's comments_gif_shape). `url` is a size-capped asset
+ * suitable for a comment row, not GIPHY's full-resolution original;
+ * `preview_url` a small static/looping still for a fast first paint;
+ * `width`/`height` describe `url` and drive CommentRow's aspect ratio.
+ */
+export interface CommentGif {
+  giphy_id: string;
+  url: string;
+  preview_url: string;
+  width: number;
+  height: number;
+}
+
+/**
+ * A comment is either typed text or a GIF sticker -- never both, never
+ * neither (enforced by comments_content_shape in 0029_comment_gif.sql).
+ */
 export interface Comment {
   id: UUID;
   post_id: UUID;
   author_id: UUID;
-  body: string;
+  body: string | null;
+  gif: CommentGif | null;
   created_at: Timestamp;
   author?: Pick<Profile, 'id' | 'username' | 'avatar_path'>;
 }

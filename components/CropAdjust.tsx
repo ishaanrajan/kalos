@@ -17,34 +17,51 @@ import { forwardRef, useImperativeHandle, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withDelay,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import type { CropRect, ImageSize } from '../lib/types';
 
 const MAX_ZOOM = 4;
 
 export interface CropAdjustHandle {
-  /** The currently framed region, in the original photo's own pixel space. */
-  getCropRect: () => CropRect;
+  /**
+   * The currently framed region, in the pixel space of `into`.
+   *
+   * The dimensions are a parameter rather than being taken from the `natural`
+   * prop because the image on screen is frequently *not* the file the crop
+   * will be applied to. The library picker hands this component a `ph://`
+   * asset, which expo-image renders by asking PhotoKit for a screen-sized
+   * copy -- so nothing on this side of the screen knows the original's real
+   * pixel count until the asset's info is resolved, which only happens once
+   * the user commits. Internally the framed region is worked out as a
+   * fraction of the displayed image, which is true regardless of how big the
+   * thing being displayed happens to be, and only converted to pixels here.
+   */
+  getCrop: (into: ImageSize) => CropRect;
 }
 
 export interface CropAdjustProps {
   /** Doesn't need to be full-resolution -- this is a live gesture surface,
-   * not the bake source. The composer preview copy is plenty. */
+   * not the bake source. The composer preview copy (or a `ph://` asset the
+   * picker hasn't resolved to a file yet) is plenty. */
   uri: string;
-  /** The photo's real pixel dimensions -- the crop rect this exposes is in this space. */
+  /** Only the *ratio* of this is used, to shape the image against the frame.
+   * An estimate is fine; `onImageLoad` below is how a wrong one gets fixed. */
   natural: ImageSize;
   /** Width/height of the visible frame, in points. */
   frame: ImageSize;
+  /**
+   * The dimensions expo-image reports for what it actually decoded. Media
+   * library metadata can disagree with the pixels (Android's MediaStore
+   * stores pre-rotation width/height for EXIF-rotated photos), and a frame
+   * built from a transposed ratio letterboxes a photo that would otherwise
+   * fill it. Callers that can't be sure of `natural` should feed this back in.
+   */
+  onImageLoad?: (size: ImageSize) => void;
 }
 
 export const CropAdjust = forwardRef<CropAdjustHandle, CropAdjustProps>(function CropAdjust(
-  { uri, natural, frame },
+  { uri, natural, frame, onImageLoad },
   ref
 ) {
   // "Cover" baseline: the smallest size, at scale 1, that fully fills the
@@ -63,12 +80,6 @@ export const CropAdjust = forwardRef<CropAdjustHandle, CropAdjustProps>(function
   const startScale = useSharedValue(1);
   const startX = useSharedValue(0);
   const startY = useSharedValue(0);
-  // Rule-of-thirds lines, shown only while a gesture is actually live -- a
-  // static overlay reads as decoration; one that appears with your finger
-  // reads as the tool telling you it's tracking you, the same cue every
-  // native photo-crop UI gives.
-  const gridOpacity = useSharedValue(0);
-
   // How far the image can be panned off-center, in points, at the given
   // scale, before its own edge would enter the frame.
   function maxOffset(s: number) {
@@ -83,21 +94,16 @@ export const CropAdjust = forwardRef<CropAdjustHandle, CropAdjustProps>(function
     .onStart(() => {
       startX.value = translateX.value;
       startY.value = translateY.value;
-      gridOpacity.value = withTiming(1, { duration: 120 });
     })
     .onUpdate((e) => {
       const m = maxOffset(scale.value);
       translateX.value = Math.min(m.x, Math.max(-m.x, startX.value + e.translationX));
       translateY.value = Math.min(m.y, Math.max(-m.y, startY.value + e.translationY));
-    })
-    .onFinalize(() => {
-      gridOpacity.value = withDelay(200, withTiming(0, { duration: 250 }));
     });
 
   const pinch = Gesture.Pinch()
     .onStart(() => {
       startScale.value = scale.value;
-      gridOpacity.value = withTiming(1, { duration: 120 });
     })
     .onUpdate((e) => {
       scale.value = Math.max(1, Math.min(MAX_ZOOM, startScale.value * e.scale));
@@ -107,9 +113,6 @@ export const CropAdjust = forwardRef<CropAdjustHandle, CropAdjustProps>(function
       const m = maxOffset(scale.value);
       translateX.value = Math.min(m.x, Math.max(-m.x, translateX.value));
       translateY.value = Math.min(m.y, Math.max(-m.y, translateY.value));
-    })
-    .onFinalize(() => {
-      gridOpacity.value = withDelay(200, withTiming(0, { duration: 250 }));
     });
 
   // A quick double-tap resets to the "cover" baseline -- the one thing a
@@ -137,46 +140,69 @@ export const CropAdjust = forwardRef<CropAdjustHandle, CropAdjustProps>(function
     ],
   }));
 
-  const gridStyle = useAnimatedStyle(() => ({ opacity: gridOpacity.value }));
-
   useImperativeHandle(
     ref,
     () => ({
-      getCropRect: () => {
+      getCrop: (into: ImageSize) => {
         // A plain JS read, not a worklet -- this runs once, from the "Next"
         // button's press handler, not per gesture frame. Shared values are
         // just as readable from the JS thread as from a worklet.
         const s = scale.value;
         const displayedW = base.width * s;
         const displayedH = base.height * s;
-        const scaleToSource = natural.width / displayedW;
+        // Where the frame sits over the image, as a fraction of the image's
+        // own extent. Clamped because a rounded pixel of overhang here
+        // becomes an out-of-bounds crop rect in the native manipulator.
+        const x = clamp01((displayedW / 2 - frame.width / 2 - translateX.value) / displayedW);
+        const y = clamp01((displayedH / 2 - frame.height / 2 - translateY.value) / displayedH);
+        const width = Math.min(1 - x, frame.width / displayedW);
+        const height = Math.min(1 - y, frame.height / displayedH);
         return {
-          x: (displayedW / 2 - frame.width / 2 - translateX.value) * scaleToSource,
-          y: (displayedH / 2 - frame.height / 2 - translateY.value) * scaleToSource,
-          width: frame.width * scaleToSource,
-          height: frame.height * scaleToSource,
+          x: Math.round(x * into.width),
+          y: Math.round(y * into.height),
+          width: Math.round(width * into.width),
+          height: Math.round(height * into.height),
         };
       },
     }),
-    [base.width, base.height, frame.width, frame.height, natural.width, scale, translateX, translateY]
+    [base.width, base.height, frame.width, frame.height, scale, translateX, translateY]
   );
 
   return (
     <View style={[styles.frame, { width: frame.width, height: frame.height }]}>
       <GestureDetector gesture={gesture}>
         <Animated.View style={imageStyle}>
-          <Image source={uri} style={styles.image} contentFit="fill" />
+          <Image
+            source={uri}
+            style={styles.image}
+            contentFit="fill"
+            onLoad={
+              onImageLoad
+                ? (e) => onImageLoad({ width: e.source.width, height: e.source.height })
+                : undefined
+            }
+          />
         </Animated.View>
       </GestureDetector>
-      <Animated.View style={[styles.gridOverlay, gridStyle]} pointerEvents="none">
+      {/* A constant rule-of-thirds guide, not gesture-gated -- it used to
+          only fade in while a pan/pinch was actively in progress, which
+          meant anyone who tapped through this screen without dragging or
+          pinching never saw it at all. Every native photo-crop UI shows
+          this line the whole time you're framing, not just while your
+          finger is down. */}
+      <View style={styles.gridOverlay} pointerEvents="none">
         <View style={[styles.gridLine, styles.gridLineV, { left: '33.333%' }]} />
         <View style={[styles.gridLine, styles.gridLineV, { left: '66.666%' }]} />
         <View style={[styles.gridLine, styles.gridLineH, { top: '33.333%' }]} />
         <View style={[styles.gridLine, styles.gridLineH, { top: '66.666%' }]} />
-      </Animated.View>
+      </View>
     </View>
   );
 });
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
 
 const styles = StyleSheet.create({
   frame: { overflow: 'hidden', backgroundColor: '#000' },

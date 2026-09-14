@@ -6,12 +6,17 @@
 import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
+import { Image } from 'expo-image';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
-import { spacing, useTheme } from '../lib/theme';
+import { radius, spacing, useTheme } from '../lib/theme';
 import type { Comment, Timestamp } from '../lib/types';
 import { Avatar } from './Avatar';
 import { MentionText } from './MentionText';
+
+/** A GIF comment's image is capped here regardless of its own aspect ratio,
+ *  so one very tall result can't push the rest of the thread off screen. */
+const GIF_MAX_HEIGHT = 240;
 
 export interface CommentRowProps {
   /** The comment, straight off the wire. `comment.author` supplies the username. */
@@ -86,6 +91,7 @@ function CommentRowImpl({
   const { colors, typography } = useTheme();
   const username = usernameOverride ?? comment.author?.username ?? 'someone';
   const body = comment.body;
+  const gif = comment.gif;
   const age = useMemo(() => formatCommentAge(comment.created_at), [comment.created_at]);
 
   // Bound to this row's comment here rather than at the call site, for the
@@ -111,7 +117,7 @@ function CommentRowImpl({
       onLongPress={handleLongPress}
       disabled={!handleLongPress}
       testID={testID}
-      accessibilityLabel={`${username}: ${body}`}
+      accessibilityLabel={gif ? `${username} sent a GIF` : `${username}: ${body}`}
       style={[styles.root, style]}
     >
       <Avatar
@@ -123,17 +129,37 @@ function CommentRowImpl({
       />
 
       <View style={styles.content}>
-        <Text style={[typography.body, { color: colors.text }]}>
-          <Text
-            style={[typography.bodyStrong, { color: colors.text }]}
-            onPress={handlePressAuthor}
-            suppressHighlighting
-          >
-            {username}
+        {gif ? (
+          <>
+            <Text
+              style={[typography.bodyStrong, { color: colors.text }]}
+              onPress={handlePressAuthor}
+              suppressHighlighting
+            >
+              {username}
+            </Text>
+            <Image
+              source={gif.url}
+              style={[
+                styles.gif,
+                { aspectRatio: gif.width / gif.height, backgroundColor: colors.imagePlaceholder },
+              ]}
+              contentFit="contain"
+            />
+          </>
+        ) : (
+          <Text style={[typography.body, { color: colors.text }]}>
+            <Text
+              style={[typography.bodyStrong, { color: colors.text }]}
+              onPress={handlePressAuthor}
+              suppressHighlighting
+            >
+              {username}
+            </Text>
+            {'  '}
+            <MentionText text={body ?? ''} mentionColor={colors.mention} onPressMention={onPressMention} />
           </Text>
-          {'  '}
-          <MentionText text={body} mentionColor={colors.mention} onPressMention={onPressMention} />
-        </Text>
+        )}
 
         {age ? (
           <Text style={[typography.timestamp, styles.age, { color: colors.textSecondary }]}>
@@ -187,6 +213,12 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     marginLeft: spacing.md,
+  },
+  gif: {
+    width: '100%',
+    maxHeight: GIF_MAX_HEIGHT,
+    marginTop: spacing.xs,
+    borderRadius: radius.sm,
   },
   age: {
     marginTop: spacing.xs + 1,

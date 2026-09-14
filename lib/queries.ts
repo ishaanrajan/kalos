@@ -7,11 +7,14 @@ import {
   type InfiniteData,
 } from '@tanstack/react-query';
 import { PHOTOS_BUCKET, supabase } from './supabase';
+import { searchTracks } from './music';
+import { searchGifs } from './giphy';
 import { useAuth, useUserId } from './auth';
 import {
   PAGE_SIZE,
   type ActivityEvent,
   type Comment,
+  type CommentGif,
   type DMMessage,
   type DMThreadSummary,
   type FeedPost,
@@ -176,6 +179,30 @@ export function useAddComment(postId: string) {
 }
 
 /**
+ * A GIF-only comment (0029_comment_gif.sql) -- a sibling to useAddComment
+ * rather than a union on it. The composer's draft-trim/restore-on-failure
+ * logic is tightly coupled to typed text and doesn't apply here (a failed
+ * GIF send just needs a retry, there's no draft to give back), so keeping
+ * the two mutations separate keeps both call sites simple.
+ */
+export function useAddGifComment(postId: string) {
+  const qc = useQueryClient();
+  const userId = useUserId();
+  return useMutation({
+    mutationFn: async (gif: CommentGif) => {
+      const { error } = await supabase
+        .from('comments')
+        .insert({ post_id: postId, author_id: userId!, body: null, gif });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['comments', postId] });
+      qc.invalidateQueries({ queryKey: ['post', postId] });
+    },
+  });
+}
+
+/**
  * Likes are optimistic: the heart fills the instant you tap it, and every
  * cached copy of that post across the feed and explore lists is patched in
  * place so the UI never flickers back.
@@ -298,6 +325,62 @@ export function useFollowList(profileId: string | undefined, kind: FollowListKin
       if (error) throw error;
 
       return (data ?? []).map((row) => row.profile) as unknown as ProfileSummary[];
+    },
+  });
+}
+
+export interface MutualFollowers {
+  /** Up to 3, newest connection first -- enough to name two and count the rest. */
+  people: ProfileSummary[];
+  total: number;
+}
+
+/**
+ * "Followed by X, Y and N others" on someone else's profile -- the
+ * intersection of "people the viewer follows" and "people who follow this
+ * profile". Two plain queries against `follows` (world-readable, see
+ * 0004_rls.sql) rather than a database function: the first is just the
+ * viewer's own following list, small at this app's scale; the second reuses
+ * useFollowList's own embed pattern with `.in()` added to intersect against
+ * it, and asks PostgREST for the exact total in the same request via
+ * `{ count: 'exact' }` instead of a separate COUNT query.
+ *
+ * No backfill, same rule as suggested_profiles: a viewer who follows nobody
+ * gets an empty result rather than a second query that would return nothing
+ * anyway.
+ */
+export function useMutualFollowers(targetId: string | undefined) {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: ['mutual-followers', targetId, userId],
+    // Never meaningful on your own profile -- follows_no_self means the
+    // intersection is always empty there, but there's no reason to spend a
+    // round trip confirming that.
+    enabled: !!targetId && !!userId && targetId !== userId,
+    queryFn: async (): Promise<MutualFollowers> => {
+      const { data: mine, error: mineError } = await supabase
+        .from('follows')
+        .select('followee_id')
+        .eq('follower_id', userId!);
+      if (mineError) throw mineError;
+      const followingIds = (mine ?? []).map((r) => r.followee_id);
+      if (followingIds.length === 0) return { people: [], total: 0 };
+
+      const { data, count, error } = await supabase
+        .from('follows')
+        .select('created_at, profile:profiles!follows_follower_id_fkey(id, username, display_name, avatar_path)', {
+          count: 'exact',
+        })
+        .eq('followee_id', targetId!)
+        .in('follower_id', followingIds)
+        .order('created_at', { ascending: false })
+        .limit(3);
+      if (error) throw error;
+
+      return {
+        people: (data ?? []).map((row) => row.profile) as unknown as ProfileSummary[],
+        total: count ?? 0,
+      };
     },
   });
 }
@@ -493,6 +576,41 @@ export function useSearchProfiles(q: string) {
 }
 
 /**
+ * Search the music catalog.
+ *
+ * Shaped like useSearchProfiles above, with two differences forced by the
+ * catalog being a rate-limited third party (lib/music.ts): callers must pass an
+ * already-debounced query, and results are held far longer than the app's
+ * 30-second default because a song's title and preview URL don't change. That
+ * long staleTime is what makes backspacing through a query free instead of
+ * spending another request per keystroke.
+ */
+export function useTrackSearch(q: string) {
+  return useQuery({
+    queryKey: ['track-search', q.trim()],
+    enabled: q.trim().length > 0,
+    // react-query aborts this signal when the query key changes, which cancels
+    // the in-flight request for a search the user has already typed past.
+    queryFn: ({ signal }) => searchTracks(q, signal),
+    staleTime: 60 * 60 * 1000,
+    retry: 0,
+  });
+}
+
+/** Search the GIF catalog. Mirrors useTrackSearch exactly -- same reasoning
+ *  (debounced by the caller, held long since results don't change, no retry
+ *  storm on a failed third-party search). */
+export function useGifSearch(q: string) {
+  return useQuery({
+    queryKey: ['gif-search', q.trim()],
+    enabled: q.trim().length > 0,
+    queryFn: ({ signal }) => searchGifs(q, signal),
+    staleTime: 60 * 60 * 1000,
+    retry: 0,
+  });
+}
+
+/**
  * Five accounts one hop further into the viewer's graph -- people followed by
  * people they follow, minus anyone already followed and the viewer
  * themselves. Shown under the search bar before a query is typed. Same
@@ -614,9 +732,29 @@ export function useDMInbox() {
 }
 
 /**
- * A regular user's own threads (ishaan, and the Drake bot), keyed by
- * thread_with_id, with a preview of the latest message in each if any.
- * Goes through `my_dm_thread_previews()` (0018) rather than fetching a
+ * Sandboxed peer-to-peer DM partners for the current user (0027) -- accounts
+ * outside the ishaan/Drake hub this user is explicitly allowlisted to DM
+ * directly. Empty for almost everyone; MyThreads renders one row per profile
+ * this returns, the same way it already does for ishaan and the bot.
+ */
+export function useDMPeers() {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: ['dm-peers', userId],
+    enabled: !!userId,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('my_dm_peers');
+      if (error) throw error;
+      return (data ?? []) as ProfileSummary[];
+    },
+  });
+}
+
+/**
+ * A regular user's own threads (ishaan, the Drake bot, and any sandboxed
+ * peers), keyed by the other participant's id, with a preview of the latest
+ * message in each if any. Goes through `my_dm_thread_previews()` (0018,
+ * broadened by 0027 to also cover peer threads) rather than fetching a
  * user's entire message history and reducing it client-side -- that used to
  * pull every row in both threads just to keep two preview lines.
  */
@@ -652,25 +790,24 @@ export function useMyDMThreads() {
  * (e.g. a Drake DM to a regular user) -- an unscoped unread count would pick
  * those up too, and since ishaan has no screen that can ever open or mark
  * read a thread he's not in, the badge would stay lit forever after the
- * first one. Scope explicitly instead of trusting RLS to do it: a regular
- * user only ever has unread messages in their own `thread_user_id` bucket;
- * ishaan only ever has unread messages in threads addressed to him.
+ * first one. Scoped explicitly instead of trusting RLS to do it, by matching
+ * either id column: for a regular user `thread_with_id.eq` only ever matches
+ * a sandboxed peer thread where they hold the larger id (0027) -- RLS itself
+ * still gates which rows actually come back, so this is a no-op for anyone
+ * without a peer thread, same as it always was.
  */
 export function useHasUnreadDMs() {
-  const { profile } = useAuth();
   const userId = useUserId();
-  const isIshaan = profile?.username === 'ishaan';
   return useQuery({
     queryKey: ['dm-unread', userId],
     enabled: !!userId,
     queryFn: async () => {
-      let query = supabase
+      const { count, error } = await supabase
         .from('dm_messages')
         .select('*', { count: 'exact', head: true })
         .is('read_at', null)
-        .neq('sender_id', userId!);
-      query = isIshaan ? query.eq('thread_with_id', userId!) : query.eq('thread_user_id', userId!);
-      const { count, error } = await query;
+        .neq('sender_id', userId!)
+        .or(`thread_with_id.eq.${userId},thread_user_id.eq.${userId}`);
       if (error) throw error;
       return (count ?? 0) > 0;
     },

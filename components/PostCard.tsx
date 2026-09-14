@@ -75,6 +75,22 @@ export interface PostCardProps {
   /** Tapping an @mention in the caption or a previewed comment. */
   onPressMention?: (username: string) => void;
 
+  /**
+   * Whether this card's track is the one the app is currently playing. The
+   * card owns no audio itself -- a single player lives in lib/audio.tsx and
+   * the screen decides which post it belongs to -- so this is purely how the
+   * card knows to show the mute control.
+   */
+  isMusicActive?: boolean;
+  /** Reflects the app-wide mute preference, not a per-post one. */
+  isMusicMuted?: boolean;
+  onToggleMusicMuted?: () => void;
+  /**
+   * Tapping the track pill. Opens the track's Store page: Apple licenses the
+   * previews we play on the condition they lead back to the store.
+   */
+  onPressMusic?: (post: FeedPost) => void;
+
   /** Shows the "View all N comments" line. Defaults to true. */
   showCommentPreview?: boolean;
   /** Comments rendered inline between the caption and the timestamp. */
@@ -192,6 +208,10 @@ function PostCardImpl({
   onPressOptions,
   onPressReason,
   onPressMention,
+  isMusicActive = false,
+  isMusicMuted = false,
+  onToggleMusicMuted,
+  onPressMusic,
   showCommentPreview = true,
   previewComments,
   captionNumberOfLines = 2,
@@ -210,6 +230,7 @@ function PostCardImpl({
     viewer_has_liked: liked,
     reason,
     reason_username: reasonUsername,
+    music,
   } = post;
 
   const aspectRatio = useMemo(
@@ -228,6 +249,7 @@ function PostCardImpl({
   const handlePressImage = useBoundToPost(onPressImage, post);
   const handlePressOptions = useBoundToPost(onPressOptions, post);
   const handlePressReason = useBoundToPost(onPressReason, post);
+  const handlePressMusic = useBoundToPost(onPressMusic, post);
 
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [captionOverflows, setCaptionOverflows] = useState(false);
@@ -340,8 +362,9 @@ function PostCardImpl({
           onPress={handlePressAuthor}
         />
 
-        {/* The line under the username is where a location would go, if this
-            ever grows one. It is deliberately not the filter name. */}
+        {/* The line under the username was held for a location. A track is
+            the thing that actually turned up. It is still not the filter
+            name. */}
         <View style={styles.headerText}>
           <Text
             style={[typography.username, { color: colors.text }]}
@@ -351,6 +374,25 @@ function PostCardImpl({
           >
             {authorUsername}
           </Text>
+
+          {music ? (
+            <Pressable
+              onPress={handlePressMusic}
+              disabled={!handlePressMusic}
+              hitSlop={6}
+              style={styles.musicRow}
+              accessibilityRole="link"
+              accessibilityLabel={`${music.title} by ${music.artist}. Open in the iTunes Store.`}
+            >
+              <Ionicons name="musical-notes" size={11} color={colors.textSecondary} />
+              <Text
+                style={[typography.timestamp, styles.musicText, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                {`${music.title} · ${music.artist}`}
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
 
         {handlePressOptions ? (
@@ -365,29 +407,51 @@ function PostCardImpl({
         ) : null}
       </View>
 
-      {/* Photo */}
-      <GestureDetector gesture={photoGesture}>
-        <View
-          style={[styles.photo, { aspectRatio, backgroundColor: colors.imagePlaceholder }]}
-          accessible
-          accessibilityRole="image"
-          accessibilityLabel={caption ?? `Photo by ${authorUsername}`}
-        >
-          <Image
-            source={imageUrl}
-            style={styles.photoImage}
-            contentFit="cover"
-            transition={180}
-            cachePolicy="memory-disk"
-            recyclingKey={postId}
-            accessible={false}
-          />
+      {/* Photo. The wrapper exists so the mute control can sit over the photo
+          without sitting *inside* the gesture surface -- a Pressable nested
+          under a GestureDetector has to race RNGH's tap recognizer for the
+          touch, and losing that race means the speaker sometimes likes the
+          post instead of muting it. */}
+      <View style={styles.photoWrap}>
+        <GestureDetector gesture={photoGesture}>
+          <View
+            style={[styles.photo, { aspectRatio, backgroundColor: colors.imagePlaceholder }]}
+            accessible
+            accessibilityRole="image"
+            accessibilityLabel={caption ?? `Photo by ${authorUsername}`}
+          >
+            <Image
+              source={imageUrl}
+              style={styles.photoImage}
+              contentFit="cover"
+              transition={180}
+              cachePolicy="memory-disk"
+              recyclingKey={postId}
+              accessible={false}
+            />
 
-          <Animated.View style={[styles.burst, burstStyle]} pointerEvents="none">
-            <Ionicons name="heart" size={BURST_SIZE} color="#ffffff" style={styles.burstIcon} />
-          </Animated.View>
-        </View>
-      </GestureDetector>
+            <Animated.View style={[styles.burst, burstStyle]} pointerEvents="none">
+              <Ionicons name="heart" size={BURST_SIZE} color="#ffffff" style={styles.burstIcon} />
+            </Animated.View>
+          </View>
+        </GestureDetector>
+
+        {isMusicActive && music ? (
+          <Pressable
+            onPress={onToggleMusicMuted}
+            hitSlop={10}
+            style={styles.muteButton}
+            accessibilityRole="button"
+            accessibilityLabel={isMusicMuted ? 'Unmute music' : 'Mute music'}
+          >
+            <Ionicons
+              name={isMusicMuted ? 'volume-mute' : 'volume-medium'}
+              size={14}
+              color="#ffffff"
+            />
+          </Pressable>
+        ) : null}
+      </View>
 
       {/* Actions */}
       <View style={styles.actions}>
@@ -533,6 +597,31 @@ const styles = StyleSheet.create({
   headerText: {
     flex: 1,
     marginLeft: spacing.md - 2,
+  },
+  musicRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 1,
+  },
+  musicText: {
+    marginLeft: spacing.xs - 1,
+    flexShrink: 1,
+  },
+  muteButton: {
+    position: 'absolute',
+    right: spacing.sm,
+    bottom: spacing.sm,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Fixed scrim rather than a theme colour: it sits on a photo, not on the
+    // card, so it has to stay legible over both a white sky and a black one.
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+  },
+  photoWrap: {
+    width: '100%',
   },
   photo: {
     width: '100%',

@@ -5,7 +5,7 @@ import { Avatar } from '../../components/Avatar';
 import { useExploreLockState, useHasUnreadActivity } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import { avatarUrl } from '../../lib/supabase';
-import { useTheme } from '../../lib/theme';
+import { palette, useTheme } from '../../lib/theme';
 
 function ActivityTabIcon({ color, size }: { color: ColorValue; size: number }) {
   const hasUnread = useHasUnreadActivity();
@@ -48,15 +48,16 @@ function ProfileTabIcon({ color, size }: { color: ColorValue; size: number }) {
 }
 
 export default function TabsLayout() {
-  const { colors } = useTheme();
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
-        tabBarActiveTintColor: colors.text,
-        tabBarInactiveTintColor: colors.textSecondary,
-        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        // Fixed, not theme-driven: this bar is meant to look like 2015
+        // Instagram's black bar regardless of the phone's light/dark setting.
+        tabBarActiveTintColor: palette.tabBarIconActive,
+        tabBarInactiveTintColor: palette.tabBarIconInactive,
+        tabBarStyle: { backgroundColor: palette.tabBarBackground, borderTopColor: palette.tabBarBackground },
       }}
     >
       <Tabs.Screen
@@ -69,7 +70,12 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="new"
-        options={{ tabBarIcon: ({ color, size }) => <Feather name="camera" size={size} color={color} /> }}
+        options={{
+          // Always this fixed dark blue, active or inactive -- the one tab
+          // deliberately styled differently, so it ignores the tint colors
+          // passed in and never reads `color`.
+          tabBarIcon: ({ size }) => <Feather name="camera" size={size} color={palette.tabBarCameraIcon} />,
+        }}
       />
       <Tabs.Screen
         name="activity"

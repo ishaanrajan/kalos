@@ -4,16 +4,20 @@ import { Feather } from '@expo/vector-icons';
 import { EmptyState } from '../../components/EmptyState';
 import { UserRow } from '../../components/UserRow';
 import { formatCommentAge } from '../../components/CommentRow';
-import { useDMInbox, useMyDMThreads, useProfile } from '../../lib/queries';
+import { useDMInbox, useDMPeers, useMyDMThreads, useProfile, type ProfileSummary } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
-import { useTheme } from '../../lib/theme';
-import type { Profile } from '../../lib/types';
+import { hairlineWidth, useTheme } from '../../lib/theme';
 
 /**
  * The messages landing page. ishaan sees every thread that's messaged him
  * (his real inbox); anyone else sees exactly their two possible threads --
  * ishaan, and the Drake bot -- since those are the only two accounts
  * allowed to write into someone else's thread (0008_dm.sql, 0014_dm_multi_thread.sql).
+ *
+ * ishaan has a bot thread too (thread_user_id = his own id, thread_with_id =
+ * the bot's), the same as anyone else -- IshaanInbox surfaces it separately
+ * rather than folding him into MyThreads, since "your thread with yourself"
+ * (the other row MyThreads shows everyone else) isn't a real thing for him.
  */
 export default function DMInbox() {
   const { profile: me } = useAuth();
@@ -24,7 +28,42 @@ function IshaanInbox() {
   const { profile: me } = useAuth();
   const router = useRouter();
   const { data: threads, isLoading, isError, error, refetch } = useDMInbox();
+  // ishaan's own conversation with the bot -- a normal dm_messages thread
+  // like anyone else's (thread_user_id = his id), but dm_inbox() above only
+  // ever returns threads *addressed to* him (thread_with_id = his id), so it
+  // never appears there. Fetched the same way MyThreads gets it for a
+  // regular user, and not gated on `threads`/`isLoading` above: a slow
+  // bot-thread fetch shouldn't hold up the admin inbox he actually uses more.
+  const { data: myThreads } = useMyDMThreads();
+  const { data: bot } = useProfile('prosecco_daddy');
   const { colors } = useTheme();
+
+  const botRow = bot ? (
+    <View style={[styles.ownThread, { borderBottomColor: colors.border }]}>
+      <UserRow
+        profile={bot}
+        onPress={() => router.push(`/dm/${bot.username}?own=1`)}
+        accessory={
+          (() => {
+            const latest = myThreads?.get(bot.id);
+            return latest ? (
+              <View style={styles.preview}>
+                <Text style={[styles.previewBody, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {latest.sender_id === me?.id ? 'You: ' : ''}
+                  {latest.body}
+                </Text>
+                <Text style={[styles.previewAge, { color: colors.textSecondary }]}>
+                  {formatCommentAge(latest.created_at)}
+                </Text>
+              </View>
+            ) : (
+              <Text style={[styles.previewBody, { color: colors.textSecondary }]}>Say hi</Text>
+            );
+          })()
+        }
+      />
+    </View>
+  ) : null;
 
   if (isLoading) {
     return (
@@ -70,6 +109,7 @@ function IshaanInbox() {
         style={[styles.root, { backgroundColor: colors.surface }]}
         data={threads ?? []}
         keyExtractor={(t) => t.thread_user_id}
+        ListHeaderComponent={botRow}
         ListEmptyComponent={
           <EmptyState icon="send" title="No messages yet" body="Threads people start with you show up here." />
         }
@@ -100,7 +140,12 @@ function IshaanInbox() {
   );
 }
 
-/** Everyone but ishaan: a fixed two-row list, not a general inbox. */
+/**
+ * Everyone but ishaan: ishaan, the Drake bot, plus one row per sandboxed
+ * peer (0027_dm_peer_sandbox.sql) -- still not a general inbox, just a
+ * slightly longer fixed list for the handful of accounts explicitly
+ * allowlisted to DM each other directly.
+ */
 function MyThreads() {
   const { profile: me } = useAuth();
   const router = useRouter();
@@ -123,6 +168,10 @@ function MyThreads() {
     isError: botError,
     refetch: refetchBot,
   } = useProfile('prosecco_daddy');
+  // Empty for almost everyone -- only returns rows for accounts in
+  // dm_peer_pairs. Not gated into the loading/error guards below: a slow or
+  // failed peer lookup shouldn't block the two rows everyone always has.
+  const { data: peers } = useDMPeers();
 
   // Both rows are built from these two profile lookups, so if either fails
   // there is nothing to render -- and the guard below can't tell that apart
@@ -154,7 +203,7 @@ function MyThreads() {
     );
   }
 
-  const rows: Profile[] = [ishaan, bot];
+  const rows: ProfileSummary[] = [ishaan, bot, ...(peers ?? [])];
 
   return (
     <FlatList
@@ -195,4 +244,8 @@ const styles = StyleSheet.create({
   preview: { alignItems: 'flex-end', maxWidth: 110 },
   previewBody: { fontSize: 12 },
   previewAge: { fontSize: 11, marginTop: 2 },
+  // Separated from the admin list below it with a hairline -- it isn't one
+  // of the "people who've messaged you" rows the empty state below refers
+  // to, it's ishaan's own conversation, so it needed to read as its own thing.
+  ownThread: { borderBottomWidth: hairlineWidth },
 });

@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { useRouter, useScrollToTop } from 'expo-router';
+import { useFocusEffect, useRouter, useScrollToTop } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { PostCard } from '../../components/PostCard';
@@ -11,7 +11,24 @@ import { photoUrl, avatarUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
 import { confirmDestructive, showActionSheet } from '../../lib/actionSheet';
 import { useTheme } from '../../lib/theme';
+import * as Linking from 'expo-linking';
+import { useMusic } from '../../lib/audio';
 import type { FeedPost } from '../../lib/types';
+
+/**
+ * A post has to be 60% on screen, and stay there for a beat, before it takes
+ * over the audio. Anything looser and a fast flick through the feed starts and
+ * stops four tracks on the way past.
+ *
+ * Both this and onViewableItemsChanged must keep one identity for the life of
+ * the list -- FlatList throws "Changing onViewableItemsChanged on the fly is
+ * not supported" otherwise -- which is why the callback below reads everything
+ * mutable through refs instead of closing over it.
+ */
+const VIEWABILITY_CONFIG = {
+  itemVisiblePercentThreshold: 60,
+  minimumViewTime: 200,
+};
 
 export default function Feed() {
   const router = useRouter();
@@ -30,6 +47,7 @@ export default function Feed() {
   } = useHomeFeed();
   const toggleLike = useToggleLike();
   const deletePost = useDeletePost();
+  const { activePostId, muted, toggleMuted, requestPlay, stop } = useMusic();
   const [refreshing, setRefreshing] = useState(false);
   const listRef = useRef<FlatList<FeedPost>>(null);
   // Tapping the Home tab while already on it should jump the feed to the
@@ -92,6 +110,35 @@ export default function Feed() {
     [router]
   );
 
+  // The viewability callback can't close over requestPlay/stop (see the note on
+  // VIEWABILITY_CONFIG), so they're read through a ref that's kept current.
+  const musicRef = useRef({ requestPlay, stop });
+  musicRef.current = { requestPlay, stop };
+
+  const onViewableItemsChanged = useRef(
+    ({ viewableItems }: { viewableItems: Array<{ item: FeedPost; isViewable: boolean }> }) => {
+      // The topmost qualifying post wins, not the most-visible one: scrolling
+      // down should hand off to the post you're arriving at, and reading the
+      // list in order is what makes that deterministic.
+      const withMusic = viewableItems.find((entry) => entry.isViewable && entry.item?.music);
+      if (withMusic?.item.music) {
+        musicRef.current.requestPlay(withMusic.item.id, withMusic.item.music);
+      } else {
+        musicRef.current.stop();
+      }
+    },
+  ).current;
+
+  // Leaving the tab silences it. The post screen starts its own playback, so
+  // handing audio across the navigation would only make the two fight.
+  useFocusEffect(useCallback(() => () => stop(), [stop]));
+
+  const openTrackStore = useCallback((post: FeedPost) => {
+    // Apple licenses these previews to promote the Store, so a post that
+    // plays one has to lead back to it.
+    if (post.music?.store_url) Linking.openURL(post.music.store_url).catch(() => undefined);
+  }, []);
+
   const renderItem = useCallback(
     ({ item }: { item: FeedPost }) => (
       <PostCard
@@ -105,9 +152,25 @@ export default function Feed() {
         onPressOptions={item.author_id === userId ? showPostOptions : undefined}
         onPressMention={openMention}
         previewComments={item.preview_comments}
+        isMusicActive={item.id === activePostId}
+        isMusicMuted={muted}
+        onToggleMusicMuted={toggleMuted}
+        onPressMusic={openTrackStore}
       />
     ),
-    [likePost, openAuthor, openComments, openLikes, openMention, userId, showPostOptions]
+    [
+      likePost,
+      openAuthor,
+      openComments,
+      openLikes,
+      openMention,
+      userId,
+      showPostOptions,
+      activePostId,
+      muted,
+      toggleMuted,
+      openTrackStore,
+    ]
   );
 
   if (isLoading) {
@@ -143,16 +206,10 @@ export default function Feed() {
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <View style={styles.headerSpacer}>
-          <Pressable
-            onPress={() => router.push('/(tabs)/new')}
-            hitSlop={12}
-            accessibilityRole="button"
-            accessibilityLabel="New post"
-          >
-            <Feather name="camera" size={22} color={colors.text} />
-          </Pressable>
-        </View>
+        {/* Empty spacer, same width as the one on the right -- keeps the
+            wordmark centered now that this side has no icon. The bottom tab
+            bar's camera tab already goes to the same place this one did. */}
+        <View style={styles.headerSpacer} />
         <Text style={[styles.wordmark, { color: colors.text, fontFamily: wordmarkFontFamily }]}>
           Kalos
         </Text>
@@ -195,6 +252,8 @@ export default function Feed() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         onEndReached={() => hasNextPage && !isFetchingNextPage && fetchNextPage()}
         onEndReachedThreshold={0.6}
+        viewabilityConfig={VIEWABILITY_CONFIG}
+        onViewableItemsChanged={onViewableItemsChanged}
         ListEmptyComponent={
           <EmptyState
             icon="camera"

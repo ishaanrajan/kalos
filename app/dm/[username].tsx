@@ -47,14 +47,25 @@ const BIG_HEART = '❤️​';
 
 /**
  * A DM thread. `username` names who this thread is *with*: for anyone but
- * ishaan, that's either "ishaan" or the Drake bot -- two separate threads,
- * both keyed to your own id as thread_user_id but different thread_with_id.
- * For ishaan, `username` is whichever person he opened from his inbox, and
- * thread_with_id is always his own id (his inbox only manages threads with
- * him, not e.g. someone's separate thread with Drake).
+ * ishaan, that's "ishaan", the Drake bot, or a sandboxed peer
+ * (0027_dm_peer_sandbox.sql) -- separate threads, all keyed to your own id
+ * as thread_user_id but different thread_with_id, EXCEPT a peer thread,
+ * where neither side is a fixed hub. There, thread_user_id/thread_with_id
+ * are canonicalized by uuid order below rather than "me first" -- both
+ * participants must land on the same (thread_user_id, thread_with_id) pair
+ * regardless of who opened the screen, or they'd each be looking at their
+ * own empty half of the conversation.
+ *
+ * For ishaan, `username` is ambiguous on its own: opening someone from his
+ * admin inbox means thread_with_id is his own id (that person's thread with
+ * him), but ishaan also has his own ordinary thread with the bot, same shape
+ * as anyone else's (thread_user_id = his own id). Both cases can name
+ * "prosecco_daddy" as the username, so the inbox screen distinguishes them
+ * with `?own=1` on the route -- present only when ishaan opened his own bot
+ * row, never when opening an admin thread.
  */
 export default function DMThread() {
-  const { username } = useLocalSearchParams<{ username: string }>();
+  const { username, own } = useLocalSearchParams<{ username: string; own?: string }>();
   const router = useRouter();
   const { profile: me } = useAuth();
   const {
@@ -70,8 +81,24 @@ export default function DMThread() {
   const listRef = useRef<FlatList<DMMessage>>(null);
 
   const isIshaan = me?.username === 'ishaan';
-  const threadUserId = isIshaan ? other?.id : me?.id;
-  const threadWithId = isIshaan ? me?.id : other?.id;
+  const isHub = other?.username === 'ishaan' || other?.username === 'prosecco_daddy';
+  // For anyone but ishaan `own` is never set, so this is just `!isIshaan` --
+  // unchanged from before. For ishaan, `own=1` flips this from "viewing
+  // someone else's thread with me" to "viewing my own thread with them".
+  const viewingOwnThread = !isIshaan || own === '1';
+  let threadUserId: string | undefined;
+  let threadWithId: string | undefined;
+  if (!isIshaan && !isHub && me?.id && other?.id) {
+    // A sandboxed peer thread has no hub, so its identity can't be "me
+    // first" -- it has to be the same pair no matter who opened the screen.
+    // UUID string order matches how Postgres compares the column (`least`/
+    // `greatest`, see dm_peer_pairs in 0027), so a plain string compare here
+    // lands both participants on the identical row.
+    [threadUserId, threadWithId] = me.id < other.id ? [me.id, other.id] : [other.id, me.id];
+  } else {
+    threadUserId = viewingOwnThread ? me?.id : other?.id;
+    threadWithId = viewingOwnThread ? other?.id : me?.id;
+  }
 
   const { data: messages, isLoading: messagesLoading } = useDMThread(threadUserId, threadWithId);
   const sendDM = useSendDM(threadUserId, threadWithId);

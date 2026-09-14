@@ -13,19 +13,33 @@ import {
   View,
 } from 'react-native';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { PostCard } from '../../components/PostCard';
 import { CommentRow } from '../../components/CommentRow';
 import { EmptyState } from '../../components/EmptyState';
 import { MentionSuggestions } from '../../components/MentionSuggestions';
-import { useAddComment, useComments, useDeletePost, useFollowList, usePost, useToggleLike } from '../../lib/queries';
+import { GifPicker } from '../../components/GifPicker';
+import {
+  useAddComment,
+  useAddGifComment,
+  useComments,
+  useDeletePost,
+  useFollowList,
+  usePost,
+  useToggleLike,
+} from '../../lib/queries';
 import type { ProfileSummary } from '../../lib/queries';
 import { avatarUrl, photoUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
 import { confirmDestructive, showActionSheet } from '../../lib/actionSheet';
 import { activeMentionQuery, applyMentionSelection } from '../../lib/mentions';
 import { nativeHeaderHeight, useTheme } from '../../lib/theme';
+import * as Linking from 'expo-linking';
+import { useMusic } from '../../lib/audio';
+import { gifToCommentGif } from '../../lib/giphy';
+import type { Gif } from '../../lib/giphy';
 import type { Comment, FeedPost } from '../../lib/types';
 
 /**
@@ -57,6 +71,7 @@ export default function PostScreen() {
   const { data: post, isLoading, isError, error, refetch } = usePost(id);
   const { data: comments } = useComments(id);
   const addComment = useAddComment(id!);
+  const addGifComment = useAddGifComment(id!);
   const toggleLike = useToggleLike();
   const deletePost = useDeletePost();
   const { data: following } = useFollowList(userId ?? undefined, 'following');
@@ -178,11 +193,38 @@ export default function PostScreen() {
     [addComment.mutateAsync]
   );
 
+  const submitGif = useCallback(
+    (gif: Gif) => addGifComment.mutateAsync(gifToCommentGif(gif)),
+    [addGifComment.mutateAsync]
+  );
+
   // The header is an element, not a component, so an inline <PostCard /> here
   // is rebuilt on every render of this screen -- photo, gesture detector,
   // hidden caption-measurement Text and all. Memoizing the element itself
   // lets React bail out of the whole subtree when nothing about the post
   // changed, which is most renders.
+  const { activePostId, muted, toggleMuted, requestPlay, stop } = useMusic();
+
+  // The feed stops its own audio on blur, so this screen starts from silence
+  // and is responsible for its own post. Playing on focus rather than on load
+  // means coming back from a profile resumes the track.
+  const music = post?.music ?? null;
+  const postId = post?.id;
+  useFocusEffect(
+    useCallback(() => {
+      if (postId && music) {
+        requestPlay(postId, music);
+      }
+      return () => stop();
+    }, [postId, music, requestPlay, stop]),
+  );
+
+  const openTrackStore = useCallback((p: FeedPost) => {
+    // Apple licenses these previews to promote the Store, so a post that
+    // plays one has to lead back to it.
+    if (p.music?.store_url) Linking.openURL(p.music.store_url).catch(() => undefined);
+  }, []);
+
   const header = useMemo(() => {
     if (!post) return null;
     return (
@@ -201,9 +243,25 @@ export default function PostScreen() {
         onPressOptions={post.author.id === userId ? showPostOptions : undefined}
         onPressMention={openMention}
         showCommentPreview={false}
+        isMusicActive={post.id === activePostId}
+        isMusicMuted={muted}
+        onToggleMusicMuted={toggleMuted}
+        onPressMusic={openTrackStore}
       />
     );
-  }, [post, userId, likePost, openAuthor, openLikes, openMention, showPostOptions]);
+  }, [
+    post,
+    userId,
+    likePost,
+    openAuthor,
+    openLikes,
+    openMention,
+    showPostOptions,
+    activePostId,
+    muted,
+    toggleMuted,
+    openTrackStore,
+  ]);
 
   const renderComment = useCallback(
     ({ item }: { item: Comment }) => (
@@ -271,6 +329,7 @@ export default function PostScreen() {
         isPending={addComment.isPending}
         bottomInset={Math.max(10, insets.bottom)}
         onSubmit={submitComment}
+        onSubmitGif={submitGif}
       />
     </KeyboardAvoidingView>
   );
@@ -284,6 +343,8 @@ interface CommentComposerProps {
   bottomInset: number;
   /** Rejects when the comment didn't make it, so the draft can be restored. */
   onSubmit: (body: string) => Promise<unknown>;
+  /** Posts a GIF-only comment immediately -- no draft involved. */
+  onSubmitGif: (gif: Gif) => Promise<unknown>;
 }
 
 /**
@@ -299,9 +360,10 @@ interface CommentComposerProps {
  * suggestions live here too -- they're derived from the draft, so keeping
  * them with it is what makes that true.
  */
-function CommentComposer({ candidates, isPending, bottomInset, onSubmit }: CommentComposerProps) {
+function CommentComposer({ candidates, isPending, bottomInset, onSubmit, onSubmitGif }: CommentComposerProps) {
   const { colors } = useTheme();
   const [draft, setDraft] = useState('');
+  const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const mentionQuery = useMemo(() => activeMentionQuery(draft), [draft]);
 
   const selectMention = useCallback((username: string) => {
@@ -321,6 +383,20 @@ function CommentComposer({ candidates, isPending, bottomInset, onSubmit }: Comme
     }
   }, [draft, onSubmit]);
 
+  const selectGif = useCallback(
+    async (gif: Gif) => {
+      // Close first, not on success -- a slow send shouldn't leave the sheet
+      // sitting open over what already reads as "sent" to the person tapping.
+      setGifPickerOpen(false);
+      try {
+        await onSubmitGif(gif);
+      } catch (e) {
+        Alert.alert('Could not send GIF', e instanceof Error ? e.message : undefined);
+      }
+    },
+    [onSubmitGif]
+  );
+
   return (
     <>
       {mentionQuery !== null ? (
@@ -339,12 +415,23 @@ function CommentComposer({ candidates, isPending, bottomInset, onSubmit }: Comme
           onSubmitEditing={submit}
           returnKeyType="send"
         />
-        <Pressable onPress={submit} disabled={!draft.trim() || isPending} hitSlop={10}>
-          <Text style={[styles.post, { color: colors.accent }, !draft.trim() && styles.postDisabled]}>
-            Post
-          </Text>
-        </Pressable>
+        {draft.trim() ? (
+          <Pressable onPress={submit} disabled={isPending} hitSlop={10}>
+            <Text style={[styles.post, { color: colors.accent }]}>Post</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            onPress={() => setGifPickerOpen(true)}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Send a GIF"
+          >
+            <Ionicons name="images-outline" size={24} color={colors.text} />
+          </Pressable>
+        )}
       </View>
+
+      <GifPicker visible={gifPickerOpen} onSelect={selectGif} onClose={() => setGifPickerOpen(false)} />
     </>
   );
 }
@@ -362,5 +449,4 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, fontSize: 14, paddingVertical: 6 },
   post: { fontWeight: '600', fontSize: 14 },
-  postDisabled: { opacity: 0.4 },
 });

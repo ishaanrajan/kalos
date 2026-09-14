@@ -2,7 +2,7 @@
   "expo": {
     "name": "Kalos",
     "slug": "kalos",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "kalos",
@@ -45,7 +45,8 @@
         "expo-media-library",
         {
           "photosPermission": "Kalos needs access to your photos so you can post them.",
-          "savePhotosPermission": false
+          "savePhotosPermission": false,
+          "isAccessMediaLocationEnabled": true
         }
       ],
       "expo-notifications",
@@ -60,6 +61,14 @@
             "image": "./assets/splash-icon.png",
             "backgroundColor": "#000000"
           }
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": false
         }
       ]
     ],

@@ -4,10 +4,26 @@ import { Avatar } from './Avatar';
 import { Button } from './Button';
 import { PhotoGrid } from './PhotoGrid';
 import { EmptyState } from './EmptyState';
-import { useIsFollowing, useProfilePosts, useToggleFollow } from '../lib/queries';
+import { useIsFollowing, useMutualFollowers, useProfilePosts, useToggleFollow } from '../lib/queries';
+import type { MutualFollowers } from '../lib/queries';
 import { avatarUrl, photoThumbUrl } from '../lib/supabase';
 import { useTheme } from '../lib/theme';
 import type { Profile } from '../lib/types';
+
+/**
+ * "Followed by X" / "Followed by X and Y" / "Followed by X, Y and Z" / then
+ * "Followed by X, Y and N others" once there's a fourth -- Instagram never
+ * names a third person once there's a fourth, so `people` only ever needs to
+ * carry the first two names past that point (useMutualFollowers still fetches
+ * three, since two names is one short of enough for the exactly-3 case).
+ */
+function mutualFollowersLabel({ people, total }: MutualFollowers): string | null {
+  if (total === 0) return null;
+  const names = people.map((p) => p.username);
+  if (total <= 2) return `Followed by ${names.join(' and ')}`;
+  if (total === 3) return `Followed by ${names[0]}, ${names[1]} and ${names[2]}`;
+  return `Followed by ${names[0]}, ${names[1]} and ${total - 2} others`;
+}
 
 interface Props {
   profile: Profile;
@@ -22,6 +38,7 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
   const { data: following, isLoading: followingLoading } = useIsFollowing(
     isSelf ? undefined : profile.id
   );
+  const { data: mutuals } = useMutualFollowers(isSelf ? undefined : profile.id);
   const toggleFollow = useToggleFollow();
   const { colors } = useTheme();
 
@@ -65,6 +82,12 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
           )}
           {profile.bio && <Text style={[styles.bio, { color: colors.text }]}>{profile.bio}</Text>}
         </View>
+      )}
+
+      {mutuals && mutuals.total > 0 && (
+        <Text style={[styles.mutuals, { color: colors.textSecondary }]}>
+          {mutualFollowersLabel(mutuals)}
+        </Text>
       )}
 
       <View style={styles.actions}>
@@ -194,6 +217,7 @@ const styles = StyleSheet.create({
   bioBlock: { marginTop: 14 },
   displayName: { fontSize: 14, fontWeight: '600' },
   bio: { fontSize: 14, marginTop: 2, lineHeight: 19 },
+  mutuals: { fontSize: 13, marginTop: 10 },
   actions: { flexDirection: 'row', gap: 8, marginTop: 16, marginBottom: 16 },
   action: { flex: 1 },
 });

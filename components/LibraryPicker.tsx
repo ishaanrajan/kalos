@@ -1,0 +1,844 @@
+/**
+ * The composer's photo picker: a live crop preview of whatever's selected on
+ * top, the camera roll as a grid underneath, an album switcher between them.
+ * One screen, the way Instagram's own composer works today -- tapping a
+ * thumbnail doesn't navigate anywhere, it just swaps what the preview is
+ * showing, so trying five photos costs five taps instead of five round trips
+ * through a separate crop screen.
+ *
+ * ---------------------------------------------------------------------------
+ * Why this reads the library through `expo-media-library/legacy`
+ * ---------------------------------------------------------------------------
+ *
+ * SDK 57's class-based API exposes an asset's uri only through `getUri()`,
+ * an async getter that hands back the *original* file -- and on iOS sets
+ * `isNetworkAccessAllowed`, so for an iCloud-optimized photo that call is a
+ * full-size download. There is no thumbnail API on it at all. A grid built on
+ * that has to manufacture its own thumbnails, which is what this file used to
+ * do: one ImageManipulator decode + resize + JPEG write per tile, three at a
+ * time. That is why photos didn't render during a fast scroll. Every tile
+ * queued a full-resolution decode of a 12-48MP HEIC, the queue was three
+ * wide, and a fling could enqueue a hundred tiles in a second. Successive
+ * fixes -- an LRU-ish cache, a concurrency cap, LIFO ordering, cancellation
+ * on unmount -- were all shaving the constant factor off work that should
+ * never have been happening on this side of the bridge at all.
+ *
+ * The legacy API returns `uri` *synchronously* on the asset: `ph://<id>` on
+ * iOS, `file://` on Android. expo-image has a first-class loader for both.
+ * On iOS the `ph://` loader asks PHImageManager for the asset at the target
+ * view's own size (it reads the container frame and screen scale out of the
+ * image request context), which is the OS's own thumbnail path -- the same
+ * one Photos.app and Instagram use -- and it cancels the PHImageRequest when
+ * a cell recycles, so a fling abandons work instead of queueing it. On
+ * Android, Glide downsamples to the view. Either way the grid does no image
+ * work in JS whatsoever: no decode, no resize, no temp files, no queue, no
+ * cache of our own, and no ceiling that has to scale with library size.
+ *
+ * The legacy API also has what the new one is missing for a picker: smart
+ * albums (Favorites, Screenshots, Selfies...) via
+ * `getAlbumsAsync({ includeSmartAlbums: true })`, cursor pagination, and
+ * width/height on the asset without a second call.
+ *
+ * The tradeoff is that a `ph://` uri isn't a file, so it can't be handed to
+ * ImageManipulator or Skia. That's resolved once, for the one photo the user
+ * actually commits to, in `handleNext` below.
+ */
+
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import type { ListRenderItemInfo } from 'react-native';
+import { Image } from 'expo-image';
+import * as MediaLibrary from 'expo-media-library/legacy';
+import Feather from '@expo/vector-icons/Feather';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { CropAdjust } from './CropAdjust';
+import type { CropAdjustHandle } from './CropAdjust';
+import { displayAspectRatio } from './PostCard';
+import { hairlineWidth, spacing, radius, useTheme } from '../lib/theme';
+import type { CropRect, ImageSize } from '../lib/types';
+
+const COLUMNS = 4;
+const GUTTER = 1.5;
+/**
+ * Large, because a page is now pure metadata -- ids, uris and dimensions --
+ * with no image work attached to it. The old 60 existed to keep the thumbnail
+ * queue from being buried; nothing is queued any more, so the only thing page
+ * size controls is how often a scroll has to stop and wait.
+ */
+const PAGE_SIZE = 120;
+
+/**
+ * How much of the screen the preview is allowed to take. A square preview
+ * (`width` tall) is the shape Instagram uses, but on a short phone that
+ * leaves barely a row and a half of grid, so it gives way on height first.
+ */
+const PREVIEW_HEIGHT_FRACTION = 0.46;
+
+/**
+ * What the grid is listing. `all` is every photo, newest first, with no album
+ * predicate -- iOS's own "Recents" smart album is the same set of photos, and
+ * is filtered back out of the album list below so it doesn't appear twice.
+ */
+type PhotoSource = { kind: 'all' } | { kind: 'album'; id: string; title: string };
+
+const ALL_PHOTOS_LABEL = 'Recents';
+
+function sourceLabel(source: PhotoSource): string {
+  return source.kind === 'all' ? ALL_PHOTOS_LABEL : source.title;
+}
+
+function sameSource(a: PhotoSource, b: PhotoSource): boolean {
+  if (a.kind !== b.kind) return false;
+  return a.kind === 'album' && b.kind === 'album' ? a.id === b.id : true;
+}
+
+/**
+ * The photo under the crop frame. `natural` starts as the library's own
+ * metadata and is corrected from what expo-image actually decoded (see
+ * CropAdjust's `onImageLoad`) -- its *ratio* is what shapes the frame, and
+ * Android's MediaStore reports pre-rotation dimensions for EXIF-rotated
+ * photos, which would otherwise frame a portrait shot as a landscape one.
+ */
+type Selection = { asset: MediaLibrary.Asset; natural: ImageSize };
+
+/** Instagram's two framings: the photo's own shape, or a hard square. */
+type AspectMode = 'original' | 'square';
+
+export interface LibraryPickerProps {
+  /** Backing out of posting entirely. */
+  onCancel: () => void;
+  /** The camera button in the toolbar -- the picker itself never opens it. */
+  onOpenCamera: () => void;
+  /**
+   * A photo, resolved to a real on-disk file, plus the region the user
+   * framed in that file's own pixel space. Awaited: the "Next" button stays
+   * in its spinner until this settles, so a slow prepare can't be double-fired.
+   */
+  onNext: (pick: { uri: string; natural: ImageSize; crop: CropRect }) => Promise<void> | void;
+}
+
+export function LibraryPicker({ onCancel, onOpenCamera, onNext }: LibraryPickerProps) {
+  const { colors, typography } = useTheme();
+  const { width, height } = useWindowDimensions();
+
+  const [source, setSource] = useState<PhotoSource>({ kind: 'all' });
+  const [assets, setAssets] = useState<MediaLibrary.Asset[]>([]);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [hasNextPage, setHasNextPage] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [aspectMode, setAspectMode] = useState<AspectMode>('original');
+  const [advancing, setAdvancing] = useState(false);
+  const [limitedAccess, setLimitedAccess] = useState(false);
+
+  const [albumsOpen, setAlbumsOpen] = useState(false);
+  // null = not fetched yet. Lazy: most composer opens never touch the
+  // switcher, and enumerating albums costs a cover-photo query apiece.
+  const [albums, setAlbums] = useState<AlbumEntry[] | null>(null);
+  const [albumsLoading, setAlbumsLoading] = useState(false);
+
+  const cropRef = useRef<CropAdjustHandle>(null);
+  const listRef = useRef<FlatList<MediaLibrary.Asset>>(null);
+  const loadingRef = useRef(false);
+  /**
+   * Bumped on every source switch. A load captures the version it started
+   * with and throws its results away if the source has moved on -- otherwise
+   * a slow query for the previous album lands after the switch and gets
+   * appended to the new one's results. Also subsumes the dev-mode
+   * double-invoke guard: StrictMode's extra mount just bumps it again.
+   */
+  const versionRef = useRef(0);
+
+  const loadPage = useCallback(
+    async (after: string | undefined) => {
+      if (loadingRef.current) return;
+      loadingRef.current = true;
+      const version = versionRef.current;
+      try {
+        const page = await MediaLibrary.getAssetsAsync({
+          first: PAGE_SIZE,
+          after,
+          album: source.kind === 'album' ? source.id : undefined,
+          mediaType: [MediaLibrary.MediaType.photo],
+          sortBy: [MediaLibrary.SortBy.creationTime],
+        });
+        if (version !== versionRef.current) return;
+        setAssets((prev) => (after ? [...prev, ...page.assets] : page.assets));
+        setCursor(page.endCursor);
+        setHasNextPage(page.hasNextPage);
+      } catch {
+        if (version === versionRef.current) setHasNextPage(false);
+      } finally {
+        if (version === versionRef.current) {
+          loadingRef.current = false;
+          setLoading(false);
+        }
+      }
+    },
+    [source]
+  );
+
+  // Reload from scratch whenever the source changes.
+  useEffect(() => {
+    versionRef.current += 1;
+    loadingRef.current = false; // abandon any in-flight load for the old source
+    setAssets([]);
+    setCursor(undefined);
+    setHasNextPage(true);
+    setLoading(true);
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    void loadPage(undefined);
+  }, [loadPage]);
+
+  // Instagram opens with the most recent photo already framed, so the screen
+  // is never a dead grid waiting to be told what to do. Only ever fills an
+  // empty selection -- switching albums keeps whatever's already framed.
+  useEffect(() => {
+    if (selection || assets.length === 0) return;
+    const first = assets[0];
+    setSelection({ asset: first, natural: { width: first.width, height: first.height } });
+  }, [assets, selection]);
+
+  // iOS 14+/Android 14+ can grant access to a hand-picked subset of the
+  // library. Without saying so, that shows up as a camera roll that's
+  // mysteriously missing almost everything and no way to fix it from here.
+  useEffect(() => {
+    let alive = true;
+    MediaLibrary.getPermissionsAsync()
+      .then((p) => {
+        if (alive) setLimitedAccess(p.accessPrivileges === 'limited');
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // A photo taken from the camera button, or added through the limited-access
+  // picker, should appear without having to leave and come back.
+  useEffect(() => {
+    const subscription = MediaLibrary.addListener(() => {
+      versionRef.current += 1;
+      loadingRef.current = false;
+      setCursor(undefined);
+      setHasNextPage(true);
+      void loadPage(undefined);
+    });
+    return () => subscription.remove();
+  }, [loadPage]);
+
+  const onEndReached = useCallback(() => {
+    if (hasNextPage && !loadingRef.current) void loadPage(cursor);
+  }, [hasNextPage, cursor, loadPage]);
+
+  const openAlbums = useCallback(() => {
+    setAlbumsOpen(true);
+    if (albums !== null || albumsLoading) return;
+    setAlbumsLoading(true);
+    loadAlbums()
+      .then(setAlbums)
+      .catch(() => setAlbums([]))
+      .finally(() => setAlbumsLoading(false));
+  }, [albums, albumsLoading]);
+
+  const selectSource = useCallback(
+    (next: PhotoSource) => {
+      setAlbumsOpen(false);
+      if (!sameSource(source, next)) setSource(next);
+    },
+    [source]
+  );
+
+  // Read by handleSelect, which has to keep a stable identity (it's memoized
+  // into every grid cell) and so can't close over `advancing` as state.
+  const advancingRef = useRef(false);
+
+  const handleSelect = useCallback((asset: MediaLibrary.Asset) => {
+    // Tapping another photo while "Next" is mid-flight would swap the framed
+    // photo out from under a prepare that's already reading the old one.
+    if (advancingRef.current) return;
+    setSelection({ asset, natural: { width: asset.width, height: asset.height } });
+  }, []);
+
+  /** Corrects a ratio the library's metadata got wrong (see Selection). */
+  const handleImageLoad = useCallback((size: ImageSize) => {
+    if (size.width <= 0 || size.height <= 0) return;
+    setSelection((prev) => {
+      if (!prev) return prev;
+      const was = prev.natural.width / prev.natural.height;
+      const is = size.width / size.height;
+      // Only a genuine disagreement, not a rounded pixel: this remounts the
+      // crop surface, and doing that on every load would throw away a zoom
+      // the user had already set.
+      if (Math.abs(was - is) < 0.01) return prev;
+      return { asset: prev.asset, natural: size };
+    });
+  }, []);
+
+  const handleNext = useCallback(async () => {
+    // Grabbed before the await, not after: the gesture state lives on this
+    // particular CropAdjust instance, and anything that remounts it while the
+    // asset info is resolving (an aspect toggle, a ratio correction) would
+    // leave cropRef pointing at a fresh instance sitting at its default zoom.
+    // The handle captured here still holds what the user actually framed.
+    const cropHandle = cropRef.current;
+    if (!selection || !cropHandle || advancingRef.current) return;
+    advancingRef.current = true;
+    setAdvancing(true);
+    try {
+      // The one place the full-size file is resolved. `localUri` is a real
+      // `file://` path that ImageManipulator can open, and its width/height
+      // are the original's true pixel count -- which is what the crop has to
+      // be expressed against, since the preview was showing a screen-sized
+      // copy PhotoKit rendered on the fly. For an iCloud-optimized photo this
+      // is the download, which is why the button holds a spinner.
+      const info = await MediaLibrary.getAssetInfoAsync(selection.asset);
+      const uri = info.localUri ?? info.uri;
+      const natural = { width: info.width, height: info.height };
+      await onNext({ uri, natural, crop: cropHandle.getCrop(natural) });
+    } catch (e) {
+      Alert.alert('Could not use that photo', e instanceof Error ? e.message : undefined);
+    } finally {
+      advancingRef.current = false;
+      setAdvancing(false);
+    }
+  }, [selection, onNext]);
+
+  // The preview's box. Width-wide and square where there's room, giving way
+  // on height on a short screen so the grid always keeps a usable slice.
+  const pane = useMemo(
+    () => ({ width, height: Math.round(Math.min(width, height * PREVIEW_HEIGHT_FRACTION)) }),
+    [width, height]
+  );
+
+  const naturalRatio = selection
+    ? displayAspectRatio(selection.natural.width, selection.natural.height)
+    : 1;
+  const frame = useMemo(
+    () => fitFrame(aspectMode === 'square' ? 1 : naturalRatio, pane),
+    [aspectMode, naturalRatio, pane]
+  );
+  // Nothing to toggle to on a photo that's already square.
+  const canToggleAspect = Math.abs(naturalRatio - 1) > 0.01;
+
+  const cellSize = (width - GUTTER * (COLUMNS - 1)) / COLUMNS;
+
+  // Fixed-size cells in fixed-height rows. Telling FlatList the geometry up
+  // front means a fling never has to measure a row before it can scroll to it.
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<MediaLibrary.Asset> | null | undefined, index: number) => {
+      const length = cellSize + GUTTER;
+      return { length, offset: length * Math.floor(index / COLUMNS), index };
+    },
+    [cellSize]
+  );
+
+  const selectedId = selection?.asset.id ?? null;
+
+  const renderItem = useCallback(
+    ({ item }: ListRenderItemInfo<MediaLibrary.Asset>) => (
+      <GridCell
+        asset={item}
+        size={cellSize}
+        selected={item.id === selectedId}
+        placeholderColor={colors.imagePlaceholder}
+        onPress={handleSelect}
+      />
+    ),
+    [cellSize, selectedId, colors.imagePlaceholder, handleSelect]
+  );
+
+  const keyExtractor = useCallback((item: MediaLibrary.Asset) => item.id, []);
+
+  return (
+    <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Pressable onPress={onCancel} hitSlop={12} disabled={advancing}>
+          <Text style={[typography.body, { color: colors.text }, advancing && styles.disabled]}>
+            Cancel
+          </Text>
+        </Pressable>
+        <Text style={[styles.title, { color: colors.text }]}>New post</Text>
+        <Pressable
+          onPress={handleNext}
+          hitSlop={12}
+          disabled={advancing || !selection}
+          accessibilityRole="button"
+          accessibilityLabel="Next"
+        >
+          {advancing ? (
+            <ActivityIndicator size="small" />
+          ) : (
+            <Text
+              style={[
+                typography.bodyStrong,
+                { color: colors.accent },
+                !selection && styles.disabled,
+              ]}
+            >
+              Next
+            </Text>
+          )}
+        </Pressable>
+      </View>
+
+      <View style={[styles.pane, { width: pane.width, height: pane.height }]}>
+        {selection ? (
+          <>
+            <CropAdjust
+              // Remounting is how a new photo (or a new framing) gets a clean
+              // zoom/pan. The shared values that hold the gesture state are
+              // seeded once, so without this the second photo you tapped
+              // would inherit the first one's zoom.
+              key={`${selection.asset.id}:${aspectMode}:${frame.width}x${frame.height}`}
+              ref={cropRef}
+              uri={selection.asset.uri}
+              natural={selection.natural}
+              frame={frame}
+              onImageLoad={handleImageLoad}
+            />
+            {canToggleAspect ? (
+              <Pressable
+                onPress={() => setAspectMode((m) => (m === 'square' ? 'original' : 'square'))}
+                style={styles.aspectButton}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  aspectMode === 'square' ? 'Use original shape' : 'Crop to square'
+                }
+              >
+                <Ionicons
+                  name={aspectMode === 'square' ? 'scan-outline' : 'square-outline'}
+                  size={15}
+                  color="#fff"
+                />
+                <Text style={styles.aspectLabel}>
+                  {aspectMode === 'square' ? 'Original' : 'Square'}
+                </Text>
+              </Pressable>
+            ) : null}
+          </>
+        ) : null}
+      </View>
+
+      <View style={[styles.toolbar, { borderBottomColor: colors.border }]}>
+        <Pressable onPress={openAlbums} hitSlop={8} style={styles.sourceButton}>
+          <Text style={[typography.bodyStrong, { color: colors.text }]} numberOfLines={1}>
+            {sourceLabel(source)}
+          </Text>
+          <Feather name="chevron-down" size={15} color={colors.text} style={styles.sourceChevron} />
+        </Pressable>
+        <Pressable
+          onPress={onOpenCamera}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Take photo"
+          style={[styles.cameraButton, { backgroundColor: colors.surfaceAlt }]}
+        >
+          <Ionicons name="camera-outline" size={19} color={colors.text} />
+        </Pressable>
+      </View>
+
+      {limitedAccess ? (
+        <Pressable
+          onPress={() => {
+            MediaLibrary.presentPermissionsPickerAsync().catch(() => undefined);
+          }}
+          style={[styles.limitedBanner, { backgroundColor: colors.surfaceAlt }]}
+        >
+          <Text style={[typography.caption, { color: colors.textSecondary }]} numberOfLines={1}>
+            Kalos can only see some of your photos
+          </Text>
+          <Text style={[typography.metaStrong, { color: colors.accent }]}>Manage</Text>
+        </Pressable>
+      ) : null}
+
+      <FlatList
+        ref={listRef}
+        data={assets}
+        renderItem={renderItem}
+        keyExtractor={keyExtractor}
+        numColumns={COLUMNS}
+        columnWrapperStyle={styles.row}
+        contentContainerStyle={styles.content}
+        style={styles.list}
+        onEndReached={onEndReached}
+        onEndReachedThreshold={1.5}
+        showsVerticalScrollIndicator={false}
+        getItemLayout={getItemLayout}
+        initialNumToRender={COLUMNS * 8}
+        maxToRenderPerBatch={COLUMNS * 6}
+        updateCellsBatchingPeriod={30}
+        windowSize={9}
+        // Android only. On iOS this has a long history of clipping cells that
+        // are still on screen, and the reason it was here -- keeping a lid on
+        // how many images were resident -- no longer applies now that nothing
+        // holds a full-resolution decode.
+        removeClippedSubviews={Platform.OS === 'android'}
+        ListEmptyComponent={
+          loading ? (
+            <ActivityIndicator style={styles.listSpinner} color={colors.textSecondary} />
+          ) : (
+            <View style={styles.emptyState}>
+              <Text style={[typography.body, { color: colors.textSecondary }]}>No photos here</Text>
+            </View>
+          )
+        }
+      />
+
+      <Modal
+        visible={albumsOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setAlbumsOpen(false)}
+      >
+        <Pressable
+          style={[styles.backdrop, { backgroundColor: colors.scrim }]}
+          onPress={() => setAlbumsOpen(false)}
+          accessibilityLabel="Close"
+        />
+        <View style={[styles.sheet, { backgroundColor: colors.surface }]}>
+          <View style={[styles.grabber, { backgroundColor: colors.border }]} />
+          <ScrollView bounces={false} contentContainerStyle={styles.sheetContent}>
+            <AlbumRow
+              title={ALL_PHOTOS_LABEL}
+              selected={source.kind === 'all'}
+              onPress={() => selectSource({ kind: 'all' })}
+            />
+            {albums?.map((album) => (
+              <AlbumRow
+                key={album.id}
+                title={album.title}
+                count={album.count}
+                coverUri={album.coverUri}
+                selected={source.kind === 'album' && source.id === album.id}
+                onPress={() => selectSource({ kind: 'album', id: album.id, title: album.title })}
+              />
+            ))}
+            {albumsLoading ? (
+              <ActivityIndicator style={styles.albumsSpinner} color={colors.textSecondary} />
+            ) : null}
+          </ScrollView>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Grid cell
+// ---------------------------------------------------------------------------
+
+/**
+ * A tile is now a plain `<Image>` over a uri the asset already carried. All
+ * of the machinery this used to need -- the async uri getter, the module-
+ * level thumbnail cache, the concurrency-capped queue, the per-cell
+ * cancellation token -- went away with the thumbnails it was managing.
+ *
+ * Memoized on identity, with a `size` and `selected` that only change when
+ * they genuinely do, so a fling re-renders nothing that isn't new.
+ */
+const GridCell = memo(function GridCell({
+  asset,
+  size,
+  selected,
+  placeholderColor,
+  onPress,
+}: {
+  asset: MediaLibrary.Asset;
+  size: number;
+  selected: boolean;
+  placeholderColor: string;
+  onPress: (asset: MediaLibrary.Asset) => void;
+}) {
+  // Normally just `asset.uri`. See the fallback below for when it isn't.
+  const [uri, setUri] = useState(asset.uri);
+  useEffect(() => setUri(asset.uri), [asset.uri]);
+
+  return (
+    <Pressable
+      onPress={() => onPress(asset)}
+      accessibilityRole="imagebutton"
+      accessibilityLabel="Photo"
+      accessibilityState={{ selected }}
+      style={{ width: size, height: size, backgroundColor: placeholderColor }}
+    >
+      <Image
+        source={uri}
+        style={styles.cellImage}
+        contentFit="cover"
+        // No cross-fade. A tile appearing under your thumb mid-scroll should
+        // just be there, the way it is in Photos.app -- a fade reads as lag.
+        transition={0}
+        cachePolicy="memory-disk"
+        recyclingKey={asset.id}
+        accessible={false}
+        onError={() => {
+          void resolveFallbackUri(asset).then((resolved) => {
+            if (resolved) setUri(resolved);
+          });
+        }}
+      />
+      {selected ? (
+        <>
+          <View style={styles.selectedDim} />
+          <View style={styles.selectedRing} />
+        </>
+      ) : null}
+    </Pressable>
+  );
+});
+
+/**
+ * Last resort for a tile whose uri the image loader couldn't handle.
+ *
+ * The whole design rests on expo-image rendering the library's own uri
+ * directly -- `ph://` through its PhotoKit loader on iOS, `file://` through
+ * Glide on Android. If that ever isn't true (an OS release changing what
+ * PhotoKit accepts, a device where the asset has no readable backing file),
+ * the failure mode without this is the worst possible one for this screen:
+ * a grid of empty squares, which is exactly the complaint this rewrite
+ * exists to fix. So a tile that errors resolves a plain file path once and
+ * tries again.
+ *
+ * `shouldDownloadFromNetwork: false` deliberately: this must stay a cheap
+ * local metadata read. If the primary path were broken every visible tile
+ * would land here at once, and letting that turn into a hundred concurrent
+ * iCloud downloads would recreate the original bug rather than soften it --
+ * better to leave an iCloud-only photo blank than to wedge the whole grid.
+ *
+ * Results are shared across cells so scrolling a photo back into view is a
+ * cache read, and one bad asset is only ever resolved once.
+ */
+const fallbackUris = new Map<string, Promise<string | null>>();
+
+function resolveFallbackUri(asset: MediaLibrary.Asset): Promise<string | null> {
+  const existing = fallbackUris.get(asset.id);
+  if (existing) return existing;
+  const pending = MediaLibrary.getAssetInfoAsync(asset, { shouldDownloadFromNetwork: false })
+    .then((info) => (info.localUri && info.localUri !== asset.uri ? info.localUri : null))
+    .catch(() => null);
+  fallbackUris.set(asset.id, pending);
+  return pending;
+}
+
+// ---------------------------------------------------------------------------
+// Album switcher
+// ---------------------------------------------------------------------------
+
+type AlbumEntry = { id: string; title: string; count: number; coverUri?: string };
+
+/**
+ * Albums with their most recent photo as a cover, the way every OS picker
+ * presents them -- a bare list of names gives you no way to recognise the
+ * album you meant.
+ *
+ * Anything empty is dropped (a video-only album has no photos to show), as is
+ * the smart album that mirrors the whole library, which would otherwise sit
+ * directly under the "Recents" entry that already means exactly that. The
+ * title match is English-only, which is what the rest of this app's copy is;
+ * in another locale the worst case is one redundant row.
+ */
+async function loadAlbums(): Promise<AlbumEntry[]> {
+  const found = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
+  const usable = found.filter(
+    (album) => album.assetCount > 0 && album.title.toLowerCase() !== ALL_PHOTOS_LABEL.toLowerCase()
+  );
+
+  const entries = await Promise.all(
+    usable.map(async (album): Promise<AlbumEntry | null> => {
+      try {
+        const cover = await MediaLibrary.getAssetsAsync({
+          first: 1,
+          album: album.id,
+          mediaType: [MediaLibrary.MediaType.photo],
+          sortBy: [MediaLibrary.SortBy.creationTime],
+        });
+        // No photos in it, whatever `assetCount` claimed -- an album of
+        // videos counts them, and this grid can't show any of them.
+        if (cover.assets.length === 0) return null;
+        return {
+          id: album.id,
+          title: album.title,
+          count: cover.totalCount,
+          coverUri: cover.assets[0].uri,
+        };
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  return entries
+    .filter((entry): entry is AlbumEntry => entry !== null)
+    .sort((a, b) => b.count - a.count);
+}
+
+function AlbumRow({
+  title,
+  count,
+  coverUri,
+  selected,
+  onPress,
+}: {
+  title: string;
+  count?: number;
+  coverUri?: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const { colors, typography } = useTheme();
+  return (
+    <Pressable onPress={onPress} style={styles.albumRow}>
+      <View style={[styles.albumCover, { backgroundColor: colors.imagePlaceholder }]}>
+        {coverUri ? (
+          <Image
+            source={coverUri}
+            style={styles.cellImage}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+            accessible={false}
+          />
+        ) : (
+          <Feather name="image" size={16} color={colors.textSecondary} />
+        )}
+      </View>
+      <View style={styles.albumText}>
+        <Text style={[typography.body, { color: colors.text }]} numberOfLines={1}>
+          {title}
+        </Text>
+        {count !== undefined ? (
+          <Text style={[typography.meta, { color: colors.textSecondary }]}>{count}</Text>
+        ) : null}
+      </View>
+      {selected ? <Feather name="check" size={18} color={colors.accent} /> : null}
+    </Pressable>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/** The largest frame of the given aspect ratio that fits inside `pane`. */
+function fitFrame(aspect: number, pane: ImageSize): ImageSize {
+  const width = Math.min(pane.width, pane.height * aspect);
+  return { width: Math.round(width), height: Math.round(width / aspect) };
+}
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+  header: {
+    height: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    borderBottomWidth: hairlineWidth,
+  },
+  title: { fontSize: 17, fontWeight: '600' },
+  disabled: { opacity: 0.4 },
+  // Always black: this is photo letterboxing, which doesn't follow the
+  // screen's light/dark state any more than a photo viewer's backdrop does.
+  pane: { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
+  aspectButton: {
+    position: 'absolute',
+    left: spacing.md,
+    bottom: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  aspectLabel: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  toolbar: {
+    height: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    borderBottomWidth: hairlineWidth,
+  },
+  sourceButton: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
+  sourceChevron: { marginLeft: spacing.xs },
+  cameraButton: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  limitedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  list: { flex: 1 },
+  row: { gap: GUTTER },
+  content: { gap: GUTTER },
+  cellImage: { width: '100%', height: '100%' },
+  selectedDim: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(255,255,255,0.35)' },
+  selectedRing: {
+    ...StyleSheet.absoluteFill,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  listSpinner: { paddingVertical: spacing.xxl },
+  emptyState: { paddingVertical: spacing.xxl, alignItems: 'center' },
+  backdrop: { ...StyleSheet.absoluteFill },
+  sheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: '70%',
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    paddingTop: spacing.sm,
+  },
+  grabber: {
+    alignSelf: 'center',
+    width: 36,
+    height: 4,
+    borderRadius: radius.pill,
+    marginBottom: spacing.sm,
+  },
+  sheetContent: { paddingBottom: spacing.xxl },
+  albumsSpinner: { paddingVertical: spacing.lg },
+  albumRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  albumCover: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  albumText: { flex: 1, gap: 2 },
+});
+
+export default LibraryPicker;

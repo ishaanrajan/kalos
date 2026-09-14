@@ -11,6 +11,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider, focusManager, onlineManager } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '../lib/auth';
+import { MusicProvider } from '../lib/audio';
 import { useTheme } from '../lib/theme';
 import { EmptyState } from '../components/EmptyState';
 import { OfflineBanner } from '../components/OfflineBanner';
@@ -262,8 +263,10 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <StatusBar style="auto" />
-            <RootNavigator />
+            <MusicProvider>
+              <StatusBar style="auto" />
+              <RootNavigator />
+            </MusicProvider>
           </AuthProvider>
         </QueryClientProvider>
       </SafeAreaProvider>

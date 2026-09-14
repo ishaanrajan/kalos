@@ -41,6 +41,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { searchTracks } from '../lib/music';
 
 // ---------------------------------------------------------------------------
 // env
@@ -209,6 +210,52 @@ const FILTERS = [
   'Lo-Fi', 'Earlybird', 'Sutro', 'Toaster', 'Brannan', 'Inkwell', 'Willow',
   'Mayfair', 'Sierra', 'Kelvin', 'Hefe', '1977', 'Walden',
 ];
+
+/**
+ * Tracks for seeded posts, fetched live from the catalog at seed time rather
+ * than hardcoded.
+ *
+ * Apple's preview URLs carry a content hash and do rot; a fixed list would go
+ * silently un-playable months from now and look like a bug in the player. This
+ * asks the same module the app uses (lib/music.ts) for whatever is current.
+ * If the catalog can't be reached, seeded posts simply get no music -- the
+ * seed must not fail over something cosmetic.
+ */
+const TRACK_SEEDS = ['fleetwood mac dreams', 'harry styles as it was', 'frank ocean ivy', 'sza snooze'];
+
+type SeedTrack = {
+  track_id: string;
+  title: string;
+  artist: string;
+  artwork_url: string | null;
+  preview_url: string;
+  store_url: string;
+};
+
+let TRACKS: SeedTrack[] = [];
+
+async function loadTracks(): Promise<void> {
+  const found: SeedTrack[] = [];
+  for (const term of TRACK_SEEDS) {
+    try {
+      const [track] = await searchTracks(term);
+      if (track) {
+        found.push({
+          track_id: track.id,
+          title: track.title,
+          artist: track.artist,
+          artwork_url: track.artworkUrl,
+          preview_url: track.previewUrl,
+          store_url: track.storeUrl,
+        });
+      }
+    } catch {
+      // Leave it out; see the note above.
+    }
+  }
+  TRACKS = found;
+  console.log(`   ${found.length}/${TRACK_SEEDS.length} seed tracks resolved`);
+}
 
 const CAPTIONS = [
   'golden hour did most of the work here',
@@ -500,6 +547,12 @@ async function createPosts(users: Map<string, CreatedUser>): Promise<SeededPost[
             : 'still not in your Explore'
           : pick(CAPTIONS),
         filter_name: chance(0.85) ? pick(FILTERS) : null,
+        // A minority of posts carry music, the way they do in a real feed --
+        // enough to exercise handing playback between cards while scrolling,
+        // not so many that every post is noisy.
+        music: TRACKS.length && chance(0.25)
+          ? { ...pick(TRACKS), start_ms: Math.floor(rand() * 15) * 1000 }
+          : null,
         created_at: iso(msAgo),
       });
       all.push({ id, author: u.username, authorId: user.id, createdAtMs: NOW - msAgo });
@@ -698,6 +751,7 @@ async function main() {
   console.log(`\nSeeding Kalos at ${SUPABASE_URL}`);
 
   await wipe();
+  await loadTracks();
   const users = await createUsers();
   const posts = await createPosts(users);
   await createFollows(users);

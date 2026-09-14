@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActionSheetIOS,
   ActivityIndicator,
   Alert,
   Dimensions,
@@ -15,8 +14,9 @@ import {
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import * as MediaLibrary from 'expo-media-library';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { randomUUID } from 'expo-crypto';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { File } from 'expo-file-system';
 import { Tabs, useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -24,16 +24,20 @@ import { useQueryClient } from '@tanstack/react-query';
 import { FilterStrip } from '../../components/FilterStrip';
 import { FilterPreview } from '../../components/FilterPreview';
 import { EmptyState } from '../../components/EmptyState';
-import { PhotoLibraryGrid } from '../../components/PhotoLibraryGrid';
+import { LibraryPicker } from '../../components/LibraryPicker';
 import { CropAdjust } from '../../components/CropAdjust';
 import type { CropAdjustHandle } from '../../components/CropAdjust';
 import { displayAspectRatio } from '../../components/PostCard';
 import { FILTERS, getFilter } from '../../lib/filters';
+import type { CropRect, ImageSize } from '../../lib/types';
 import { bakeFilteredImage, downscaleForPreview, prepareSource } from '../../lib/bake';
 import { supabase, PHOTOS_BUCKET } from '../../lib/supabase';
 import { useUpdateProfile } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
+import { useMusic } from '../../lib/audio';
+import { trackToPostMusic, type Track } from '../../lib/music';
+import { MusicPicker } from '../../components/MusicPicker';
 import { setUpdatePromptSuppressed } from '../../lib/updates';
 
 const SCREEN = Dimensions.get('window').width;
@@ -61,14 +65,15 @@ type RawPick = { uri: string; width: number; height: number };
 type Picked = { uri: string; width: number; height: number; previewUri: string };
 
 /**
- * Four steps: pick (in-app library grid, or straight to the camera), adjust
- * the framing, choose the look, then write the caption -- library and
- * camera both funnel into the same adjust step so a photo always gets the
- * same reframing chance regardless of where it came from.
+ * Pick a photo, choose the look, write the caption.
+ *
+ * 'library' is the composer's front door: the picker frames the photo on the
+ * same screen it's chosen from, so the library path has no separate adjust
+ * step to pass through. 'adjust' is the camera's -- a freshly shot photo has
+ * had no chance at a framing yet, and giving it the same crop surface is what
+ * keeps a posted photo the same shape regardless of where it came from.
  */
-type Step = 'library' | 'adjust' | 'filter' | 'share';
-
-type Source = 'camera' | 'library';
+type Step = 'library' | 'adjust' | 'filter' | 'share' | 'music';
 
 /**
  * Requests a permission, then re-checks it once if the request came back
@@ -95,32 +100,6 @@ async function requestLibraryPermissionWithRetry(): Promise<MediaLibrary.Permiss
   return MediaLibrary.getPermissionsAsync();
 }
 
-/**
- * Camera or library, asked with the platform's own sheet so nothing of ours
- * has to render first. The tab is a shutter button; putting a screen in front
- * of the picker just to hold two buttons made it flash on the way past.
- */
-function chooseSource(): Promise<Source | null> {
-  if (Platform.OS === 'ios') {
-    return new Promise((resolve) => {
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options: ['Cancel', 'Take Photo', 'Choose from Library'],
-          cancelButtonIndex: 0,
-        },
-        (index) => resolve(index === 1 ? 'camera' : index === 2 ? 'library' : null)
-      );
-    });
-  }
-  return new Promise((resolve) => {
-    Alert.alert('New post', undefined, [
-      { text: 'Take Photo', onPress: () => resolve('camera') },
-      { text: 'Choose from Library', onPress: () => resolve('library') },
-      { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
-    ]);
-  });
-}
-
 export default function NewPost() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -136,14 +115,16 @@ export default function NewPost() {
 
   // Not 'library' -- that branch below renders unconditionally on its own
   // (unlike 'adjust', which also requires rawPicked), so defaulting to it
-  // would flash the grid open before launch() has even asked Take Photo vs.
-  // Choose from Library. 'filter' is safe as a placeholder: its branch sits
+  // would flash the grid open before launch() has even resolved the photo
+  // library permission. 'filter' is safe as a placeholder: its branch sits
   // behind the `!picked` guard, which is true until a crop is confirmed.
   const [step, setStep] = useState<Step>('filter');
   const [rawPicked, setRawPicked] = useState<RawPick | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
   const [filterName, setFilterName] = useState(FILTERS[0].name);
   const [caption, setCaption] = useState('');
+  const [musicTrack, setMusicTrack] = useState<Track | null>(null);
+  const [musicStartMs, setMusicStartMs] = useState(0);
   const [posting, setPosting] = useState(false);
   /** Set when a permission was refused, so there's something to retry from. */
   const [blocked, setBlocked] = useState<string | null>(null);
@@ -154,6 +135,8 @@ export default function NewPost() {
    * a separate blank screen, so it never reads as the app having reset.
    */
   const [processing, setProcessing] = useState(false);
+
+  const { stop: stopMusic } = useMusic();
 
   const cropRef = useRef<CropAdjustHandle>(null);
   const postingRef = useRef(false);
@@ -202,45 +185,58 @@ export default function NewPost() {
     pickedRef.current = picked;
   }, [step, blocked, rawPicked, picked]);
 
+  /**
+   * The composer opens straight into the library, with the camera one tap
+   * away inside it. It used to open a Take Photo / Choose from Library action
+   * sheet first, which is the 2015 iOS idiom rather than the one Instagram
+   * uses now -- and it meant the common case (posting a photo you already
+   * took) cost a modal, a decision and a dismissal before anything appeared,
+   * with a blank screen underneath the whole time.
+   */
   const launch = useCallback(async () => {
     if (picking.current) return;
     picking.current = true;
     setBlocked(null);
     try {
-      const source = await chooseSource();
-      if (!source) {
-        // Backing out of the sheet means backing out of posting.
-        router.replace('/(tabs)');
+      const permission = await requestLibraryPermissionWithRetry();
+      if (!permission.granted) {
+        setBlocked('Kalos needs photo library access to post.');
         return;
       }
+      setStep('library');
+    } finally {
+      picking.current = false;
+    }
+  }, []);
 
-      if (source === 'library') {
-        const permission = await requestLibraryPermissionWithRetry();
-        if (!permission.granted) {
-          setBlocked('Kalos needs photo library access to post.');
-          return;
-        }
-        setStep('library');
-        return;
-      }
-
+  /**
+   * Failures here are surfaced as an alert rather than through `blocked`:
+   * the camera is reached from inside the picker, which is still sitting
+   * there perfectly usable underneath, so replacing it with a full-screen
+   * error would be throwing away a working screen over a detour that didn't
+   * work out.
+   */
+  const openCamera = useCallback(async () => {
+    if (picking.current) return;
+    picking.current = true;
+    try {
       const permission = await requestCameraPermissionWithRetry();
       if (!permission.granted) {
-        setBlocked('Kalos needs camera access to take a photo.');
+        Alert.alert('Can’t open the camera', 'Kalos needs camera access to take a photo.');
         return;
       }
 
-      // No forced crop here either -- CropAdjust is what gives a photo its
-      // framing now, uniformly for both camera and library.
+      // No forced crop here -- CropAdjust is what gives a photo its framing,
+      // uniformly for both camera and library.
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
         allowsEditing: false,
         quality: 1,
       });
-      if (result.canceled || !result.assets[0]) {
-        router.replace('/(tabs)');
-        return;
-      }
+      // Backing out of the camera returns to the picker rather than out of
+      // the composer -- it's a detour from the library, not a step in front
+      // of it, so cancelling it shouldn't throw away the whole trip.
+      if (result.canceled || !result.assets[0]) return;
 
       const asset = result.assets[0];
       setRawPicked({ uri: asset.uri, width: asset.width, height: asset.height });
@@ -248,11 +244,11 @@ export default function NewPost() {
     } catch (e) {
       // The simulator has no camera, and that surfaces here rather than as a
       // permission refusal.
-      setBlocked(e instanceof Error ? e.message : 'Could not open the camera.');
+      Alert.alert('Can’t open the camera', e instanceof Error ? e.message : undefined);
     } finally {
       picking.current = false;
     }
-  }, [router]);
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -280,66 +276,67 @@ export default function NewPost() {
   const discard = useCallback(() => {
     // 'filter', not 'library' -- same reasoning as the initial state above.
     // If this component doesn't fully unmount before the tab's focused
-    // again, a stale 'library'/'adjust' step would skip launch()'s
-    // Take Photo vs. Choose from Library sheet entirely.
+    // again, a stale 'library'/'adjust' step would skip launch() entirely and
+    // leave the composer sitting on the last post's leftovers.
     setStep('filter');
     setRawPicked(null);
     setPicked(null);
     setCaption('');
+    setMusicTrack(null);
+    setMusicStartMs(0);
+    stopMusic();
     router.replace('/(tabs)');
-  }, [router]);
+  }, [router, stopMusic]);
 
-  // Fired the instant a grid cell's tapped -- there's no separate "selected,
-  // now confirm" step, since CropAdjust right after this is already a full
-  // preview of the photo. The grid itself shows a spinner on the tapped cell
-  // while this resolves and ignores further taps until it settles.
-  const pickFromLibrary = useCallback(async (asset: MediaLibrary.Asset) => {
-    try {
-      const info = await asset.getInfo();
-      setRawPicked({ uri: info.uri, width: info.width, height: info.height });
-      setStep('adjust');
-    } catch (e) {
-      Alert.alert('Could not use that photo', e instanceof Error ? e.message : undefined);
-    }
-  }, []);
+  /**
+   * A framed photo becomes the one image the rest of the composer works from.
+   *
+   * Bake the framing into a real file right here, once, and let every later
+   * step read from that. The rect the user chose is applied natively (which
+   * also turns an EXIF-rotated photo upright, since the rect was measured in
+   * the upright space they were looking at), and the result is capped at
+   * SOURCE_MAX_EDGE so the original's full resolution never has to be decoded
+   * again -- not for the preview, and not on the JS thread at post time.
+   *
+   * Both files come out of one decode of the original: the capped source the
+   * bake reads, and the preview the filter step shows. They're the same
+   * pixels by construction, so the filter you pick and the thumbnail beside
+   * the caption match what actually gets uploaded.
+   *
+   * Shared by both entry points. The library picker and the camera's adjust
+   * step arrive here with exactly the same three things -- a file, its true
+   * dimensions, and a rect in that file's pixel space -- so there is one
+   * place where a crop turns into a post, not two that have to agree.
+   */
+  const prepareFramed = useCallback(
+    async ({ uri, natural, crop }: { uri: string; natural: ImageSize; crop: CropRect }) => {
+      setProcessing(true);
+      try {
+        const { source, preview } = await prepareSource(uri, crop, natural, PREVIEW_MAX_EDGE);
+        setPicked({
+          uri: source.uri,
+          width: source.width,
+          height: source.height,
+          previewUri: preview.uri,
+        });
+        setRawPicked(null);
+        setStep('filter');
+        setFilterName(FILTERS[0].name);
+        setCaption('');
+      } catch (e) {
+        Alert.alert('Could not use that photo', e instanceof Error ? e.message : undefined);
+      } finally {
+        setProcessing(false);
+      }
+    },
+    []
+  );
 
   const confirmCrop = useCallback(async () => {
     if (!rawPicked || !cropRef.current) return;
-    setProcessing(true);
-    try {
-      const crop = cropRef.current.getCropRect();
-      // Bake the framing into a real file right here, once, and let every
-      // later step read from that. The rect the user just chose is applied
-      // natively (which also turns an EXIF-rotated photo upright, since the
-      // rect was measured in the upright space they were looking at), and the
-      // result is capped at SOURCE_MAX_EDGE so the original's full resolution
-      // never has to be decoded again -- not for the preview, and not on the
-      // JS thread at post time.
-      // Both files come out of one decode of the original: the capped source
-      // the bake reads, and the preview the filter step shows. They're the
-      // same pixels by construction, so the filter you pick and the thumbnail
-      // beside the caption match what actually gets uploaded.
-      const { source, preview } = await prepareSource(
-        rawPicked.uri,
-        crop,
-        { width: rawPicked.width, height: rawPicked.height },
-        PREVIEW_MAX_EDGE,
-      );
-      setPicked({
-        uri: source.uri,
-        width: source.width,
-        height: source.height,
-        previewUri: preview.uri,
-      });
-      setStep('filter');
-      setFilterName(FILTERS[0].name);
-      setCaption('');
-    } catch (e) {
-      Alert.alert('Could not use that photo', e instanceof Error ? e.message : undefined);
-    } finally {
-      setProcessing(false);
-    }
-  }, [rawPicked]);
+    const natural = { width: rawPicked.width, height: rawPicked.height };
+    await prepareFramed({ uri: rawPicked.uri, natural, crop: cropRef.current.getCrop(natural) });
+  }, [rawPicked, prepareFramed]);
 
   const share = useCallback(async () => {
     if (!picked || !session) return;
@@ -442,6 +439,7 @@ export default function NewPost() {
         height: baked.height,
         caption: caption.trim() || null,
         filter_name: isNormal ? null : filter.name,
+        music: musicTrack ? trackToPostMusic(musicTrack, musicStartMs) : null,
       });
       if (insertError) throw insertError;
     } catch (e) {
@@ -489,6 +487,9 @@ export default function NewPost() {
     setRawPicked(null);
     setPicked(null);
     setCaption('');
+    setMusicTrack(null);
+    setMusicStartMs(0);
+    stopMusic();
     router.replace('/(tabs)');
 
     // Best-effort cleanup from here on -- a failure here must never be
@@ -516,6 +517,9 @@ export default function NewPost() {
     filter,
     isNormal,
     caption,
+    musicTrack,
+    musicStartMs,
+    stopMusic,
     qc,
     router,
     isForcedFirstPost,
@@ -523,30 +527,24 @@ export default function NewPost() {
     refreshProfile,
   ]);
 
-  // A forced first post has nowhere else to send you, so the tab bar itself
-  // is hidden rather than just non-functional.
-  const hideTabBar = isForcedFirstPost ? (
-    <Tabs.Screen options={{ tabBarStyle: { display: 'none' } }} />
-  ) : null;
+  // The composer is a flow, not a destination: once you're in it every screen
+  // has its own Cancel, and the tab bar underneath is either a way to abandon
+  // a half-written post without being asked or -- during a forced first post
+  // -- a row of buttons with nowhere to go. Instagram's composer covers it for
+  // the same reason. Scoped to this screen by React Navigation, so it comes
+  // back on its own the moment the composer is left.
+  const hideTabBar = <Tabs.Screen options={{ tabBarStyle: { display: 'none' } }} />;
 
   if (step === 'library') {
+    // The picker owns the whole screen, header included -- it has a preview,
+    // an album switcher and a camera button to place, and splitting that
+    // chrome across two files is how the header ends up disagreeing with what
+    // the screen underneath it can actually do.
     return (
-      <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
+      <>
         {hideTabBar}
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <Pressable onPress={discard} hitSlop={12}>
-            <Text style={[styles.headerAction, { color: colors.text }]}>Cancel</Text>
-          </Pressable>
-          <Text style={[styles.title, { color: colors.text }]}>New post</Text>
-          {/* No forward action here -- tapping a photo below picks it and
-              advances straight to the crop step, so there's nothing left to
-              confirm from the header. An empty view of the same footprint as
-              the other steps' trailing button keeps the title centered. */}
-          <View style={styles.headerSpacer} />
-        </View>
-
-        <PhotoLibraryGrid onPick={pickFromLibrary} containerWidth={SCREEN} style={styles.grid} />
-      </SafeAreaView>
+        <LibraryPicker onCancel={discard} onOpenCamera={openCamera} onNext={prepareFramed} />
+      </>
     );
   }
 
@@ -556,9 +554,19 @@ export default function NewPost() {
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         {hideTabBar}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <Pressable onPress={discard} hitSlop={12} disabled={processing}>
+          {/* Back to the picker, not out of the composer: the camera is a
+              detour from the library, so undoing the shot should return you
+              to where you took it from. */}
+          <Pressable
+            onPress={() => {
+              setRawPicked(null);
+              setStep('library');
+            }}
+            hitSlop={12}
+            disabled={processing}
+          >
             <Text style={[styles.headerAction, { color: colors.text }, processing && styles.disabled]}>
-              Cancel
+              Back
             </Text>
           </Pressable>
           <Text style={[styles.title, { color: colors.text }]}>New post</Text>
@@ -612,8 +620,11 @@ export default function NewPost() {
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
         {hideTabBar}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <Pressable onPress={discard} hitSlop={12}>
-            <Text style={[styles.headerAction, { color: colors.text }]}>Cancel</Text>
+          {/* Back to the picker rather than out of the composer -- changing
+              your mind about which photo shouldn't cost you the whole post,
+              and every step from here on is already reversible. */}
+          <Pressable onPress={() => setStep('library')} hitSlop={12}>
+            <Text style={[styles.headerAction, { color: colors.text }]}>Back</Text>
           </Pressable>
           <Text style={[styles.title, { color: colors.text }]}>New post</Text>
           <Pressable onPress={() => setStep('share')} hitSlop={12}>
@@ -637,6 +648,31 @@ export default function NewPost() {
             onSelect={setFilterName}
           />
         </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (step === 'music') {
+    return (
+      <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
+        {hideTabBar}
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Pressable onPress={() => { stopMusic(); setStep('share'); }} hitSlop={12}>
+            <Text style={[styles.headerAction, { color: colors.text }]}>Back</Text>
+          </Pressable>
+          <Text style={[styles.title, { color: colors.text }]}>Add music</Text>
+          <Pressable onPress={() => { stopMusic(); setStep('share'); }} hitSlop={12}>
+            <Text style={[styles.headerAction, styles.forward, { color: colors.accent }]}>Done</Text>
+          </Pressable>
+        </View>
+
+        <MusicPicker
+          selected={musicTrack}
+          startMs={musicStartMs}
+          onChangeSelected={setMusicTrack}
+          onChangeStartMs={setMusicStartMs}
+          width={SCREEN}
+        />
       </SafeAreaView>
     );
   }
@@ -683,6 +719,35 @@ export default function NewPost() {
             maxLength={2200}
           />
         </View>
+        <Pressable
+          onPress={() => setStep('music')}
+          disabled={posting}
+          style={[styles.musicRow, { borderTopColor: colors.border }]}
+          accessibilityRole="button"
+          accessibilityLabel={musicTrack ? 'Change music' : 'Add music'}
+        >
+          <Ionicons name="musical-notes-outline" size={18} color={colors.text} />
+          <Text style={[styles.musicLabel, { color: colors.text }]} numberOfLines={1}>
+            {musicTrack ? `${musicTrack.title} · ${musicTrack.artist}` : 'Add music'}
+          </Text>
+          {musicTrack ? (
+            <Pressable
+              onPress={() => {
+                setMusicTrack(null);
+                setMusicStartMs(0);
+                stopMusic();
+              }}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Remove music"
+            >
+              <Ionicons name="close" size={18} color={colors.textSecondary} />
+            </Pressable>
+          ) : (
+            <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+          )}
+        </Pressable>
+
         {!isNormal && (
           <Text style={[styles.appliedFilter, { color: colors.textSecondary }]}>{filter.name}</Text>
         )}
@@ -709,15 +774,20 @@ const styles = StyleSheet.create({
   // Always black, not theme-driven -- this is photo letterboxing, the same
   // way a photo/video viewer's background stays black regardless of theme.
   preview: { backgroundColor: '#000' },
-  // Same width as the trailing Text/ActivityIndicator on every other step's
-  // header, so "New post" lands in the same spot regardless of step.
-  headerSpacer: { width: 32 },
-  grid: { flex: 1 },
   adjustBody: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   shareBody: { flex: 1 },
   captionRow: { flexDirection: 'row', gap: 12, padding: 16 },
   thumb: { borderRadius: 3, overflow: 'hidden' },
   caption: { flex: 1, fontSize: 15, paddingTop: 2, minHeight: 72 },
+  musicRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  musicLabel: { flex: 1, fontSize: 15 },
   appliedFilter: {
     paddingHorizontal: 16,
     fontSize: 12,
