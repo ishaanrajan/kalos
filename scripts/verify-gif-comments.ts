@@ -7,6 +7,11 @@
  * real non-privileged user -- the shape constraints are what actually
  * enforce it, not just the client's own choices.
  *
+ * Runs against a disposable throwaway account and post this script creates
+ * and deletes itself, not a pre-seeded fixture -- this project's live
+ * database was seeded with real accounts, not scripts/seed.ts's synthetic
+ * ones, so a hardcoded `maya-dev@example.com` login would just fail here.
+ *
  *   npx tsx scripts/verify-gif-comments.ts
  */
 import { createClient } from '@supabase/supabase-js';
@@ -44,19 +49,18 @@ const SAMPLE_GIF = {
 async function main() {
   console.log('\nGIF comments\n');
 
-  const { error: se } = await c.auth.signInWithPassword({
-    email: 'maya-dev@example.com',
-    password: 'kalos2015',
-  });
-  if (se) throw new Error(se.message);
-  const me = (await c.auth.getUser()).data.user!.id;
+  const email = `verify-gif-${Date.now()}@example.com`;
+  const { data: signUp, error: signUpErr } = await c.auth.signUp({ email, password: 'kalos2015-verify' });
+  if (signUpErr || !signUp.user) throw new Error(`signup failed: ${signUpErr?.message}`);
+  const me = signUp.user.id;
 
-  const { data: own } = await admin.from('posts').select('id').eq('author_id', me).limit(1);
-  const postId = own?.[0]?.id as string | undefined;
-  if (!postId) {
-    console.log('\nNo post to test against -- run `npm run seed` first.\n');
-    process.exit(1);
-  }
+  const { data: post, error: postErr } = await admin
+    .from('posts')
+    .insert({ author_id: me, image_path: 'verify/gif-comments-test.jpg' })
+    .select('id')
+    .single();
+  if (postErr || !post) throw new Error(`could not create a test post: ${postErr?.message}`);
+  const postId = post.id as string;
 
   const seeded: string[] = [];
 
@@ -139,6 +143,10 @@ async function main() {
       const { error } = await admin.from('comments').delete().in('id', seeded);
       if (error) console.error(`  !! could not clean up test comments: ${error.message}`);
     }
+    const { error: delPostErr } = await admin.from('posts').delete().eq('id', postId);
+    if (delPostErr) console.error(`  !! could not clean up test post ${postId}: ${delPostErr.message}`);
+    const { error: delUserErr } = await admin.auth.admin.deleteUser(me);
+    if (delUserErr) console.error(`  !! could not clean up test user ${me}: ${delUserErr.message}`);
   }
 
   console.log(failed === 0 ? '\nGIF comments are wired correctly.\n' : `\n${failed} failed.\n`);
