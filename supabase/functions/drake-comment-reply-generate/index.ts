@@ -132,6 +132,24 @@ Deno.serve(async (req) => {
     return new Response('not a mention', { status: 200 });
   }
 
+  // One reply in the queue per post at a time. A thread once ended up with
+  // two Drake replies to a single mention, back to back, because two rows
+  // were queued for it -- whether from a double-fired webhook or a fast
+  // second mention, one in-flight reply per thread is the right ceiling for
+  // something that posts publicly with no review. (drake-comment-reply-flush
+  // has its own last line of defence against consecutive comments.)
+  const { count: queued, error: queuedErr } = await db
+    .from('drake_pending_comment_replies')
+    .select('id', { count: 'exact', head: true })
+    .eq('post_id', r.post_id);
+  if (queuedErr) {
+    console.error('could not check the queue', queuedErr);
+    return new Response('queue check failed', { status: 200 });
+  }
+  if ((queued ?? 0) > 0) {
+    return new Response('reply already queued for this post', { status: 200 });
+  }
+
   // The rest of the post's comment section, oldest first, as conversational
   // context -- every non-bot comment collapses to a single 'user' role
   // regardless of who actually wrote it. A post's comments can have more

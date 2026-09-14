@@ -25,6 +25,14 @@ const BOT_USERNAME = 'prosecco_daddy';
 // how much one cron tick can do if something ever backs up the queue.
 const BATCH_LIMIT = 20;
 
+// A reply that missed its window by this much is dropped, not posted late.
+// The flush cron was once silently dead for most of a day (see
+// 0030_fix_drake_comment_reply_cron.sql); when it came back it drained a
+// 9-hour-old backlog in one tick, including a second reply on a thread the
+// human had already been answered in. A reply to "@prosecco_daddy ..." nine
+// hours later reads as a bug, not a bit -- better to stay quiet.
+const MAX_LATE_MS = 2 * 60 * 60 * 1000;
+
 Deno.serve(async () => {
   const { data: bot, error: botErr } = await db
     .from('profiles')
@@ -38,7 +46,7 @@ Deno.serve(async () => {
 
   const { data: due, error: dueErr } = await db
     .from('drake_pending_comment_replies')
-    .select('id, post_id, body')
+    .select('id, post_id, body, send_at')
     .lte('send_at', new Date().toISOString())
     .order('send_at', { ascending: true })
     .limit(BATCH_LIMIT);
@@ -51,25 +59,63 @@ Deno.serve(async () => {
   }
 
   let sent = 0;
+  let dropped = 0;
   for (const row of due) {
+    // Claim the row first. Insert-then-delete meant a failed delete posted
+    // the same reply again a minute later; delete-then-insert means a failed
+    // insert loses one reply. For something that auto-posts publicly under
+    // his name, a missing comment is the better failure mode than a
+    // duplicated one.
+    const { data: claimed, error: claimErr } = await db
+      .from('drake_pending_comment_replies')
+      .delete()
+      .eq('id', row.id)
+      .select('id');
+    if (claimErr || !claimed || claimed.length === 0) {
+      // Already taken by an overlapping run, or gone. Either way not ours.
+      continue;
+    }
+
+    if (Date.now() - new Date(row.send_at).getTime() > MAX_LATE_MS) {
+      console.warn(`dropped stale reply ${row.id} for post ${row.post_id}`);
+      dropped++;
+      continue;
+    }
+
+    // Never twice in a row. If the last thing on the thread is already him
+    // -- a sporadic one-liner, or an earlier reply to the same mention that
+    // got queued twice -- a second consecutive comment with nobody in
+    // between reads as him talking to himself. The mention that provoked
+    // this reply has, by definition, already been answered.
+    const { data: latest, error: latestErr } = await db
+      .from('comments')
+      .select('author_id')
+      .eq('post_id', row.post_id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (latestErr) {
+      console.error(`could not read thread for pending reply ${row.id}`, latestErr);
+      dropped++;
+      continue;
+    }
+    if (latest?.[0]?.author_id === bot.id) {
+      console.warn(`dropped reply ${row.id}: last comment on post ${row.post_id} is already the bot's`);
+      dropped++;
+      continue;
+    }
+
     const { error: insertErr } = await db.from('comments').insert({
       post_id: row.post_id,
       author_id: bot.id,
       body: row.body,
     });
     if (insertErr) {
-      // Leave it queued -- next minute's run retries it rather than losing it.
       console.error(`post failed for pending reply ${row.id}`, insertErr);
+      dropped++;
       continue;
-    }
-    const { error: deleteErr } = await db.from('drake_pending_comment_replies').delete().eq('id', row.id);
-    if (deleteErr) {
-      // Posted but not cleared -- worst case it's posted again next run,
-      // which is a better failure mode than silently dropping it.
-      console.error(`could not clear sent reply ${row.id}`, deleteErr);
     }
     sent++;
   }
 
-  return new Response(`sent ${sent}/${due.length}`, { status: 200 });
+  return new Response(`sent ${sent}, dropped ${dropped}, of ${due.length}`, { status: 200 });
 });
