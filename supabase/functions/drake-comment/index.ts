@@ -2,16 +2,18 @@
 //
 // Called every hour by a pg_cron schedule (see 0026_drake_comments.sql).
 // Drops one canned one-liner as @prosecco_daddy on a random real post he
-// hasn't already commented on.
+// hasn't already commented on, made earlier today.
 //
 // "Sporadic" is handled here, not in the schedule: an hourly tick that always
 // fires would read as clockwork the moment anyone noticed the pattern (drake-dm
 // already ticks every 4 hours on a fixed clock, and this deliberately isn't
 // meant to feel like a second one of those). COMMENT_CHANCE below is what
 // actually makes it sporadic -- most hourly ticks do nothing, and the ones
-// that don't land at no predictable offset. Expected cadence works out to
-// roughly one comment every ~4 hours, same ballpark as drake-dm, but never on
-// its clock.
+// that don't land at no predictable offset. MAX_DAILY_COMMENTS is a hard
+// ceiling on top of that: a 12% hourly chance averages out to roughly 2-3 a
+// day on its own, but variance in 24 independent coin flips could otherwise
+// occasionally run higher -- the ceiling is what actually guarantees it never
+// does, not just makes it unlikely.
 //
 // Deploy via Dashboard -> Edge Functions -> New Function (paste this file),
 // name it exactly `drake-comment`. Turn off "Enforce JWT verification" --
@@ -25,9 +27,20 @@ const db = createClient(supabaseUrl, serviceRoleKey);
 
 const BOT_USERNAME = 'prosecco_daddy';
 
-// One in four hourly ticks actually comments -- see the header for why this,
-// not the schedule, is what makes this "sporadic."
-const COMMENT_CHANCE = 0.25;
+// See the header for why this, not the schedule, is what makes this
+// "sporadic," and how it interacts with MAX_DAILY_COMMENTS below.
+const COMMENT_CHANCE = 0.12;
+
+// A hard ceiling, not just a statistical tendency -- see the header.
+const MAX_DAILY_COMMENTS = 3;
+
+/** Start of the current UTC day, as an ISO string -- posts and prior
+ *  comments are both compared against this, not calendar-local time, same
+ *  as every other cron job in this app runs on a fixed UTC clock. */
+function startOfTodayUTC(): string {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+}
 
 const COMMENTS = [
   'this might be the best post I’ve seen today, and I’ve seen a lot of posts',
@@ -51,10 +64,6 @@ function pickRandom<T>(arr: T[]): T {
 }
 
 Deno.serve(async () => {
-  if (Math.random() > COMMENT_CHANCE) {
-    return new Response('sat this one out', { status: 200 });
-  }
-
   const { data: bot, error: botErr } = await db
     .from('profiles')
     .select('id')
@@ -65,8 +74,31 @@ Deno.serve(async () => {
     return new Response('bot not found', { status: 200 });
   }
 
-  // A post is a candidate if it isn't the bot's own, and the bot hasn't
-  // already commented on it. The second half is a NOT IN against every post
+  const todayStart = startOfTodayUTC();
+
+  // The ceiling check runs before the coin flip, and before even looking for
+  // a post to comment on -- there's no point picking a target just to throw
+  // the pick away.
+  const { count: todaysCommentCount, error: countErr } = await db
+    .from('comments')
+    .select('id', { count: 'exact', head: true })
+    .eq('author_id', bot.id)
+    .gte('created_at', todayStart);
+  if (countErr) {
+    console.error('could not count today\'s comments', countErr);
+    return new Response('query failed', { status: 502 });
+  }
+  if ((todaysCommentCount ?? 0) >= MAX_DAILY_COMMENTS) {
+    return new Response('hit the daily ceiling', { status: 200 });
+  }
+
+  if (Math.random() > COMMENT_CHANCE) {
+    return new Response('sat this one out', { status: 200 });
+  }
+
+  // A post is a candidate if it isn't the bot's own, was made today (not an
+  // old post resurfacing a comment out of nowhere), and the bot hasn't
+  // already commented on it. The last part is a NOT IN against every post
   // the bot has ever commented on, rather than a separate "already used" log
   // table (contrast daily-drake's drake_bot_photo_log) -- the fact is already
   // a queryable row shape in public.comments, so there's nothing a second
@@ -81,13 +113,17 @@ Deno.serve(async () => {
   }
   const excludePostIds = (alreadyCommented ?? []).map((c) => c.post_id);
 
-  let query = db.from('posts').select('id').neq('author_id', bot.id);
+  let query = db.from('posts').select('id').neq('author_id', bot.id).gte('created_at', todayStart);
   if (excludePostIds.length > 0) {
     query = query.not('id', 'in', `(${excludePostIds.join(',')})`);
   }
   const { data: candidates, error: candidatesErr } = await query;
-  if (candidatesErr || !candidates || candidates.length === 0) {
-    console.error('no comment candidates found', candidatesErr);
+  if (candidatesErr) {
+    console.error('could not query candidate posts', candidatesErr);
+    return new Response('query failed', { status: 502 });
+  }
+  if (!candidates || candidates.length === 0) {
+    // Expected on a quiet day -- nothing posted today yet is not an error.
     return new Response('no candidates', { status: 200 });
   }
 
