@@ -33,9 +33,11 @@ export const palette = {
   divider: '#dbdbdb',
   /** Inert fill: image placeholders, secondary buttons. */
   fill: '#efefef',
-  /** The classic Instagram blue. */
-  blue: '#3897f0',
-  bluePressed: '#2d7dc9',
+  /** The classic Instagram blue -- darker than the original bright sky-blue
+   *  cut, closer to how it actually reads in the 2015 reference (header
+   *  bar, camera badge, usernames, like counts all share this one value). */
+  blue: '#1d6fc9',
+  bluePressed: '#15579e',
   /** Light blue -- @mentions specifically, deliberately paler/more cyan
    * than the primary accent so a mention doesn't read as a button/link. */
   lightBlue: '#5AC8FA',
@@ -55,7 +57,7 @@ export const palette = {
   /** Fixed header chrome, same "always this color, regardless of theme"
    *  reasoning as the tab bar tokens above -- 2015 Instagram's top bar was
    *  the same blue as its camera button, not a whited-out theme surface. */
-  headerBackground: '#3897f0',
+  headerBackground: '#1d6fc9',
   headerIcon: '#ffffff',
 } as const;
 
@@ -182,7 +184,14 @@ export const fontFamily: string | undefined = Platform.select({
  * Android with no error to notice it by.
  */
 export const wordmarkFontFamily: string | undefined = Platform.select({
-  ios: 'Snell Roundhand-Black',
+  // No space before "-Black": the family name "Snell Roundhand" (with a
+  // space) only ever resolves to the Regular cut. The heavier faces are
+  // registered under their own PostScript names, which drop the space --
+  // "Snell Roundhand-Black" (with the space) matches nothing on-device, so
+  // iOS silently fell back to the system default instead of erroring,
+  // which is what made this look like the wordmark had lost its cursive
+  // styling entirely rather than just being the wrong weight.
+  ios: 'SnellRoundhand-Black',
   android: 'cursive',
   web: '"Segoe Script", "Bradley Hand", cursive',
   default: fontFamily,

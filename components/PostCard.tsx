@@ -472,7 +472,7 @@ function PostCardImpl({
       <View style={styles.meta}>
         {likeCount !== 0 ? (
           <Text
-            style={[typography.bodyStrong, { color: colors.text }]}
+            style={[typography.bodyStrong, { color: colors.accent }]}
             onPress={handlePressLikes}
             suppressHighlighting
           >
