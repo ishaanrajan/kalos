@@ -117,6 +117,15 @@ function pickRandom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// Excludes whatever the bot's last caption actually was (including the
+// no-caption case, `null`) before picking -- CAPTIONS has no other
+// duplicates, so this only ever rules out repeating the immediately
+// preceding one, not building a longer no-repeat history.
+function pickCaptionAvoiding(last: string | null): string | null {
+  const pool = CAPTIONS.filter((c) => c !== last);
+  return pickRandom(pool.length > 0 ? pool : CAPTIONS);
+}
+
 async function fetchBytes(url: string): Promise<Uint8Array> {
   const res = await fetch(url, { headers: { 'User-Agent': 'kalos-daily-drake/1.0' } });
   if (!res.ok) throw new Error(`fetch ${url} failed: ${res.status}`);
@@ -155,7 +164,16 @@ Deno.serve(async () => {
 
   const postUrl = await pickUnusedPhoto();
   const avatarUrl = pickRandom(PHOTOS);
-  const caption = pickRandom(CAPTIONS);
+
+  const { data: lastPost, error: lastPostErr } = await db
+    .from('posts')
+    .select('caption')
+    .eq('author_id', bot.id)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lastPostErr) console.error('could not read last caption, picking without avoiding it', lastPostErr);
+  const caption = pickCaptionAvoiding(lastPost?.caption ?? null);
 
   // Post a new photo.
   const postBytes = await fetchBytes(postUrl);

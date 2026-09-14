@@ -585,6 +585,20 @@ export default function NewPost() {
             uri={rawPicked.uri}
             natural={{ width: rawPicked.width, height: rawPicked.height }}
             frame={frame}
+            // The picker's own metadata can disagree with what actually
+            // gets decoded (Android's MediaStore reports pre-rotation
+            // width/height for EXIF-rotated photos) -- correcting
+            // rawPicked in place here is what CropAdjust's own `natural`
+            // doc comment calls "how a wrong one gets fixed", and it's
+            // also what confirmCrop below reads when it calls getCrop(),
+            // so a bad initial guess can't silently survive into the
+            // actual crop math. Without this wired up, a landscape-vs-
+            // portrait mismatch could make getCrop() compute a rect in
+            // the wrong axis order entirely -- clampCropRect (lib/bake.ts)
+            // would then clamp it toward covering the whole image, which
+            // is why the symptom looked like "the crop I chose was
+            // ignored" rather than an obviously wrong rectangle.
+            onImageLoad={(size) => setRawPicked((prev) => (prev ? { ...prev, ...size } : prev))}
           />
         </View>
       </SafeAreaView>
