@@ -76,6 +76,7 @@ so re-applying a file after a tweak is safe.
 | `0028_music_everyone.sql` | Repeals `0025_music_ishaan_only.sql` — `posts_insert_own` goes back to a plain ownership check, so any account can post with music |
 | `0029_comment_gif.sql` | `comments.gif` — GIF-only comments via GIPHY (see `lib/giphy.ts`). `comments.body` becomes nullable; `home_feed`/`activity_feed` coalesce a GIF comment's preview text to `[GIF]` |
 | `0030_fix_drake_comment_reply_cron.sql` | Reschedules `drake-comment-reply-flush-every-minute`, which had silently stopped running — re-run if that job ever goes quiet again |
+| `0031_post_blocks.sql` | `post_blocks` — lets one account hide their posts from a specific other account (post visibility only, not a general block). Admin-managed, no client UI yet; add a row with a plain insert |
 
 ### Option A — SQL editor (no tooling required)
 
@@ -448,7 +449,7 @@ Explore possible. Anonymous callers get nothing — no policy grants `anon`.
 | Table | SELECT | INSERT | UPDATE | DELETE |
 | --- | --- | --- | --- | --- |
 | `profiles` | any authenticated | `id = auth.uid()` | `id = auth.uid()` | — (cascades from `auth.users`) |
-| `posts` | any authenticated | `author_id = auth.uid()` | `author_id = auth.uid()` | `author_id = auth.uid()` |
+| `posts` | any authenticated, minus a per-pair block (`post_blocks`, 0031) | `author_id = auth.uid()` | `author_id = auth.uid()` | `author_id = auth.uid()` |
 | `follows` | any authenticated | `follower_id = auth.uid()` | — | `follower_id = auth.uid()` |
 | `likes` | any authenticated | `user_id = auth.uid()` | — | `user_id = auth.uid()` |
 | `comments` | any authenticated | `author_id = auth.uid()` | — | comment author **or** post author |

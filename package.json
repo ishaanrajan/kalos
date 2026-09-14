@@ -57,6 +57,7 @@
     "verify:notifications": "tsx scripts/verify-notifications.ts",
     "verify:onboarding": "tsx scripts/verify-onboarding.ts",
     "verify:gif-comments": "tsx scripts/verify-gif-comments.ts",
+    "verify:post-blocks": "tsx scripts/verify-post-blocks.ts",
     "seed": "tsx scripts/seed.ts"
   },
   "private": true
