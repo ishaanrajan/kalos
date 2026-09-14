@@ -4,12 +4,15 @@
  * posts from a specific other account, enforced in three independent
  * places (posts' own RLS, home_feed(), explore_feed()).
  *
- * Runs against three disposable throwaway accounts this script creates and
- * tears down itself: A (the blocker/post author), B (the blocked viewer),
- * and C (a third account, needed to give A's post a genuine "liked_by"
- * reason to appear in B's Explore before the block -- otherwise a
- * "does the block hide it" check would be meaningless if it was never
- * going to show up in the first place).
+ * Runs against four disposable throwaway accounts this script creates and
+ * tears down itself: A (the blocker/post author), B (follows A directly --
+ * tests the home_feed path), D (follows C, NOT A -- tests the explore_feed
+ * "liked_by" path), and C (liked A's post, giving D's Explore a genuine
+ * reason to surface it). B and D have to be different accounts: explore_feed
+ * deliberately excludes posts from anyone the viewer already follows
+ * directly (that's what home_feed is for), so a single viewer following
+ * both A and C would make A's post structurally invisible to their own
+ * Explore regardless of any block -- not a real signal that blocking works.
  *
  *   npx tsx scripts/verify-post-blocks.ts
  */
@@ -53,14 +56,12 @@ async function main() {
   const a = await signUp('a');
   const b = await signUp('b');
   const c = await signUp('c');
+  const d = await signUp('d');
 
   let postId: string | undefined;
 
   try {
-    // --- setup: A posts, B follows C, C likes A's post, B follows A too ------
-    // (B follows A so home_feed has something to hide; B follows C, not A,
-    // for the explore_feed check, so both paths get a real pre-block signal
-    // to lose rather than proving a negative that was never positive.)
+    // --- setup -----------------------------------------------------------------
     const { data: post, error: postErr } = await admin
       .from('posts')
       .insert({ author_id: a.id, image_path: 'verify/post-blocks-test.jpg' })
@@ -69,14 +70,14 @@ async function main() {
     if (postErr || !post) throw new Error(`could not create A's post: ${postErr?.message}`);
     postId = post.id as string;
 
-    const { error: followAErr } = await admin.from('follows').insert({ follower_id: b.id, followee_id: a.id });
-    if (followAErr) throw new Error(`b follow a failed: ${followAErr.message}`);
-    const { error: followCErr } = await admin.from('follows').insert({ follower_id: b.id, followee_id: c.id });
-    if (followCErr) throw new Error(`b follow c failed: ${followCErr.message}`);
+    const { error: followBErr } = await admin.from('follows').insert({ follower_id: b.id, followee_id: a.id });
+    if (followBErr) throw new Error(`b follow a failed: ${followBErr.message}`);
+    const { error: followDErr } = await admin.from('follows').insert({ follower_id: d.id, followee_id: c.id });
+    if (followDErr) throw new Error(`d follow c failed: ${followDErr.message}`);
     const { error: likeErr } = await admin.from('likes').insert({ post_id: postId, user_id: c.id });
     if (likeErr) throw new Error(`c like failed: ${likeErr.message}`);
 
-    // --- before the block: B can see A's post every which way -----------------
+    // --- before blocking either viewer: both paths have something real to lose --
     console.log('\nBefore the block\n');
     {
       const { data, error } = await b.client.from('posts').select('id').eq('id', postId);
@@ -88,14 +89,19 @@ async function main() {
       check('a\'s post appears in b\'s home_feed (b follows a)', found);
     }
     {
-      const { data } = await b.client.rpc('explore_feed', { before: null, before_id: null, lim: 50 });
-      const found = ((data ?? []) as Array<{ id: string; reason: string }>).some((r) => r.id === postId);
-      check('a\'s post appears in b\'s explore_feed (liked by c, whom b follows)', found);
+      const { data } = await d.client.rpc('explore_feed', { before: null, before_id: null, lim: 50 });
+      const found = ((data ?? []) as Array<{ id: string }>).some((r) => r.id === postId);
+      check('a\'s post appears in d\'s explore_feed (liked by c, whom d follows; d does not follow a)', found);
     }
 
-    // --- a blocks b ------------------------------------------------------------
-    const { error: blockErr } = await admin.from('post_blocks').insert({ blocker_id: a.id, blocked_id: b.id });
-    if (blockErr) throw new Error(`could not create block: ${blockErr.message}`);
+    // --- a blocks both b and d ---------------------------------------------------
+    const { error: blockErr } = await admin
+      .from('post_blocks')
+      .insert([
+        { blocker_id: a.id, blocked_id: b.id },
+        { blocker_id: a.id, blocked_id: d.id },
+      ]);
+    if (blockErr) throw new Error(`could not create blocks: ${blockErr.message}`);
 
     console.log('\nAfter the block\n');
     {
@@ -108,9 +114,9 @@ async function main() {
       check('a\'s post no longer appears in b\'s home_feed', !found);
     }
     {
-      const { data } = await b.client.rpc('explore_feed', { before: null, before_id: null, lim: 50 });
+      const { data } = await d.client.rpc('explore_feed', { before: null, before_id: null, lim: 50 });
       const found = ((data ?? []) as Array<{ id: string }>).some((r) => r.id === postId);
-      check('a\'s post no longer appears in b\'s explore_feed', !found);
+      check('a\'s post no longer appears in d\'s explore_feed', !found);
     }
     {
       // The block is one-directional -- a should still see their own post
@@ -124,14 +130,14 @@ async function main() {
     }
   } finally {
     if (postId) {
-      await admin.from('post_blocks').delete().eq('blocker_id', a.id).eq('blocked_id', b.id);
+      await admin.from('post_blocks').delete().eq('blocker_id', a.id).in('blocked_id', [b.id, d.id]);
       await admin.from('likes').delete().eq('post_id', postId).eq('user_id', c.id);
-      await admin.from('follows').delete().eq('follower_id', b.id).in('followee_id', [a.id, c.id]);
+      await admin.from('follows').delete().eq('follower_id', b.id).eq('followee_id', a.id);
+      await admin.from('follows').delete().eq('follower_id', d.id).eq('followee_id', c.id);
       const { error } = await admin.from('posts').delete().eq('id', postId);
       if (error) console.error(`  !! could not clean up test post ${postId}: ${error.message}`);
     }
-    for (const { id, client } of [a, b, c]) {
-      client.removeAllChannels?.();
+    for (const { id } of [a, b, c, d]) {
       const { error } = await admin.auth.admin.deleteUser(id);
       if (error) console.error(`  !! could not clean up test user ${id}: ${error.message}`);
     }
