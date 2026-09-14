@@ -52,10 +52,6 @@ export const palette = {
   tabBarBackground: '#000000',
   tabBarIconActive: '#ffffff',
   tabBarIconInactive: '#8e8e8e',
-  /** The camera tab's icon: darker/more desaturated than `blue` (#3897f0,
-   *  used for buttons/links everywhere else) so it reads as "the special
-   *  one" without competing with the app's actual accent color. */
-  tabBarCameraIcon: '#1c3f66',
 } as const;
 
 // ---------------------------------------------------------------------------

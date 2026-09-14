@@ -35,6 +35,21 @@ function ExploreTabIcon({ color, size }: { color: ColorValue; size: number }) {
 }
 
 /**
+ * The camera tab, 2015-style: not just a recolored icon like the other four
+ * -- a solid blue rounded-square badge with a white glyph inside it, the
+ * one tab that gets a filled button treatment. Ignores the active/inactive
+ * tint entirely, active or not, since the reference always shows it the
+ * same way regardless of selection.
+ */
+function CameraTabIcon({ size }: { size: number }) {
+  return (
+    <View style={[styles.cameraBadge, { width: size + 16, height: size + 16 }]}>
+      <Feather name="camera" size={size} color={palette.white} />
+    </View>
+  );
+}
+
+/**
  * Instagram's profile tab has always shown the signed-in user's own photo,
  * never a generic person glyph -- falls back to the outline icon only while
  * the profile hasn't loaded yet.
@@ -70,12 +85,7 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="new"
-        options={{
-          // Always this fixed dark blue, active or inactive -- the one tab
-          // deliberately styled differently, so it ignores the tint colors
-          // passed in and never reads `color`.
-          tabBarIcon: ({ size }) => <Feather name="camera" size={size} color={palette.tabBarCameraIcon} />,
-        }}
+        options={{ tabBarIcon: ({ size }) => <CameraTabIcon size={size} /> }}
       />
       <Tabs.Screen
         name="activity"
@@ -97,5 +107,11 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  cameraBadge: {
+    backgroundColor: palette.blue,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
