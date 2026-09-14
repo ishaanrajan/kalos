@@ -33,11 +33,12 @@ export const palette = {
   divider: '#dbdbdb',
   /** Inert fill: image placeholders, secondary buttons. */
   fill: '#efefef',
-  /** The classic Instagram blue -- darker than the original bright sky-blue
-   *  cut, closer to how it actually reads in the 2015 reference (header
-   *  bar, camera badge, usernames, like counts all share this one value). */
-  blue: '#1d6fc9',
-  bluePressed: '#15579e',
+  /** The classic Instagram blue -- sampled directly from the 2015 reference
+   *  screenshot (both the header bar and the camera badge are this exact
+   *  pixel value, rgb(18, 85, 136)), not eyeballed. Two earlier guesses
+   *  here were both too light. */
+  blue: '#125588',
+  bluePressed: '#0c3d63',
   /** Light blue -- @mentions specifically, deliberately paler/more cyan
    * than the primary accent so a mention doesn't read as a button/link. */
   lightBlue: '#5AC8FA',
@@ -57,7 +58,7 @@ export const palette = {
   /** Fixed header chrome, same "always this color, regardless of theme"
    *  reasoning as the tab bar tokens above -- 2015 Instagram's top bar was
    *  the same blue as its camera button, not a whited-out theme surface. */
-  headerBackground: '#1d6fc9',
+  headerBackground: '#125588',
   headerIcon: '#ffffff',
 } as const;
 
@@ -168,12 +169,16 @@ export const fontFamily: string | undefined = Platform.select({
  * reads wrong for the one piece of hand-lettered logotype a 2015 user would
  * have actually seen.
  *
- * iOS gets the named `-Black` cut of Snell Roundhand specifically, not the
- * base face plus a numeric `fontWeight` -- RN's weight-matching machinery is
- * unreliable for non-standard system faces like this one, and iOS itself
- * exposes the heavier cuts as distinct PostScript names rather than a
- * weight axis. The logo's strokes are meant to read as thick, hand-lettered
- * script, not the thin default cut.
+ * iOS gets the base 'Snell Roundhand' family name, deliberately NOT a named
+ * heavier cut like 'SnellRoundhand-Black' -- an earlier version of this
+ * guessed at that exact PostScript name to make the wordmark thicker, and
+ * the guess was wrong (it had an extra space: 'Snell Roundhand-Black'
+ * matches nothing on-device), which silently fell back to the system
+ * default and made the wordmark stop looking cursive at all, not just the
+ * wrong weight. Without a device on hand to verify the real name of that
+ * cut, thickness is left entirely to `fontWeight` below instead of a
+ * second guess at a specific font name -- worse case here is "not as thick
+ * as hoped," not "not cursive at all."
  *
  * 'cursive' is one of Android's generic font family names (alongside
  * 'sans-serif'/'serif'/'monospace') -- it resolves to whatever script face
@@ -184,14 +189,7 @@ export const fontFamily: string | undefined = Platform.select({
  * Android with no error to notice it by.
  */
 export const wordmarkFontFamily: string | undefined = Platform.select({
-  // No space before "-Black": the family name "Snell Roundhand" (with a
-  // space) only ever resolves to the Regular cut. The heavier faces are
-  // registered under their own PostScript names, which drop the space --
-  // "Snell Roundhand-Black" (with the space) matches nothing on-device, so
-  // iOS silently fell back to the system default instead of erroring,
-  // which is what made this look like the wordmark had lost its cursive
-  // styling entirely rather than just being the wrong weight.
-  ios: 'SnellRoundhand-Black',
+  ios: 'Snell Roundhand',
   android: 'cursive',
   web: '"Segoe Script", "Bradley Hand", cursive',
   default: fontFamily,
