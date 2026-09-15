@@ -3,7 +3,7 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from '
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { EmptyState } from '../../components/EmptyState';
 import { UserRow } from '../../components/UserRow';
-import { useFollowList, useProfile, type FollowListKind } from '../../lib/queries';
+import { isNotFoundError, useFollowList, useProfile, type FollowListKind } from '../../lib/queries';
 import { useTheme } from '../../lib/theme';
 
 /**
@@ -20,13 +20,40 @@ export default function Follows() {
     tab === 'following' ? 'following' : 'followers'
   );
 
-  const { data: profile, isLoading: loadingProfile } = useProfile(username);
-  const { data: people, isLoading: loadingList } = useFollowList(profile?.id, kind);
+  const {
+    data: profile,
+    isLoading: loadingProfile,
+    isError: profileError,
+    error: profileErr,
+    refetch: refetchProfile,
+  } = useProfile(username);
+  const {
+    data: people,
+    isLoading: loadingList,
+    isError: listError,
+    refetch: refetchList,
+  } = useFollowList(profile?.id, kind);
 
   if (loadingProfile) {
     return (
       <View style={[styles.center, { backgroundColor: colors.surface }]}>
         <ActivityIndicator />
+      </View>
+    );
+  }
+
+  // Same distinction as app/profile/[username].tsx: a request that didn't
+  // get through is not a missing account.
+  if (profileError && !isNotFoundError(profileErr)) {
+    return (
+      <View style={[styles.center, { backgroundColor: colors.surface }]}>
+        <EmptyState
+          icon="alert-circle"
+          title="Couldn't load this profile"
+          body={profileErr instanceof Error ? profileErr.message : 'Something went wrong.'}
+          actionLabel="Try again"
+          onAction={() => refetchProfile()}
+        />
       </View>
     );
   }
@@ -71,7 +98,16 @@ export default function Follows() {
           )}
           contentContainerStyle={styles.list}
           ListEmptyComponent={
-            kind === 'followers' ? (
+            // With retry: 1 app-wide, two failed requests in a tunnel used to
+            // tell someone they had no followers.
+            listError ? (
+              <EmptyState
+                icon="alert-circle"
+                title="Couldn't load this list"
+                actionLabel="Try again"
+                onAction={() => refetchList()}
+              />
+            ) : kind === 'followers' ? (
               <EmptyState
                 icon="users"
                 title="No followers yet"
@@ -107,6 +143,8 @@ function Tab({
     <Pressable
       style={[styles.tab, { borderBottomColor: active ? colors.text : 'transparent' }]}
       onPress={onPress}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
     >
       <Text
         style={[

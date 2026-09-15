@@ -62,6 +62,8 @@ export default function SignUp() {
           placeholder="Email"
           placeholderTextColor={colors.textSecondary}
           autoCapitalize="none"
+          autoComplete="email"
+          textContentType="emailAddress"
           keyboardType="email-address"
           value={email}
           onChangeText={setEmail}
@@ -91,9 +93,14 @@ export default function SignUp() {
           placeholder="Password"
           placeholderTextColor={colors.textSecondary}
           autoCapitalize="none"
+          // "new password" so the OS offers to generate and save one.
+          autoComplete="new-password"
+          textContentType="newPassword"
           secureTextEntry
           value={password}
           onChangeText={setPassword}
+          returnKeyType="go"
+          onSubmitEditing={() => !disabled && submit()}
         />
         {password.length > 0 && password.length < 6 && (
           <Text style={[styles.hint, { color: colors.textSecondary }]}>At least 6 characters.</Text>

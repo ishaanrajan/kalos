@@ -115,9 +115,18 @@ function CommentRowImpl({
   return (
     <Pressable
       onLongPress={handleLongPress}
-      disabled={!handleLongPress}
       testID={testID}
-      accessibilityLabel={gif ? `${username} sent a GIF` : `${username}: ${body}`}
+      // Only one accessible element when there's actually a long-press to
+      // expose. `disabled={!handleLongPress}` used to be here, and Pressable
+      // folds `disabled` into accessibilityState -- so on the post screen
+      // (no long-press) every row was announced "dimmed", and the label made
+      // it a single element whose username and @mention links a screen
+      // reader couldn't reach individually.
+      accessible={!!handleLongPress}
+      accessibilityLabel={
+        handleLongPress ? (gif ? `${username} sent a GIF` : `${username}: ${body}`) : undefined
+      }
+      accessibilityHint={handleLongPress ? 'Long press for options' : undefined}
       style={[styles.root, style]}
     >
       <Avatar

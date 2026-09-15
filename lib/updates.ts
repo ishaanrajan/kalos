@@ -58,9 +58,14 @@ export async function checkForUpdateOnForeground(): Promise<void> {
   if (Date.now() - lastCheckAt < MIN_CHECK_INTERVAL_MS) return;
 
   checking = true;
-  lastCheckAt = Date.now();
   try {
     const result = await Updates.checkForUpdateAsync();
+    // Stamped only once a check actually got an answer. Stamping before the
+    // call meant an offline cold start (the check throws) locked out every
+    // foreground for the next MIN_CHECK_INTERVAL_MS, including the ones
+    // right after connectivity came back -- the exact stale-bundle gap this
+    // file exists to close.
+    lastCheckAt = Date.now();
     if (!result.isAvailable) return;
 
     const id = updateIdOf(result.manifest);

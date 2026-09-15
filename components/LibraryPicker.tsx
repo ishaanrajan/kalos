@@ -121,17 +121,36 @@ type AspectMode = 'original' | 'square';
 export interface LibraryPickerProps {
   /** Backing out of posting entirely. */
   onCancel: () => void;
+  /**
+   * False during a forced first post, where Cancel can't actually go
+   * anywhere (the onboarding redirect brings the composer straight back) --
+   * it used to flash the feed and reload the grid for a button that did
+   * nothing. Defaults to true.
+   */
+  canCancel?: boolean;
   /** The camera button in the toolbar -- the picker itself never opens it. */
   onOpenCamera: () => void;
   /**
    * A photo, resolved to a real on-disk file, plus the region the user
-   * framed in that file's own pixel space. Awaited: the "Next" button stays
-   * in its spinner until this settles, so a slow prepare can't be double-fired.
+   * framed in that file's own pixel space, plus which asset it was (so the
+   * composer can tell a re-pick of the same photo from a new one). Awaited:
+   * the "Next" button stays in its spinner until this settles, so a slow
+   * prepare can't be double-fired.
    */
-  onNext: (pick: { uri: string; natural: ImageSize; crop: CropRect }) => Promise<void> | void;
+  onNext: (pick: {
+    uri: string;
+    natural: ImageSize;
+    crop: CropRect;
+    assetId: string;
+  }) => Promise<void> | void;
 }
 
-export function LibraryPicker({ onCancel, onOpenCamera, onNext }: LibraryPickerProps) {
+export function LibraryPicker({
+  onCancel,
+  canCancel = true,
+  onOpenCamera,
+  onNext,
+}: LibraryPickerProps) {
   const { colors, typography } = useTheme();
   const { width, height } = useWindowDimensions();
 
@@ -309,9 +328,20 @@ export function LibraryPicker({ onCancel, onOpenCamera, onNext }: LibraryPickerP
       const info = await MediaLibrary.getAssetInfoAsync(selection.asset);
       const uri = info.localUri ?? info.uri;
       const natural = { width: info.width, height: info.height };
-      await onNext({ uri, natural, crop: cropHandle.getCrop(natural) });
+      await onNext({ uri, natural, crop: cropHandle.getCrop(natural), assetId: selection.asset.id });
     } catch (e) {
-      Alert.alert('Could not use that photo', e instanceof Error ? e.message : undefined);
+      // getAssetInfoAsync is the iCloud download for an optimized photo, so
+      // the likeliest cause is no connection -- say so rather than leaving a
+      // bare native error message as the whole explanation.
+      Alert.alert(
+        'Could not use that photo',
+        [
+          e instanceof Error ? e.message : null,
+          'If it’s stored in iCloud, check your connection and try again.',
+        ]
+          .filter(Boolean)
+          .join('\n\n')
+      );
     } finally {
       advancingRef.current = false;
       setAdvancing(false);
@@ -367,11 +397,21 @@ export function LibraryPicker({ onCancel, onOpenCamera, onNext }: LibraryPickerP
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Pressable onPress={onCancel} hitSlop={12} disabled={advancing}>
-          <Text style={[typography.body, { color: colors.text }, advancing && styles.disabled]}>
-            Cancel
-          </Text>
-        </Pressable>
+        {canCancel ? (
+          <Pressable
+            onPress={onCancel}
+            hitSlop={12}
+            disabled={advancing}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: advancing }}
+          >
+            <Text style={[typography.body, { color: colors.text }, advancing && styles.disabled]}>
+              Cancel
+            </Text>
+          </Pressable>
+        ) : (
+          <View style={styles.headerSpacer} />
+        )}
         <Text style={[styles.title, { color: colors.text }]}>New post</Text>
         <Pressable
           onPress={handleNext}
@@ -749,6 +789,8 @@ const styles = StyleSheet.create({
     borderBottomWidth: hairlineWidth,
   },
   title: { fontSize: 17, fontWeight: '600' },
+  // Stands in for Cancel so the title stays centred under space-between.
+  headerSpacer: { width: 48 },
   disabled: { opacity: 0.4 },
   // Always black: this is photo letterboxing, which doesn't follow the
   // screen's light/dark state any more than a photo viewer's backdrop does.

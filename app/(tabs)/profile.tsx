@@ -46,7 +46,7 @@ async function checkForUpdateNow() {
 }
 
 export default function MyProfile() {
-  const { profile, signOut } = useAuth();
+  const { profile, signOut, refreshProfile } = useAuth();
   const { colors } = useTheme();
 
   if (!profile) {
@@ -64,7 +64,7 @@ export default function MyProfile() {
           <Text style={[styles.title, { color: colors.text }]}>{profile.username}</Text>
         </Pressable>
       </View>
-      <ProfileView profile={profile} isSelf onSignOut={signOut} />
+      <ProfileView profile={profile} isSelf onSignOut={signOut} onRefreshProfile={refreshProfile} />
     </SafeAreaView>
   );
 }

@@ -100,7 +100,12 @@ export default function DMThread() {
     threadWithId = viewingOwnThread ? other?.id : me?.id;
   }
 
-  const { data: messages, isLoading: messagesLoading } = useDMThread(threadUserId, threadWithId);
+  const {
+    data: messages,
+    isLoading: messagesLoading,
+    isError: messagesError,
+    refetch: refetchMessages,
+  } = useDMThread(threadUserId, threadWithId);
   const sendDM = useSendDM(threadUserId, threadWithId);
   const markRead = useMarkDMRead(threadUserId, threadWithId);
   const toggleMessageLike = useToggleMessageLike(threadUserId, threadWithId);
@@ -225,12 +230,16 @@ export default function DMThread() {
         ListEmptyComponent={
           messagesLoading ? (
             <ActivityIndicator style={styles.loading} />
-          ) : (
+          ) : messagesError ? (
+            // A thread that failed to load is not an empty thread.
             <EmptyState
-              icon="send"
-              title="No messages yet"
-              body={isIshaan ? `Say hi to ${other.username}.` : `Say hi to ${other.username}.`}
+              icon="alert-circle"
+              title="Couldn't load messages"
+              actionLabel="Try again"
+              onAction={() => refetchMessages()}
             />
+          ) : (
+            <EmptyState icon="send" title="No messages yet" body={`Say hi to ${other.username}.`} />
           )
         }
         renderItem={({ item, index }) => {

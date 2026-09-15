@@ -135,9 +135,18 @@ export function MusicPicker({
 
   const selectTrack = useCallback(
     (track: Track) => {
-      onChangeSelected(track);
-      onChangeStartMs(0);
-      offset.value = 0;
+      // Re-tapping the track that's already chosen keeps its trim. It used to
+      // reset the window to 0:00 in the UI while requestPlay ignored the
+      // request (same id, already active), so the loop kept playing the old
+      // slice and the post saved start_ms 0 -- three different answers to
+      // "where does the clip start". Still asks to play, though: if the
+      // audition was stopped by leaving the composer, this is how it resumes.
+      const alreadySelected = selected?.id === track.id;
+      if (!alreadySelected) {
+        onChangeSelected(track);
+        onChangeStartMs(0);
+        offset.value = 0;
+      }
       requestPlay(composerPostId(track.id), {
         track_id: track.id,
         title: track.title,
@@ -145,10 +154,10 @@ export function MusicPicker({
         artwork_url: track.artworkUrl,
         preview_url: track.previewUrl,
         store_url: track.storeUrl,
-        start_ms: 0,
+        start_ms: alreadySelected ? startMs : 0,
       });
     },
-    [onChangeSelected, onChangeStartMs, offset, requestPlay],
+    [selected, startMs, onChangeSelected, onChangeStartMs, offset, requestPlay],
   );
 
   const commitOffset = useCallback(
@@ -340,9 +349,19 @@ export function MusicPicker({
         keyExtractor={(t) => t.id}
         renderItem={renderResult}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         style={styles.list}
         ListHeaderComponent={
           isFetching ? <ActivityIndicator style={styles.spinner} size="small" /> : null
+        }
+        ListEmptyComponent={
+          // Only once a real search has come back empty -- not while it's
+          // still in flight, and not before anything's been typed.
+          debouncedQuery.trim() && results && !isFetching && !isError ? (
+            <Text style={[typography.timestamp, styles.status, { color: colors.textSecondary }]}>
+              {`No songs for “${debouncedQuery.trim()}”`}
+            </Text>
+          ) : null
         }
         ListFooterComponent={
           <Text style={[typography.timestamp, styles.courtesy, { color: colors.textSecondary }]}>

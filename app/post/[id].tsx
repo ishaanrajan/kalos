@@ -69,7 +69,12 @@ export default function PostScreen() {
   const router = useRouter();
   const userId = useUserId();
   const { data: post, isLoading, isError, error, refetch } = usePost(id);
-  const { data: comments } = useComments(id);
+  const {
+    data: comments,
+    isLoading: commentsLoading,
+    isError: commentsError,
+    refetch: refetchComments,
+  } = useComments(id);
   const addComment = useAddComment(id!);
   const addGifComment = useAddGifComment(id!);
   const toggleLike = useToggleLike();
@@ -123,13 +128,24 @@ export default function PostScreen() {
   // visible area a moment later and covers it again. Waiting for the
   // keyboard to actually be up guarantees the scroll happens against the
   // final, already-shrunk layout instead of racing it.
+  //
+  // Only for *this screen's* comment box. The GIF picker's search field
+  // autofocuses inside its own sheet, and its keyboard fired this too --
+  // scrolling the thread to the bottom behind the sheet, so closing the
+  // picker without sending lost your place in a long thread.
+  const composerFocused = useRef(false);
   useEffect(() => {
     // "Did," not "will" -- "will" fires as the animation starts, which is
     // the same race as onFocus, just a smaller window. "Did" only fires
     // once the keyboard (and the resize it drives) has actually finished.
-    const sub = Keyboard.addListener('keyboardDidShow', () => scrollToBottom(true));
+    const sub = Keyboard.addListener('keyboardDidShow', () => {
+      if (composerFocused.current) scrollToBottom(true);
+    });
     return () => sub.remove();
   }, [scrollToBottom]);
+  const onComposerFocusChange = useCallback((focused: boolean) => {
+    composerFocused.current = focused;
+  }, []);
 
   // One identity per handler, hoisted out of the header and out of
   // renderItem: PostCard and CommentRow take the post/comment they fired on
@@ -171,7 +187,7 @@ export default function PostScreen() {
     if (!post) return;
     confirmDestructive('Delete post?', 'Delete Post', () => {
       deletePost.mutate(
-        { id: post.id, image_path: post.image_path },
+        { id: post.id, image_path: post.image_path, thumb_path: post.thumb_path },
         {
           onSuccess: () => router.back(),
           onError: (e) => Alert.alert('Could not delete post', e instanceof Error ? e.message : undefined),
@@ -320,8 +336,33 @@ export default function PostScreen() {
         // so this is really just pinning it somewhere sane and explicit --
         // the pinned-to-bottom check needs a fresh offset, not every offset.
         scrollEventThrottle={16}
+        // With the keyboard up, the first tap on a commenter's name or the
+        // header's heart used to just dismiss the keyboard and go nowhere;
+        // and dragging through a long thread left it covering a third of
+        // the screen. MentionSuggestions and GifPicker already do both.
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         ListHeaderComponent={header}
         renderItem={renderComment}
+        ListFooterComponent={
+          // A thread that failed to load is not an empty thread -- this
+          // used to render identically to "no comments yet". Same fix the
+          // likes screen already has.
+          commentsLoading ? (
+            <ActivityIndicator style={styles.commentsStatus} />
+          ) : commentsError ? (
+            <Pressable
+              onPress={() => refetchComments()}
+              style={styles.commentsStatus}
+              accessibilityRole="button"
+              accessibilityLabel="Couldn't load comments. Tap to try again."
+            >
+              <Text style={[styles.commentsError, { color: colors.textSecondary }]}>
+                Couldn't load comments — <Text style={{ color: colors.accent }}>Retry</Text>
+              </Text>
+            </Pressable>
+          ) : null
+        }
       />
 
       <CommentComposer
@@ -330,6 +371,7 @@ export default function PostScreen() {
         bottomInset={Math.max(10, insets.bottom)}
         onSubmit={submitComment}
         onSubmitGif={submitGif}
+        onFocusChange={onComposerFocusChange}
       />
     </KeyboardAvoidingView>
   );
@@ -345,6 +387,8 @@ interface CommentComposerProps {
   onSubmit: (body: string) => Promise<unknown>;
   /** Posts a GIF-only comment immediately -- no draft involved. */
   onSubmitGif: (gif: Gif) => Promise<unknown>;
+  /** Whether the comment box itself has the keyboard (see PostScreen). */
+  onFocusChange: (focused: boolean) => void;
 }
 
 /**
@@ -360,7 +404,14 @@ interface CommentComposerProps {
  * suggestions live here too -- they're derived from the draft, so keeping
  * them with it is what makes that true.
  */
-function CommentComposer({ candidates, isPending, bottomInset, onSubmit, onSubmitGif }: CommentComposerProps) {
+function CommentComposer({
+  candidates,
+  isPending,
+  bottomInset,
+  onSubmit,
+  onSubmitGif,
+  onFocusChange,
+}: CommentComposerProps) {
   const { colors } = useTheme();
   const [draft, setDraft] = useState('');
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
@@ -413,10 +464,19 @@ function CommentComposer({ candidates, isPending, bottomInset, onSubmit, onSubmi
           value={draft}
           onChangeText={setDraft}
           onSubmitEditing={submit}
+          onFocus={() => onFocusChange(true)}
+          onBlur={() => onFocusChange(false)}
           returnKeyType="send"
         />
         {draft.trim() ? (
-          <Pressable onPress={submit} disabled={isPending} hitSlop={10}>
+          <Pressable
+            onPress={submit}
+            disabled={isPending}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Post comment"
+            accessibilityState={{ disabled: isPending }}
+          >
             <Text style={[styles.post, { color: colors.accent }]}>Post</Text>
           </Pressable>
         ) : (
@@ -449,4 +509,6 @@ const styles = StyleSheet.create({
   },
   input: { flex: 1, fontSize: 14, paddingVertical: 6 },
   post: { fontWeight: '600', fontSize: 14 },
+  commentsStatus: { paddingVertical: 16, alignItems: 'center' },
+  commentsError: { fontSize: 13 },
 });

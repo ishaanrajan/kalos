@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -6,7 +6,12 @@ import { Feather } from '@expo/vector-icons';
 import { PhotoGrid } from '../../components/PhotoGrid';
 import { EmptyState } from '../../components/EmptyState';
 import { EndOfFeed } from '../../components/EndOfFeed';
-import { EXPLORE_POST_THRESHOLD, useExploreFeed, useExploreLockState } from '../../lib/queries';
+import {
+  EXPLORE_POST_THRESHOLD,
+  useExploreFeed,
+  useExploreLockState,
+  useRefreshFeed,
+} from '../../lib/queries';
 import { photoThumbUrl } from '../../lib/supabase';
 import { useTheme } from '../../lib/theme';
 
@@ -31,6 +36,17 @@ export default function Explore() {
     useExploreFeed();
 
   const posts = useMemo(() => data?.pages.flat() ?? [], [data]);
+
+  // Tab screens stay mounted and refetchOnWindowFocus is off app-wide, so
+  // without a pull this grid only ever changed after a follow, a delete or a
+  // relaunch -- the one feed in the app with no way to ask for new posts.
+  const refreshFeed = useRefreshFeed('explore_feed');
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refreshFeed();
+    setRefreshing(false);
+  }, [refreshFeed]);
 
   // The search bar is the only way into /search that isn't the DM compose
   // button. It stays reachable through the *daily* re-lock (needsPostToday)
@@ -139,6 +155,8 @@ export default function Explore() {
         imageUrlFor={photoThumbUrl}
         onPressPost={(p) => router.push(`/post/${p.id}`)}
         onEndReached={() => hasNextPage && !isFetchingNextPage && fetchNextPage()}
+        onRefresh={onRefresh}
+        refreshing={refreshing}
         ListEmptyComponent={
           <EmptyState icon="compass" title="Nothing to explore yet" />
         }
@@ -171,6 +189,8 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     paddingHorizontal: 12,
     paddingVertical: 9,
+    // 44pt minimum tap target; the text alone left it around 35.
+    minHeight: 44,
     borderRadius: 10,
   },
   searchPlaceholder: { fontSize: 15 },

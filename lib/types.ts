@@ -151,11 +151,14 @@ export interface FeedCursor {
 export const PAGE_SIZE = 12;
 
 /** Activity tab entries, newest first. Never algorithmically reordered. */
+/** Optional until 0033 is applied: activity_feed() didn't return it before. */
+type ActivityPostRef = { post_id: UUID; image_path: string; thumb_path?: string | null };
+
 export type ActivityEvent =
-  | { kind: 'like'; actor: Profile; post_id: UUID; image_path: string; created_at: Timestamp }
-  | { kind: 'comment'; actor: Profile; post_id: UUID; image_path: string; body: string; created_at: Timestamp }
+  | ({ kind: 'like'; actor: Profile; created_at: Timestamp } & ActivityPostRef)
+  | ({ kind: 'comment'; actor: Profile; body: string; created_at: Timestamp } & ActivityPostRef)
   | { kind: 'follow'; actor: Profile; created_at: Timestamp }
-  | { kind: 'mention'; actor: Profile; post_id: UUID; image_path: string; body: string; created_at: Timestamp };
+  | ({ kind: 'mention'; actor: Profile; body: string; created_at: Timestamp } & ActivityPostRef);
 
 /**
  * A single DM. Every thread is with "ishaan" — thread_user_id is always the

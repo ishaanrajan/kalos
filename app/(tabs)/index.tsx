@@ -7,7 +7,15 @@ import { setStatusBarStyle } from 'expo-status-bar';
 import { PostCard } from '../../components/PostCard';
 import { EndOfFeed } from '../../components/EndOfFeed';
 import { EmptyState } from '../../components/EmptyState';
-import { useDeletePost, useHasUnreadDMs, useHomeFeed, useToggleLike } from '../../lib/queries';
+import { PostingBanner } from '../../components/PostingBanner';
+import {
+  useDeletePost,
+  useExploreLockState,
+  useHasUnreadDMs,
+  useHomeFeed,
+  useRefreshFeed,
+  useToggleLike,
+} from '../../lib/queries';
 import { photoUrl, avatarUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
 import { confirmDestructive, showActionSheet } from '../../lib/actionSheet';
@@ -36,6 +44,7 @@ export default function Feed() {
   const userId = useUserId();
   const { colors, wordmarkFontFamily } = useTheme();
   const { data: hasUnreadDMs } = useHasUnreadDMs();
+  const { needsMorePosts } = useExploreLockState();
   const {
     data,
     isLoading,
@@ -73,11 +82,12 @@ export default function Feed() {
 
   const posts = useMemo(() => data?.pages.flat() ?? [], [data]);
 
+  const refreshFeed = useRefreshFeed('home_feed');
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await refetch();
+    await refreshFeed();
     setRefreshing(false);
-  }, [refetch]);
+  }, [refreshFeed]);
 
   // Every callback below depends on `.mutate` rather than on the mutation
   // object, because useMutation() returns `{ ...result, mutate, mutateAsync }`
@@ -131,12 +141,21 @@ export default function Feed() {
   const musicRef = useRef({ requestPlay, stop });
   musicRef.current = { requestPlay, stop };
 
+  // The post with music that should be playing, given what's on screen --
+  // kept so a focus event can restart it. FlatList only reports viewability
+  // when the *set* of visible items changes, and coming back from a post's
+  // comments (or another tab) leaves the same cards visible: nothing
+  // re-fired, so the feed stayed silent and the mute pill vanished until
+  // you scrolled far enough to change what was on screen.
+  const currentMusicPost = useRef<FeedPost | null>(null);
+
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: Array<{ item: FeedPost; isViewable: boolean }> }) => {
       // The topmost qualifying post wins, not the most-visible one: scrolling
       // down should hand off to the post you're arriving at, and reading the
       // list in order is what makes that deterministic.
       const withMusic = viewableItems.find((entry) => entry.isViewable && entry.item?.music);
+      currentMusicPost.current = withMusic?.item ?? null;
       if (withMusic?.item.music) {
         musicRef.current.requestPlay(withMusic.item.id, withMusic.item.music);
       } else {
@@ -147,7 +166,14 @@ export default function Feed() {
 
   // Leaving the tab silences it. The post screen starts its own playback, so
   // handing audio across the navigation would only make the two fight.
-  useFocusEffect(useCallback(() => () => stop(), [stop]));
+  // Coming back picks up whatever was on screen when you left.
+  useFocusEffect(
+    useCallback(() => {
+      const post = currentMusicPost.current;
+      if (post?.music) requestPlay(post.id, post.music);
+      return () => stop();
+    }, [requestPlay, stop])
+  );
 
   const openTrackStore = useCallback((post: FeedPost) => {
     // Apple licenses these previews to promote the Store, so a post that
@@ -189,10 +215,49 @@ export default function Feed() {
     ]
   );
 
+  // Fixed blue, not theme-driven -- same reasoning as the tab bar
+  // (palette.headerBackground's own doc comment): 2015 Instagram's top
+  // bar didn't whiten out in light mode or blacken out in dark mode,
+  // it was just always this blue. No visible seam under it either, so
+  // the border color matches rather than using colors.border.
+  //
+  // Rendered in the loading and error states too, not just the feed. The
+  // focus effect above forces light status-bar text for the whole time
+  // this tab is focused, and those two states used to paint a plain
+  // surface right up to the top edge: white clock on white in light mode,
+  // then a white-to-blue flash when the feed landed.
+  const header = (
+    <View style={[styles.header, { backgroundColor: palette.headerBackground, borderBottomColor: palette.headerBackground }]}>
+      {/* Empty spacer, same width as the one on the right -- keeps the
+          wordmark centered now that this side has no icon. The bottom tab
+          bar's camera tab already goes to the same place this one did. */}
+      <View style={styles.headerSpacer} />
+      <Text style={[styles.wordmark, { color: palette.headerIcon, fontFamily: wordmarkFontFamily }]}>
+        Kalos
+      </Text>
+      <View style={styles.headerSpacer}>
+        <Pressable
+          onPress={() => router.push('/dm')}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel={hasUnreadDMs ? 'Messages, unread' : 'Messages'}
+        >
+          <Feather name="inbox" size={22} color={palette.headerIcon} />
+          {hasUnreadDMs ? (
+            <View style={[styles.dot, { backgroundColor: colors.heart, borderColor: palette.headerBackground }]} />
+          ) : null}
+        </Pressable>
+      </View>
+    </View>
+  );
+
   if (isLoading) {
     return (
-      <SafeAreaView style={[styles.center, { backgroundColor: colors.surface }]} edges={['top']}>
-        <ActivityIndicator />
+      <SafeAreaView style={[styles.root, { backgroundColor: palette.headerBackground }]} edges={['top']}>
+        {header}
+        <View style={[styles.center, { backgroundColor: colors.surface }]}>
+          <ActivityIndicator />
+        </View>
       </SafeAreaView>
     );
   }
@@ -207,47 +272,29 @@ export default function Feed() {
   // posts the failure is reported in the banner below instead.
   if (isError && !data) {
     return (
-      <SafeAreaView style={[styles.center, { backgroundColor: colors.surface }]} edges={['top']}>
-        <EmptyState
-          icon="alert-circle"
-          title="Couldn't load your feed"
-          body={error instanceof Error ? error.message : 'Something went wrong.'}
-          actionLabel="Try again"
-          onAction={() => refetch()}
-        />
+      <SafeAreaView style={[styles.root, { backgroundColor: palette.headerBackground }]} edges={['top']}>
+        {header}
+        <View style={[styles.center, { backgroundColor: colors.surface }]}>
+          <EmptyState
+            icon="alert-circle"
+            title="Couldn't load your feed"
+            body={error instanceof Error ? error.message : 'Something went wrong.'}
+            actionLabel="Try again"
+            onAction={() => refetch()}
+          />
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: palette.headerBackground }]} edges={['top']}>
-      {/* Fixed blue, not theme-driven -- same reasoning as the tab bar
-          (palette.headerBackground's own doc comment): 2015 Instagram's top
-          bar didn't whiten out in light mode or blacken out in dark mode,
-          it was just always this blue. No visible seam under it either, so
-          the border color matches rather than using colors.border. */}
-      <View style={[styles.header, { backgroundColor: palette.headerBackground, borderBottomColor: palette.headerBackground }]}>
-        {/* Empty spacer, same width as the one on the right -- keeps the
-            wordmark centered now that this side has no icon. The bottom tab
-            bar's camera tab already goes to the same place this one did. */}
-        <View style={styles.headerSpacer} />
-        <Text style={[styles.wordmark, { color: palette.headerIcon, fontFamily: wordmarkFontFamily }]}>
-          Kalos
-        </Text>
-        <View style={styles.headerSpacer}>
-          <Pressable
-            onPress={() => router.push('/dm')}
-            hitSlop={12}
-            accessibilityRole="button"
-            accessibilityLabel={hasUnreadDMs ? 'Messages, unread' : 'Messages'}
-          >
-            <Feather name="inbox" size={22} color={palette.headerIcon} />
-            {hasUnreadDMs ? (
-              <View style={[styles.dot, { backgroundColor: colors.heart, borderColor: palette.headerBackground }]} />
-            ) : null}
-          </Pressable>
-        </View>
-      </View>
+      {header}
+
+      {/* Share hands you back here immediately; this is where the upload
+          shows itself (lib/postUpload.ts). Above the refresh banner so a
+          failed post is never pushed off-screen by a failed refetch. */}
+      <PostingBanner />
 
       {/* The non-destructive half of the fix above: a refresh that failed
           against an already-loaded feed says so in one line and offers the
@@ -272,19 +319,36 @@ export default function Feed() {
         data={posts}
         keyExtractor={(p) => p.id}
         renderItem={renderItem}
+        // The root is header-blue (for the top inset); the list paints the
+        // surface so the empty state and end-of-feed don't sit on blue.
+        style={{ backgroundColor: colors.surface }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         onEndReached={() => hasNextPage && !isFetchingNextPage && fetchNextPage()}
         onEndReachedThreshold={0.6}
         viewabilityConfig={VIEWABILITY_CONFIG}
         onViewableItemsChanged={onViewableItemsChanged}
         ListEmptyComponent={
-          <EmptyState
-            icon="camera"
-            title="Your feed is quiet"
-            body="Follow a few people, or post the first photo yourself."
-            actionLabel="Find people to follow"
-            onAction={() => router.push('/search')}
-          />
+          // Search is gated behind the one-time 5-post threshold (see
+          // app/(tabs)/explore.tsx), and a brand-new account with an empty
+          // feed is exactly who that gate is for -- this CTA used to walk
+          // straight past it. Until it clears, the useful next step is a post.
+          needsMorePosts ? (
+            <EmptyState
+              icon="camera"
+              title="Your feed is quiet"
+              body="Post a few photos of your own to unlock search and Explore."
+              actionLabel="Post a photo"
+              onAction={() => router.push('/(tabs)/new')}
+            />
+          ) : (
+            <EmptyState
+              icon="camera"
+              title="Your feed is quiet"
+              body="Follow a few people, or post the first photo yourself."
+              actionLabel="Find people to follow"
+              onAction={() => router.push('/search')}
+            />
+          )
         }
         // The feed ends. When there is no next page we say so, rather than
         // backfilling with posts from strangers to keep you scrolling.

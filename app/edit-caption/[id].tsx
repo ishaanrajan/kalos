@@ -16,7 +16,8 @@ import { EmptyState } from '../../components/EmptyState';
 import { usePost, useUpdatePostCaption } from '../../lib/queries';
 import { photoThumbUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
-import { useTheme } from '../../lib/theme';
+import { nativeHeaderHeight, useTheme } from '../../lib/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /**
  * Editing an existing post's caption -- a separate screen rather than an
@@ -30,6 +31,7 @@ export default function EditCaption() {
   const { data: post, isLoading, isError, error, refetch } = usePost(id);
   const updateCaption = useUpdatePostCaption();
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
 
   const [caption, setCaption] = useState(post?.caption ?? '');
   const [initialized, setInitialized] = useState(false);
@@ -95,6 +97,10 @@ export default function EditCaption() {
     <KeyboardAvoidingView
       style={[styles.root, { backgroundColor: colors.surface }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      // Under a native stack header, KAV under-pads by exactly the header's
+      // height -- see app/post/[id].tsx for the full reasoning. Without it
+      // the bottom of the form sat under the keyboard on shorter phones.
+      keyboardVerticalOffset={insets.top + nativeHeaderHeight}
     >
       <Stack.Screen
         options={{

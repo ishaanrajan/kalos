@@ -27,7 +27,10 @@ const CIRCLE = 56;
 
 export function EndOfFeed({
   title = "You're all caught up",
-  body = "You've seen all new posts from the past week.",
+  // No time window: home_feed() has no date cutoff -- the feed paginates
+  // back through everything the people you follow have ever posted, so
+  // "from the past week" was claiming a limit that doesn't exist.
+  body = "You've seen everything from the people you follow.",
   showDivider = true,
   style,
   testID,

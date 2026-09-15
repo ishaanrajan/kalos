@@ -34,6 +34,9 @@ async function ensureAndroidNotificationChannel(): Promise<void> {
   });
 }
 
+/** The token this device registered for the current session, if any. */
+let registeredToken: string | null = null;
+
 /**
  * Requests permission and registers this device's Expo push token for the
  * signed-in user. Fails silently on denial, on the Simulator (no real APNs
@@ -61,7 +64,28 @@ export async function registerForPushNotificationsAsync(userId: string): Promise
         { onConflict: 'token' }
       );
     if (error) throw error;
+    registeredToken = token;
   } catch (e) {
     console.warn('Could not register for push notifications', e);
+  }
+}
+
+/**
+ * Deletes this device's push_tokens row. Must run *before* auth.signOut():
+ * the row's RLS policy is user_id = auth.uid(), so once the session is gone
+ * the delete silently matches nothing. Without this, a device kept receiving
+ * the previous account's DM/like pushes after logging out -- and tapping one
+ * after signing into a different account deep-linked that account into the
+ * old one's thread.
+ */
+export async function unregisterPushTokenAsync(): Promise<void> {
+  const token = registeredToken;
+  if (!token) return;
+  registeredToken = null;
+  try {
+    const { error } = await supabase.from('push_tokens').delete().eq('token', token);
+    if (error) throw error;
+  } catch (e) {
+    console.warn('Could not unregister push token', e);
   }
 }

@@ -63,6 +63,67 @@ export function useExploreFeed() {
   return useInfiniteQuery(feedQuery('explore_feed', useUserId()));
 }
 
+/**
+ * Pull-to-refresh for an infinite feed. A bare refetch() on an infinite
+ * query re-fetches every loaded page in series (page 2's cursor comes from
+ * the refetched page 1, and so on), so six pages deep the spinner sat
+ * through six round trips and the whole list swapped at once at the end.
+ * Trim the cache to page 1 first and refetch just that -- the pages below
+ * reload on scroll like they did the first time.
+ */
+export function useRefreshFeed(fn: 'home_feed' | 'explore_feed') {
+  const qc = useQueryClient();
+  const userId = useUserId();
+  return useCallback(async () => {
+    const queryKey = [fn, userId] as const;
+    qc.setQueryData<InfiniteData<FeedPost[], Cursor>>(queryKey, (data) =>
+      data && data.pages.length > 1
+        ? { pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) }
+        : data
+    );
+    await qc.refetchQueries({ queryKey, exact: true });
+  }, [qc, fn, userId]);
+}
+
+/**
+ * Patch one post wherever a cached copy of it lives -- every page of both
+ * feeds, the profile grid, and the single-post entry. Used for the counters
+ * a mutation already knows the answer to (likes, comments), so the card
+ * updates in place instead of sitting wrong until the next full refetch.
+ */
+function patchCachedPost(
+  qc: ReturnType<typeof useQueryClient>,
+  postId: string,
+  patch: (p: FeedPost) => FeedPost
+): [readonly unknown[], unknown][] {
+  const feedSnapshots = qc
+    .getQueriesData<InfiniteData<FeedPost[]>>({ queryKey: ['home_feed'] })
+    .concat(qc.getQueriesData<InfiniteData<FeedPost[]>>({ queryKey: ['explore_feed'] }));
+  for (const [key, value] of feedSnapshots) {
+    if (!value) continue;
+    qc.setQueryData<InfiniteData<FeedPost[]>>(key, {
+      ...value,
+      pages: value.pages.map((page) => page.map((p) => (p.id === postId ? patch(p) : p))),
+    });
+  }
+
+  const listSnapshots = qc.getQueriesData<FeedPost[]>({ queryKey: ['profile-posts'] });
+  for (const [key, value] of listSnapshots) {
+    if (!value) continue;
+    qc.setQueryData<FeedPost[]>(key, value.map((p) => (p.id === postId ? patch(p) : p)));
+  }
+
+  // The single-post screen (app/post/[id].tsx) isn't an infinite-query
+  // page, it's one `['post', postId, userId]` entry.
+  const postSnapshots = qc.getQueriesData<FeedPost>({ queryKey: ['post', postId] });
+  for (const [key, value] of postSnapshots) {
+    if (!value) continue;
+    qc.setQueryData(key, patch(value));
+  }
+
+  return [...feedSnapshots, ...listSnapshots, ...postSnapshots] as [readonly unknown[], unknown][];
+}
+
 export function useActivity() {
   const userId = useUserId();
   return useQuery({
@@ -77,6 +138,16 @@ export function useActivity() {
     // catch up the moment you return to the app, not wait out staleTime.
     refetchOnWindowFocus: true,
   });
+}
+
+/**
+ * Whether a query failure means "that row doesn't exist" rather than "the
+ * request didn't get through". PostgREST's .single() on zero rows fails with
+ * PGRST116; anything else -- a tunnel, a 500, an expired token -- is not
+ * evidence the account is gone, and used to be reported as exactly that.
+ */
+export function isNotFoundError(error: unknown): boolean {
+  return !!error && typeof error === 'object' && (error as { code?: string }).code === 'PGRST116';
 }
 
 export function useProfile(username: string | undefined) {
@@ -161,19 +232,47 @@ export function useComments(postId: string | undefined) {
   });
 }
 
+/**
+ * After a comment lands, the feed card has to agree with the thread: its
+ * "View all N comments" line and two-line preview come from the cached
+ * FeedPost, and the tab screens stay mounted with refetchOnWindowFocus off,
+ * so invalidating only ['comments'] and ['post'] left both wrong until a
+ * pull-to-refresh. The mutation knows the answer, so write it into place
+ * the way useToggleLike does. preview_comments is the 2 most recent,
+ * oldest first, matching home_feed()'s jsonb_agg.
+ */
+function applyNewComment(
+  qc: ReturnType<typeof useQueryClient>,
+  postId: string,
+  preview: { id: string; username: string; body: string }
+) {
+  patchCachedPost(qc, postId, (p) => ({
+    ...p,
+    comment_count: p.comment_count + 1,
+    preview_comments: p.preview_comments
+      ? [...p.preview_comments, preview].slice(-2)
+      : p.preview_comments,
+  }));
+  qc.invalidateQueries({ queryKey: ['comments', postId] });
+  qc.invalidateQueries({ queryKey: ['post', postId] });
+}
+
 export function useAddComment(postId: string) {
   const qc = useQueryClient();
   const userId = useUserId();
+  const { profile } = useAuth();
   return useMutation({
     mutationFn: async (body: string) => {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('comments')
-        .insert({ post_id: postId, author_id: userId!, body });
+        .insert({ post_id: postId, author_id: userId!, body })
+        .select('id')
+        .single();
       if (error) throw error;
+      return data.id as string;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['comments', postId] });
-      qc.invalidateQueries({ queryKey: ['post', postId] });
+    onSuccess: (id, body) => {
+      applyNewComment(qc, postId, { id, username: profile?.username ?? '', body });
     },
   });
 }
@@ -188,16 +287,20 @@ export function useAddComment(postId: string) {
 export function useAddGifComment(postId: string) {
   const qc = useQueryClient();
   const userId = useUserId();
+  const { profile } = useAuth();
   return useMutation({
     mutationFn: async (gif: CommentGif) => {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('comments')
-        .insert({ post_id: postId, author_id: userId!, body: null, gif });
+        .insert({ post_id: postId, author_id: userId!, body: null, gif })
+        .select('id')
+        .single();
       if (error) throw error;
+      return data.id as string;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['comments', postId] });
-      qc.invalidateQueries({ queryKey: ['post', postId] });
+    onSuccess: (id) => {
+      // '[GIF]' is what home_feed() itself coalesces a null body to.
+      applyNewComment(qc, postId, { id, username: profile?.username ?? '', body: '[GIF]' });
     },
   });
 }
@@ -239,42 +342,25 @@ export function useToggleLike() {
       await Promise.all([
         qc.cancelQueries({ queryKey: ['home_feed'] }),
         qc.cancelQueries({ queryKey: ['explore_feed'] }),
+        qc.cancelQueries({ queryKey: ['profile-posts'] }),
         qc.cancelQueries({ queryKey: ['post', postId] }),
       ]);
-      const patch = (p: FeedPost): FeedPost =>
-        p.id === postId
-          ? { ...p, viewer_has_liked: !liked, like_count: p.like_count + (liked ? -1 : 1) }
-          : p;
-
-      const feedSnapshots = qc.getQueriesData<InfiniteData<FeedPost[]>>({ queryKey: ['home_feed'] })
-        .concat(qc.getQueriesData<InfiniteData<FeedPost[]>>({ queryKey: ['explore_feed'] }));
-
-      for (const [key, value] of feedSnapshots) {
-        if (!value) continue;
-        qc.setQueryData<InfiniteData<FeedPost[]>>(key, {
-          ...value,
-          pages: value.pages.map((page) => page.map(patch)),
-        });
-      }
-
-      // The single-post screen (app/post/[id].tsx) isn't an infinite-query
-      // page, it's one `['post', postId, userId]` entry -- patch it too so
-      // that screen's heart doesn't sit stale until the round trip completes.
-      const postSnapshots = qc.getQueriesData<FeedPost>({ queryKey: ['post', postId] });
-      for (const [key, value] of postSnapshots) {
-        if (!value) continue;
-        qc.setQueryData(key, patch(value));
-      }
-
-      return {
-        snapshots: [...feedSnapshots, ...postSnapshots] as [readonly unknown[], unknown][],
-      };
+      const snapshots = patchCachedPost(qc, postId, (p) => ({
+        ...p,
+        viewer_has_liked: !liked,
+        like_count: p.like_count + (liked ? -1 : 1),
+      }));
+      return { snapshots };
     },
     onError: (_err, _vars, ctx) => {
       for (const [key, value] of ctx?.snapshots ?? []) qc.setQueryData(key, value);
     },
     onSettled: (_d, _e, { postId }) => {
       qc.invalidateQueries({ queryKey: ['post', postId] });
+      // The likes screen is a separate list; without this, reopening it
+      // within staleTime showed the pre-toggle set of people while the
+      // card's own count had already moved.
+      qc.invalidateQueries({ queryKey: ['likers', postId] });
     },
   });
 }
@@ -443,6 +529,7 @@ export function useUpdateProfile() {
 export function useToggleFollow() {
   const qc = useQueryClient();
   const userId = useUserId();
+  const { refreshProfile } = useAuth();
 
   return useMutation({
     mutationFn: async ({ profileId, following }: { profileId: string; following: boolean }) => {
@@ -513,6 +600,17 @@ export function useToggleFollow() {
       // drops them out of explore. Both lists have to be rebuilt.
       qc.invalidateQueries({ queryKey: ['home_feed'] });
       qc.invalidateQueries({ queryKey: ['explore_feed'] });
+      // The people behind the counts, and the two lists derived from the
+      // graph. Without these the Follows screen's header said N+1 while its
+      // rows (still within staleTime) showed N with you missing, "Followed
+      // by …" lagged, and a just-followed account stayed under Suggested.
+      qc.invalidateQueries({ queryKey: ['follow-list'] });
+      qc.invalidateQueries({ queryKey: ['mutual-followers'] });
+      qc.invalidateQueries({ queryKey: ['suggested-profiles'] });
+      // The Profile tab renders AuthProvider's own copy of your row, not the
+      // ['profile'] cache -- its "following" count only moved when something
+      // else happened to refresh it.
+      void refreshProfile();
     },
   });
 }
@@ -525,11 +623,17 @@ export function useToggleFollow() {
  */
 export function useDeletePost() {
   const qc = useQueryClient();
+  const { refreshProfile } = useAuth();
   return useMutation({
-    mutationFn: async (post: Pick<FeedPost, 'id' | 'image_path'>) => {
+    mutationFn: async (post: Pick<FeedPost, 'id' | 'image_path' | 'thumb_path'>) => {
       const { error } = await supabase.from('posts').delete().eq('id', post.id);
       if (error) throw error;
-      await supabase.storage.from(PHOTOS_BUCKET).remove([post.image_path]);
+      // Both objects: every post since 0022 uploads a grid thumbnail next to
+      // the full image, and removing only the latter left one file per
+      // deleted post in the bucket for good.
+      await supabase.storage
+        .from(PHOTOS_BUCKET)
+        .remove([post.image_path, ...(post.thumb_path ? [post.thumb_path] : [])]);
     },
     onSuccess: (_d, post) => {
       qc.invalidateQueries({ queryKey: ['home_feed'] });
@@ -537,6 +641,10 @@ export function useDeletePost() {
       qc.invalidateQueries({ queryKey: ['profile-posts'] });
       qc.invalidateQueries({ queryKey: ['profile'] });
       qc.invalidateQueries({ queryKey: ['post', post.id] });
+      // Deleting today's only post re-locks Explore; and the Profile tab's
+      // "posts" count lives on AuthProvider's row, same as in useToggleFollow.
+      qc.invalidateQueries({ queryKey: ['posted-today'] });
+      void refreshProfile();
     },
   });
 }
@@ -721,8 +829,12 @@ export function useSendDM(threadUserId: string | undefined, threadWithId: string
 /** ishaan's inbox: one row per thread, most recently active first. Empty for
  *  anyone else — enforced independently by the dm_inbox() function itself. */
 export function useDMInbox() {
+  const userId = useUserId();
   return useQuery({
-    queryKey: ['dm-inbox'],
+    // Keyed by user like every other per-account query, so one account's
+    // inbox can never be served to the next one signed in on the device.
+    queryKey: ['dm-inbox', userId],
+    enabled: !!userId,
     queryFn: async () => {
       const { data, error } = await supabase.rpc('dm_inbox', { lim: 50 });
       if (error) throw error;
@@ -989,9 +1101,19 @@ export function useMarkActivityRead() {
  */
 export function useHasPostedToday() {
   const userId = useUserId();
+  // Part of the key, not just the queryFn: "today" used to be computed
+  // inside the fetch and the query was kept permanently subscribed by the
+  // Explore tab icon, so it only ever re-ran on cold start, reconnect, or
+  // a post. Someone who posted yesterday and just reopened the app kept
+  // Explore unlocked indefinitely. Keying by the local calendar day means
+  // the first render after midnight is a different query, and
+  // refetchOnWindowFocus catches the common "reopen the app next morning"
+  // path the same way the activity and DM badges already do.
+  const today = localDayKey();
   return useQuery({
-    queryKey: ['posted-today', userId],
+    queryKey: ['posted-today', userId, today],
     enabled: !!userId,
+    refetchOnWindowFocus: true,
     queryFn: async () => {
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
@@ -1004,6 +1126,12 @@ export function useHasPostedToday() {
       return (count ?? 0) > 0;
     },
   });
+}
+
+/** The device's local calendar day, e.g. "2026-09-14". */
+function localDayKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
 
 /** Posts of your own required before Explore's daily gate even applies. */

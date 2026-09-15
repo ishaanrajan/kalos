@@ -81,9 +81,19 @@ export function GifPicker({ visible, onSelect, onClose }: GifPickerProps) {
           keyExtractor={(g) => g.id}
           numColumns={COLUMNS}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           style={styles.list}
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={isFetching ? <ActivityIndicator style={styles.spinner} size="small" /> : null}
+          ListEmptyComponent={
+            // Only once a real search has come back empty -- not while it's
+            // still in flight, and not before anything's been typed.
+            debouncedQuery.trim() && results && !isFetching && !isError ? (
+              <Text style={[typography.timestamp, styles.status, { color: colors.textSecondary }]}>
+                {`No GIFs for “${debouncedQuery.trim()}”`}
+              </Text>
+            ) : null
+          }
           ListFooterComponent={
             <Text style={[typography.timestamp, styles.attribution, { color: colors.textSecondary }]}>
               Powered By GIPHY

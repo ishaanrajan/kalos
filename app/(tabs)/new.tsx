@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Dimensions,
   KeyboardAvoidingView,
+  Linking,
   PixelRatio,
   Platform,
   Pressable,
@@ -15,12 +17,12 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library/legacy';
-import { randomUUID } from 'expo-crypto';
-import Ionicons from '@expo/vector-icons/Ionicons';
 import { File } from 'expo-file-system';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Tabs, useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
+import { useImage } from '@shopify/react-native-skia';
 import { FilterStrip } from '../../components/FilterStrip';
 import { FilterPreview } from '../../components/FilterPreview';
 import { EmptyState } from '../../components/EmptyState';
@@ -30,26 +32,26 @@ import type { CropAdjustHandle } from '../../components/CropAdjust';
 import { displayAspectRatio } from '../../components/PostCard';
 import { FILTERS, getFilter } from '../../lib/filters';
 import type { CropRect, ImageSize } from '../../lib/types';
-import { bakeFilteredImage, downscaleForPreview, prepareSource } from '../../lib/bake';
-import { supabase, PHOTOS_BUCKET } from '../../lib/supabase';
+import { downscaleForPreview, prepareSource } from '../../lib/bake';
+import { getPostUploadState, startPost } from '../../lib/postUpload';
 import { useUpdateProfile } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
 import { useMusic } from '../../lib/audio';
 import { trackToPostMusic, type Track } from '../../lib/music';
 import { MusicPicker } from '../../components/MusicPicker';
-import { setUpdatePromptSuppressed } from '../../lib/updates';
 
 const SCREEN = Dimensions.get('window').width;
 // The composer preview is a single canvas (unlike FilterStrip's 18 at once,
-// which downscales further itself -- see THUMB_SOURCE_EDGE in
-// FilterStrip.tsx), so there's no cost reason to keep it small. Sized off the
-// device's actual pixel density so it's never blurrier than the screen it's
-// rendered on.
+// which work from the much smaller thumb below), so there's no cost reason
+// to keep it small. Sized off the device's actual pixel density so it's
+// never blurrier than the screen it's rendered on.
 const PREVIEW_MAX_EDGE = Math.round(SCREEN * PixelRatio.get());
+/** Longest edge of the copy the 18 filter thumbnails are drawn from. */
+const THUMB_SOURCE_EDGE = 150;
 
 /** The photo as picked, before any crop has been chosen. */
-type RawPick = { uri: string; width: number; height: number };
+type RawPick = { uri: string; width: number; height: number; assetId: string };
 /**
  * The photo once its crop is locked in -- what the filter/share steps use.
  *
@@ -61,8 +63,23 @@ type RawPick = { uri: string; width: number; height: number };
  * nobody is going to see. There's deliberately no crop rect here any more --
  * the crop is already in the pixels, so there is no second place it could be
  * applied inconsistently.
+ *
+ * `previewUri` and `thumbUri` are decoded exactly once each, up in the
+ * component (see previewImage/thumbImage), and the resulting SkImages are
+ * what every preview surface draws from. Before that, each step decoded the
+ * preview for itself on mount, and the filter strip re-downscaled the photo
+ * from scratch every time you came back to it from Share -- 18 blank tiles
+ * while it caught up.
  */
-type Picked = { uri: string; width: number; height: number; previewUri: string };
+type Picked = {
+  uri: string;
+  width: number;
+  height: number;
+  previewUri: string;
+  thumbUri: string;
+  /** Which library asset (or camera shot) this came from, for change detection. */
+  assetId: string;
+};
 
 /**
  * Pick a photo, choose the look, write the caption.
@@ -72,6 +89,13 @@ type Picked = { uri: string; width: number; height: number; previewUri: string }
  * step to pass through. 'adjust' is the camera's -- a freshly shot photo has
  * had no chance at a framing yet, and giving it the same crop surface is what
  * keeps a posted photo the same shape regardless of where it came from.
+ *
+ * The library picker is mounted for the whole session -- from launch()
+ * until discard() or a share -- and merely covered by the later steps, not
+ * unmounted. Going Back from the filter step used to remount it: the grid
+ * reloaded, the most recent photo got re-selected, and your zoom, album and
+ * scroll position were gone. Now Back returns you to exactly the framing you
+ * left. `libraryReady` is that session flag.
  */
 type Step = 'library' | 'adjust' | 'filter' | 'share' | 'music';
 
@@ -100,6 +124,16 @@ async function requestLibraryPermissionWithRetry(): Promise<MediaLibrary.Permiss
   return MediaLibrary.getPermissionsAsync();
 }
 
+function deleteQuietly(uris: string[]) {
+  for (const uri of uris) {
+    try {
+      new File(uri).delete();
+    } catch {
+      // Already gone. Nothing to do.
+    }
+  }
+}
+
 export default function NewPost() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -119,6 +153,8 @@ export default function NewPost() {
   // library permission. 'filter' is safe as a placeholder: its branch sits
   // behind the `!picked` guard, which is true until a crop is confirmed.
   const [step, setStep] = useState<Step>('filter');
+  /** True from the moment the library is allowed to show until the session ends. */
+  const [libraryReady, setLibraryReady] = useState(false);
   const [rawPicked, setRawPicked] = useState<RawPick | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
   const [filterName, setFilterName] = useState(FILTERS[0].name);
@@ -126,8 +162,14 @@ export default function NewPost() {
   const [musicTrack, setMusicTrack] = useState<Track | null>(null);
   const [musicStartMs, setMusicStartMs] = useState(0);
   const [posting, setPosting] = useState(false);
-  /** Set when a permission was refused, so there's something to retry from. */
-  const [blocked, setBlocked] = useState<string | null>(null);
+  /**
+   * Set when a permission was refused, so there's something to retry from.
+   * `canAskAgain` decides what "retry" means: iOS only ever shows the
+   * permission dialog once, so after a refusal the only real fix is the
+   * Settings app -- re-requesting returns denied instantly and, before this
+   * was tracked, "Try again" just flashed and landed back on the same screen.
+   */
+  const [blocked, setBlocked] = useState<{ message: string; canAskAgain: boolean } | null>(null);
   /**
    * True while a selection is being turned into the next step -- resolving a
    * library asset's real file, or downscaling a locked-in crop into the
@@ -143,6 +185,14 @@ export default function NewPost() {
 
   const filter = getFilter(filterName) ?? FILTERS[0];
   const isNormal = filter.name === 'Normal';
+
+  // One decode per session for each of the two preview copies. Both are
+  // null until Skia has them, at which point every FilterPreview and the
+  // strip switch from empty to drawn together; switching between the
+  // filter, share and music steps afterwards costs nothing.
+  const previewImage = useImage(picked?.previewUri ?? null);
+  const thumbImage = useImage(picked?.thumbUri ?? null);
+
   // Real dimensions once a photo's picked; 1 (square) beforehand -- these run
   // every render regardless of `rawPicked`/`picked` to keep hook order stable,
   // same as every other hook in this component sitting above the early returns
@@ -174,16 +224,14 @@ export default function NewPost() {
   // successful post (still on this screen, mid-navigate-away) looked
   // identical to a fresh focus and relaunched the picker. Refs keep the
   // callback identity stable so only genuine focus events trigger it.
-  const stepRef = useRef(step);
+  const libraryReadyRef = useRef(libraryReady);
   const blockedRef = useRef(blocked);
-  const rawPickedRef = useRef(rawPicked);
   const pickedRef = useRef(picked);
   useEffect(() => {
-    stepRef.current = step;
+    libraryReadyRef.current = libraryReady;
     blockedRef.current = blocked;
-    rawPickedRef.current = rawPicked;
     pickedRef.current = picked;
-  }, [step, blocked, rawPicked, picked]);
+  }, [libraryReady, blocked, picked]);
 
   /**
    * The composer opens straight into the library, with the camera one tap
@@ -200,14 +248,36 @@ export default function NewPost() {
     try {
       const permission = await requestLibraryPermissionWithRetry();
       if (!permission.granted) {
-        setBlocked('Kalos needs photo library access to post.');
+        setBlocked({
+          message: permission.canAskAgain
+            ? 'Kalos needs photo library access to post.'
+            : 'Kalos needs photo library access to post. Turn it on in Settings, then come back.',
+          canAskAgain: permission.canAskAgain,
+        });
         return;
       }
+      setLibraryReady(true);
       setStep('library');
     } finally {
       picking.current = false;
     }
   }, []);
+
+  // Coming back from Settings with access granted should just open the
+  // library -- not wait for another tap on a button that says "Try again"
+  // for a thing that's already been fixed.
+  useEffect(() => {
+    if (!blocked) return;
+    const sub = AppState.addEventListener('change', (status) => {
+      if (status !== 'active') return;
+      MediaLibrary.getPermissionsAsync()
+        .then((p) => {
+          if (p.granted) void launch();
+        })
+        .catch(() => undefined);
+    });
+    return () => sub.remove();
+  }, [blocked, launch]);
 
   /**
    * Failures here are surfaced as an alert rather than through `blocked`:
@@ -239,7 +309,21 @@ export default function NewPost() {
       if (result.canceled || !result.assets[0]) return;
 
       const asset = result.assets[0];
-      setRawPicked({ uri: asset.uri, width: asset.width, height: asset.height });
+      // Into the camera roll, the way 2015 Instagram saved originals by
+      // default. launchCameraAsync writes only to the app's cache, so before
+      // this a shot was gone for good the moment you tapped Back on the
+      // crop step -- no confirmation, nothing to recover. Saved, it also
+      // shows up at the top of the grid (the picker listens for library
+      // changes), so Back lands you on it. Best-effort: a failed save just
+      // means the old, in-memory-only behaviour.
+      let assetId = asset.uri;
+      try {
+        const saved = await MediaLibrary.createAssetAsync(asset.uri);
+        assetId = saved.id;
+      } catch {
+        // Limited access or a write refusal; carry on with the cache copy.
+      }
+      setRawPicked({ uri: asset.uri, width: asset.width, height: asset.height, assetId });
       setStep('adjust');
     } catch (e) {
       // The simulator has no camera, and that surfaces here rather than as a
@@ -254,39 +338,55 @@ export default function NewPost() {
     useCallback(() => {
       // Only ever auto-launch into a genuinely empty composer. This tab is
       // never unmounted, so every trip to another tab and back is a focus
-      // event, and the old test -- "any step other than library/adjust" --
-      // treated a half-written post on the filter or share step as if it were
-      // a cold start. That put the Take Photo / Choose from Library sheet on
-      // top of the user's own work, and backing out of that sheet runs
-      // launch()'s cancel path, which replaces the route and throws away the
-      // photo they had already framed. A photo in hand (either the raw pick
-      // mid-adjust or the prepared one) means there is nothing to launch.
-      if (
-        blockedRef.current ||
-        rawPickedRef.current ||
-        pickedRef.current ||
-        stepRef.current === 'library'
-      ) {
+      // event. A live session (the library up, or a photo in hand) means
+      // there is nothing to launch.
+      if (blockedRef.current || libraryReadyRef.current || pickedRef.current) {
         return;
       }
       void launch();
     }, [launch])
   );
 
+  // The music step's audition only stopped on Back/Done/discard/share or when
+  // MusicPicker unmounted -- and this tab never unmounts. Leaving it any other
+  // way (a tapped push notification, Android's hardware back, another tab)
+  // kept the track looping under whatever screen came next, and a feed post
+  // with no music of its own had nothing to replace it with. Blur is the one
+  // event every exit shares.
+  useFocusEffect(
+    useCallback(() => {
+      return () => stopMusic();
+    }, [stopMusic])
+  );
+
+  /** Everything back to a cold composer. The session's cache files go with it. */
+  const resetSession = useCallback(
+    (keepFiles: boolean) => {
+      const current = pickedRef.current;
+      if (current && !keepFiles) {
+        deleteQuietly([current.uri, current.previewUri, current.thumbUri]);
+      }
+      // 'filter', not 'library' -- same reasoning as the initial state above.
+      // If this component doesn't fully unmount before the tab's focused
+      // again, a stale 'library'/'adjust' step would skip launch() entirely and
+      // leave the composer sitting on the last post's leftovers.
+      setStep('filter');
+      setLibraryReady(false);
+      setRawPicked(null);
+      setPicked(null);
+      setFilterName(FILTERS[0].name);
+      setCaption('');
+      setMusicTrack(null);
+      setMusicStartMs(0);
+      stopMusic();
+    },
+    [stopMusic]
+  );
+
   const discard = useCallback(() => {
-    // 'filter', not 'library' -- same reasoning as the initial state above.
-    // If this component doesn't fully unmount before the tab's focused
-    // again, a stale 'library'/'adjust' step would skip launch() entirely and
-    // leave the composer sitting on the last post's leftovers.
-    setStep('filter');
-    setRawPicked(null);
-    setPicked(null);
-    setCaption('');
-    setMusicTrack(null);
-    setMusicStartMs(0);
-    stopMusic();
+    resetSession(false);
     router.replace('/(tabs)');
-  }, [router, stopMusic]);
+  }, [resetSession, router]);
 
   /**
    * A framed photo becomes the one image the rest of the composer works from.
@@ -298,31 +398,53 @@ export default function NewPost() {
    * SOURCE_MAX_EDGE so the original's full resolution never has to be decoded
    * again -- not for the preview, and not on the JS thread at post time.
    *
-   * Both files come out of one decode of the original: the capped source the
-   * bake reads, and the preview the filter step shows. They're the same
-   * pixels by construction, so the filter you pick and the thumbnail beside
-   * the caption match what actually gets uploaded.
+   * Three files come out of it: the capped source the bake reads, the preview
+   * the filter step shows, and the tiny copy the filter strip draws its 18
+   * tiles from. They're the same pixels by construction, so the filter you
+   * pick and the thumbnail beside the caption match what actually gets
+   * uploaded.
    *
    * Shared by both entry points. The library picker and the camera's adjust
-   * step arrive here with exactly the same three things -- a file, its true
-   * dimensions, and a rect in that file's pixel space -- so there is one
-   * place where a crop turns into a post, not two that have to agree.
+   * step arrive here with exactly the same things -- a file, its true
+   * dimensions, a rect in that file's pixel space, and which asset it was --
+   * so there is one place where a crop turns into a post, not two that have
+   * to agree.
+   *
+   * The filter resets only when the *photo* changes; the caption never does.
+   * Going Back to the library and Next again on the same photo used to wipe
+   * both, which made "let me just check one thing" cost you your caption.
    */
   const prepareFramed = useCallback(
-    async ({ uri, natural, crop }: { uri: string; natural: ImageSize; crop: CropRect }) => {
+    async ({
+      uri,
+      natural,
+      crop,
+      assetId,
+    }: {
+      uri: string;
+      natural: ImageSize;
+      crop: CropRect;
+      assetId: string;
+    }) => {
       setProcessing(true);
       try {
         const { source, preview } = await prepareSource(uri, crop, natural, PREVIEW_MAX_EDGE);
+        const thumb = await downscaleForPreview(preview.uri, THUMB_SOURCE_EDGE);
+        const previous = pickedRef.current;
+        if (previous) {
+          deleteQuietly([previous.uri, previous.previewUri, previous.thumbUri]);
+          if (previous.assetId !== assetId) setFilterName(FILTERS[0].name);
+        }
         setPicked({
           uri: source.uri,
           width: source.width,
           height: source.height,
           previewUri: preview.uri,
+          thumbUri: thumb.uri,
+          assetId,
         });
         setRawPicked(null);
         setStep('filter');
-        setFilterName(FILTERS[0].name);
-        setCaption('');
       } catch (e) {
         Alert.alert('Could not use that photo', e instanceof Error ? e.message : undefined);
       } finally {
@@ -335,196 +457,119 @@ export default function NewPost() {
   const confirmCrop = useCallback(async () => {
     if (!rawPicked || !cropRef.current) return;
     const natural = { width: rawPicked.width, height: rawPicked.height };
-    await prepareFramed({ uri: rawPicked.uri, natural, crop: cropRef.current.getCrop(natural) });
+    await prepareFramed({
+      uri: rawPicked.uri,
+      natural,
+      crop: cropRef.current.getCrop(natural),
+      assetId: rawPicked.assetId,
+    });
   }, [rawPicked, prepareFramed]);
 
+  /**
+   * Share hands the post to lib/postUpload and gets out of the way. For an
+   * ordinary post that means: reset, back to the feed, and the upload shows
+   * itself as a banner there (components/PostingBanner) -- the way 2015
+   * Instagram did it, so posting feels instant rather than like a several-
+   * second modal. The forced first post is the one exception: there is no
+   * feed to return to yet, and app/_layout.tsx's redirect reads post_count
+   * off AuthProvider's profile, so this screen waits for the insert and the
+   * profile refresh before leaving -- otherwise the redirect saw the stale
+   * post_count === 0, replaced straight back here, and the focus handler
+   * reopened the library over the feed the user was expecting.
+   */
   const share = useCallback(async () => {
     if (!picked || !session) return;
     // `disabled={posting}` relies on a re-render landing before the next tap,
-    // which is exactly what a busy JS thread mid-bake can't promise. A ref
-    // flips synchronously, so a double tap can't start a second upload of
-    // the same photo.
+    // which is exactly what a busy JS thread can't promise. A ref flips
+    // synchronously, so a double tap can't start a second upload of the
+    // same photo.
     if (postingRef.current) return;
     postingRef.current = true;
     setPosting(true);
 
-    // Paths written to storage so far. If the post fails after an upload has
-    // landed, these are removed -- otherwise every retry mints a fresh UUID
-    // and abandons the previous pair in the bucket, billed forever, with no
-    // post to show for them and nothing that ever sweeps them up.
-    let uploaded: string[] = [];
-    // Which step we're on, so a failure can say so instead of just "could not post".
-    let stage = 'preparing';
+    const job = {
+      userId: session.user.id,
+      sourceUri: picked.uri,
+      previewUri: picked.previewUri,
+      filter,
+      caption: caption.trim() || null,
+      music: musicTrack ? trackToPostMusic(musicTrack, musicStartMs) : null,
+      tempFiles: [picked.uri, picked.previewUri, picked.thumbUri],
+      onSuccess: async () => {
+        qc.invalidateQueries({ queryKey: ['home_feed'] });
+        qc.invalidateQueries({ queryKey: ['profile-posts'] });
+        qc.invalidateQueries({ queryKey: ['profile'] });
+        qc.invalidateQueries({ queryKey: ['posted-today'] });
+        // Best-effort: a failure here must never read as "could not post"
+        // (it already did). If the flag flip fails, refreshProfile() still
+        // picks up the real post_count from the DB, and the redirect only
+        // re-forces this screen while post_count is 0 -- so a failed flip
+        // alone can't strand anyone here, it just retries next time.
+        if (isForcedFirstPost) {
+          try {
+            await updateProfile.mutateAsync({ onboarded: true });
+          } catch (e) {
+            console.warn('onboarding flag flip failed, will self-heal on next post', e);
+          }
+        }
+        // AuthProvider's profile is separate state from the react-query
+        // cache -- the redirect in app/_layout.tsx reads post_count and
+        // onboarded off of it, so it needs its own explicit refresh.
+        await refreshProfile();
+      },
+    };
 
-    // An OTA update prompt landing mid-upload would offer "Restart now",
-    // and reloadAsync() tears down the JS context immediately -- throwing
-    // away the photo, the filter and the caption, right at the moment the
-    // user has the most invested in them. Hold the prompt until this is
-    // done; the foreground check will simply ask on the next foreground.
-    setUpdatePromptSuppressed(true);
-
-    // The post itself lives or dies here. Once the insert succeeds, the post
-    // is real and done -- nothing after this point is allowed to make it
-    // look like posting failed, because a user told "could not post" will
-    // reasonably retry, and retrying re-runs this whole function, which
-    // would upload a second copy and insert a second row.
-    try {
-      // No `crop` and no re-normalising: picked.uri is already the cropped,
-      // upright, size-capped file prepareSource() wrote at confirmCrop time,
-      // so Skia decodes at most SOURCE_MAX_EDGE here instead of pulling a
-      // 48MP original into native memory through JSI while the user waits.
-      // Real Instagram exports feed photos around 1080-1440px -- no phone
-      // screen renders a post wider than that. The previous 2560/quality-100
-      // default made every post a multi-MB near-lossless JPEG, which is what
-      // was making posting itself slow (and, on a flaky connection, more
-      // likely to drop mid-upload and surface as "something went wrong").
-      stage = 'filtering';
-      const baked = await bakeFilteredImage({
-        uri: picked.uri,
-        filter,
-        strength: 1,
-        preNormalized: true,
-        maxEdge: 1440,
-        quality: 90,
-      });
-
-      const id = randomUUID();
-      const path = `${session.user.id}/${id}.jpg`;
-      const thumbPath = `${session.user.id}/${id}_thumb.jpg`;
-      uploaded = [];
-
-      // A small derivative for grid contexts (Explore, profile grids) --
-      // generated from the already-filtered bake output so it matches what
-      // actually got posted, not the unfiltered original. Without this,
-      // every ~130pt grid tile was decoding the same full-quality
-      // (maxEdge 2560, quality 100) image as the feed, which is what made
-      // scrolling those grids sluggish, especially on Android.
-      stage = 'thumbnail';
-      const thumb = await downscaleForPreview(baked.uri, 400);
-      const [bytes, thumbBytes] = await Promise.all([
-        new File(baked.uri).bytes(),
-        new File(thumb.uri).bytes(),
-      ]);
-
-      // Both uploads at once. They're independent objects in the same folder
-      // and the full-size one is by far the longer wait, so running the
-      // 50KB thumbnail behind it was adding a round trip to every post for
-      // no reason.
-      stage = 'upload';
-      const [main, thumbUpload] = await Promise.all([
-        supabase.storage
-          .from(PHOTOS_BUCKET)
-          .upload(path, bytes, { contentType: 'image/jpeg', upsert: false })
-          .then((r) => {
-            if (!r.error) uploaded.push(path);
-            return r;
-          }),
-        supabase.storage
-          .from(PHOTOS_BUCKET)
-          .upload(thumbPath, thumbBytes, { contentType: 'image/jpeg', upsert: false })
-          .then((r) => {
-            if (!r.error) uploaded.push(thumbPath);
-            return r;
-          }),
-      ]);
-      if (main.error) throw main.error;
-      if (thumbUpload.error) throw thumbUpload.error;
-
-      stage = 'saving';
-      const { error: insertError } = await supabase.from('posts').insert({
-        author_id: session.user.id,
-        image_path: path,
-        thumb_path: thumbPath,
-        width: baked.width,
-        height: baked.height,
-        caption: caption.trim() || null,
-        filter_name: isNormal ? null : filter.name,
-        music: musicTrack ? trackToPostMusic(musicTrack, musicStartMs) : null,
-      });
-      if (insertError) throw insertError;
-    } catch (e) {
-      if (uploaded.length) {
-        await supabase.storage
-          .from(PHOTOS_BUCKET)
-          .remove(uploaded)
-          .catch(() => undefined);
-      }
-      // Name the stage that actually failed. "Could not post" plus a bare
-      // message is unactionable when the pipeline is bake -> 2 uploads ->
-      // insert and any of the four can throw: the uploads can succeed and
-      // the insert still fail, which looks identical from here.
-      const detail =
-        e && typeof e === 'object'
-          ? [
-              (e as { message?: string }).message,
-              (e as { code?: string }).code && `code ${(e as { code?: string }).code}`,
-              (e as { details?: string }).details,
-              (e as { hint?: string }).hint,
-            ]
-              .filter(Boolean)
-              .join('\n')
-          : String(e);
-      Alert.alert(`Could not post (${stage})`, detail || 'Something went wrong.');
-      setPosting(false);
+    if (isForcedFirstPost) {
+      const result = await startPost(job, { blocking: true });
       postingRef.current = false;
-      setUpdatePromptSuppressed(false);
+      setPosting(false);
+      if (!result.ok) {
+        // Name the stage that actually failed. "Could not post" plus a bare
+        // message is unactionable when the pipeline is bake -> 2 uploads ->
+        // insert and any of the four can throw.
+        Alert.alert(`Could not post (${result.stage})`, result.message);
+        return;
+      }
+      resetSession(true);
+      router.replace('/(tabs)');
       return;
     }
-    postingRef.current = false;
-    setUpdatePromptSuppressed(false);
 
-    qc.invalidateQueries({ queryKey: ['home_feed'] });
-    qc.invalidateQueries({ queryKey: ['profile-posts'] });
-    qc.invalidateQueries({ queryKey: ['profile'] });
-    qc.invalidateQueries({ queryKey: ['posted-today'] });
-    // Clear everything, not just `picked` -- the focus effect now decides
-    // whether to relaunch the picker by asking whether a photo is in hand, so
-    // a leftover rawPicked from the post that just succeeded would read as
-    // work-in-progress forever and the tab would stop opening the source
-    // sheet at all. 'filter' as the resting step for the same reason it's the
-    // initial one: see discard() above.
-    setStep('filter');
-    setRawPicked(null);
-    setPicked(null);
-    setCaption('');
-    setMusicTrack(null);
-    setMusicStartMs(0);
-    stopMusic();
-    router.replace('/(tabs)');
-
-    // Best-effort cleanup from here on -- a failure here must never be
-    // reported as "could not post" (it already did) and must never block
-    // leaving this screen. If the flag flip below fails, the final
-    // refreshProfile() still picks up the real post_count from the DB, and
-    // app/_layout.tsx's redirect only re-forces this screen while
-    // post_count is 0 -- so a failed flag flip alone can no longer strand
-    // anyone here, it just retries itself next time onboarding-gated code runs.
-    if (isForcedFirstPost) {
-      try {
-        await updateProfile.mutateAsync({ onboarded: true });
-      } catch (e) {
-        console.warn('onboarding flag flip failed, will self-heal on next post', e);
-      }
+    // The slot may still be busy with the previous post. Say so and keep
+    // everything -- the photo, the caption -- so a second tap in a moment
+    // just works.
+    const slot = getPostUploadState();
+    if (slot.status !== 'idle') {
+      postingRef.current = false;
+      setPosting(false);
+      Alert.alert(
+        'Hold on',
+        slot.status === 'posting'
+          ? 'Your last photo is still posting. Try again in a moment.'
+          : 'Your last photo didn’t post. Retry or discard it from the feed first.'
+      );
+      return;
     }
-    // AuthProvider's profile is separate state from the react-query cache
-    // above -- the redirect in app/_layout.tsx reads post_count and
-    // onboarded off of it, so it needs its own explicit refresh.
-    await refreshProfile();
+
+    // Fire and forget: from here the banner on the feed owns the outcome.
+    void startPost(job);
+    postingRef.current = false;
     setPosting(false);
+    resetSession(true);
+    router.replace('/(tabs)');
   }, [
     picked,
     session,
     filter,
-    isNormal,
     caption,
     musicTrack,
     musicStartMs,
-    stopMusic,
     qc,
     router,
     isForcedFirstPost,
     updateProfile,
     refreshProfile,
+    resetSession,
   ]);
 
   // The composer is a flow, not a destination: once you're in it every screen
@@ -535,28 +580,42 @@ export default function NewPost() {
   // back on its own the moment the composer is left.
   const hideTabBar = <Tabs.Screen options={{ tabBarStyle: { display: 'none' } }} />;
 
-  if (step === 'library') {
-    // The picker owns the whole screen, header included -- it has a preview,
-    // an album switcher and a camera button to place, and splitting that
-    // chrome across two files is how the header ends up disagreeing with what
-    // the screen underneath it can actually do.
-    return (
-      <>
-        {hideTabBar}
-        <LibraryPicker onCancel={discard} onOpenCamera={openCamera} onNext={prepareFramed} />
-      </>
-    );
-  }
+  // The picker owns the whole screen, header included -- it has a preview,
+  // an album switcher and a camera button to place, and splitting that
+  // chrome across two files is how the header ends up disagreeing with what
+  // the screen underneath it can actually do. It stays mounted underneath
+  // every later step (see the Step doc comment); `covered` just keeps it
+  // from taking touches while something is drawn over it.
+  const covered = step !== 'library';
+  const libraryLayer = libraryReady ? (
+    <View
+      style={StyleSheet.absoluteFill}
+      pointerEvents={covered ? 'none' : 'auto'}
+      accessibilityElementsHidden={covered}
+      importantForAccessibility={covered ? 'no-hide-descendants' : 'auto'}
+    >
+      <LibraryPicker
+        onCancel={discard}
+        canCancel={!isForcedFirstPost}
+        onOpenCamera={openCamera}
+        onNext={prepareFramed}
+      />
+    </View>
+  ) : null;
 
-  if (step === 'adjust' && rawPicked) {
+  let screen: React.ReactNode = null;
+
+  if (step === 'library') {
+    screen = null;
+  } else if (step === 'adjust' && rawPicked) {
     const frame = { width: SCREEN, height: SCREEN / frameAspectRatio };
-    return (
+    screen = (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
-        {hideTabBar}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           {/* Back to the picker, not out of the composer: the camera is a
               detour from the library, so undoing the shot should return you
-              to where you took it from. */}
+              to where you took it from. The shot itself is already in the
+              camera roll (see openCamera). */}
           <Pressable
             onPress={() => {
               setRawPicked(null);
@@ -564,13 +623,22 @@ export default function NewPost() {
             }}
             hitSlop={12}
             disabled={processing}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: processing }}
           >
             <Text style={[styles.headerAction, { color: colors.text }, processing && styles.disabled]}>
               Back
             </Text>
           </Pressable>
           <Text style={[styles.title, { color: colors.text }]}>New post</Text>
-          <Pressable onPress={confirmCrop} hitSlop={12} disabled={processing}>
+          <Pressable
+            onPress={confirmCrop}
+            hitSlop={12}
+            disabled={processing}
+            accessibilityRole="button"
+            accessibilityLabel={processing ? 'Preparing photo' : 'Next'}
+            accessibilityState={{ disabled: processing }}
+          >
             {processing ? (
               <ActivityIndicator size="small" />
             ) : (
@@ -592,63 +660,69 @@ export default function NewPost() {
             // doc comment calls "how a wrong one gets fixed", and it's
             // also what confirmCrop below reads when it calls getCrop(),
             // so a bad initial guess can't silently survive into the
-            // actual crop math. Without this wired up, a landscape-vs-
-            // portrait mismatch could make getCrop() compute a rect in
-            // the wrong axis order entirely -- clampCropRect (lib/bake.ts)
-            // would then clamp it toward covering the whole image, which
-            // is why the symptom looked like "the crop I chose was
-            // ignored" rather than an obviously wrong rectangle.
+            // actual crop math.
             onImageLoad={(size) => setRawPicked((prev) => (prev ? { ...prev, ...size } : prev))}
           />
         </View>
       </SafeAreaView>
     );
-  }
-
-  if (!picked) {
+  } else if (!picked) {
     // Bare while the native camera/permission sheet is up -- anything drawn
     // here would flash for the moment before it covers the screen.
-    return (
+    screen = (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
-        {hideTabBar}
         {blocked ? (
           <>
             <View style={[styles.header, { borderBottomColor: colors.border }]}>
+              {/* The tab bar is hidden on every composer screen, so without
+                  this there was no way out of a refused permission short of
+                  force-quitting the app. During a forced first post Cancel
+                  can't actually leave (the redirect brings the composer
+                  straight back), so it's not offered there -- Settings is
+                  the only real exit, and the effect above takes it from
+                  there the moment access is granted. */}
+              {isForcedFirstPost ? (
+                <View style={styles.headerSpacer} />
+              ) : (
+                <Pressable onPress={discard} hitSlop={12} accessibilityRole="button">
+                  <Text style={[styles.headerAction, { color: colors.text }]}>Cancel</Text>
+                </Pressable>
+              )}
               <Text style={[styles.title, { color: colors.text }]}>New post</Text>
+              <View style={styles.headerSpacer} />
             </View>
             <EmptyState
               icon="camera-off"
               title="Can't open that"
-              body={blocked}
-              actionLabel="Try again"
-              onAction={launch}
+              body={blocked.message}
+              actionLabel={blocked.canAskAgain ? 'Try again' : 'Open Settings'}
+              onAction={
+                blocked.canAskAgain ? launch : () => Linking.openSettings().catch(() => undefined)
+              }
             />
           </>
         ) : null}
       </SafeAreaView>
     );
-  }
-
-  if (step === 'filter') {
-    return (
+  } else if (step === 'filter') {
+    screen = (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
-        {hideTabBar}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           {/* Back to the picker rather than out of the composer -- changing
               your mind about which photo shouldn't cost you the whole post,
               and every step from here on is already reversible. */}
-          <Pressable onPress={() => setStep('library')} hitSlop={12}>
+          <Pressable onPress={() => setStep('library')} hitSlop={12} accessibilityRole="button">
             <Text style={[styles.headerAction, { color: colors.text }]}>Back</Text>
           </Pressable>
           <Text style={[styles.title, { color: colors.text }]}>New post</Text>
-          <Pressable onPress={() => setStep('share')} hitSlop={12}>
+          <Pressable onPress={() => setStep('share')} hitSlop={12} accessibilityRole="button">
             <Text style={[styles.headerAction, styles.forward, { color: colors.accent }]}>Next</Text>
           </Pressable>
         </View>
 
         <ScrollView keyboardShouldPersistTaps="handled">
           <FilterPreview
-            uri={picked.previewUri}
+            image={previewImage}
             filter={filter}
             strength={1}
             size={{ width: SCREEN, height: SCREEN / previewAspectRatio }}
@@ -656,7 +730,7 @@ export default function NewPost() {
           />
 
           <FilterStrip
-            uri={picked.previewUri}
+            image={thumbImage}
             selectedFilterName={filterName}
             thumbSize={84}
             onSelect={setFilterName}
@@ -664,18 +738,29 @@ export default function NewPost() {
         </ScrollView>
       </SafeAreaView>
     );
-  }
-
-  if (step === 'music') {
-    return (
+  } else if (step === 'music') {
+    screen = (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
-        {hideTabBar}
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
-          <Pressable onPress={() => { stopMusic(); setStep('share'); }} hitSlop={12}>
+          <Pressable
+            onPress={() => {
+              stopMusic();
+              setStep('share');
+            }}
+            hitSlop={12}
+            accessibilityRole="button"
+          >
             <Text style={[styles.headerAction, { color: colors.text }]}>Back</Text>
           </Pressable>
           <Text style={[styles.title, { color: colors.text }]}>Add music</Text>
-          <Pressable onPress={() => { stopMusic(); setStep('share'); }} hitSlop={12}>
+          <Pressable
+            onPress={() => {
+              stopMusic();
+              setStep('share');
+            }}
+            hitSlop={12}
+            accessibilityRole="button"
+          >
             <Text style={[styles.headerAction, styles.forward, { color: colors.accent }]}>Done</Text>
           </Pressable>
         </View>
@@ -689,90 +774,114 @@ export default function NewPost() {
         />
       </SafeAreaView>
     );
+  } else {
+    screen = (
+      <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Pressable
+            onPress={() => setStep('filter')}
+            hitSlop={12}
+            disabled={posting}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: posting }}
+          >
+            <Text style={[styles.headerAction, { color: colors.text }, posting && styles.disabled]}>
+              Back
+            </Text>
+          </Pressable>
+          <Text style={[styles.title, { color: colors.text }]}>New post</Text>
+          <Pressable
+            onPress={share}
+            hitSlop={12}
+            disabled={posting}
+            accessibilityRole="button"
+            accessibilityLabel={posting ? 'Posting' : 'Share'}
+            accessibilityState={{ disabled: posting }}
+          >
+            {posting ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <Text style={[styles.headerAction, styles.forward, { color: colors.accent }]}>Share</Text>
+            )}
+          </Pressable>
+        </View>
+
+        <KeyboardAvoidingView
+          style={styles.shareBody}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <View style={styles.captionRow}>
+            <FilterPreview
+              image={previewImage}
+              filter={filter}
+              strength={1}
+              size={72}
+              style={[styles.thumb, { backgroundColor: colors.imagePlaceholder }]}
+            />
+            <TextInput
+              style={[styles.caption, { color: colors.text }]}
+              placeholder="Write a caption…"
+              placeholderTextColor={colors.textSecondary}
+              value={caption}
+              onChangeText={setCaption}
+              multiline
+              autoFocus
+              maxLength={2200}
+              // share() captures the caption at tap time; anything typed
+              // after that would be silently dropped.
+              editable={!posting}
+            />
+          </View>
+          <Pressable
+            onPress={() => setStep('music')}
+            disabled={posting}
+            style={[styles.musicRow, { borderTopColor: colors.border }]}
+            accessibilityRole="button"
+            accessibilityLabel={musicTrack ? 'Change music' : 'Add music'}
+          >
+            <Ionicons name="musical-notes-outline" size={18} color={colors.text} />
+            <Text style={[styles.musicLabel, { color: colors.text }]} numberOfLines={1}>
+              {musicTrack ? `${musicTrack.title} · ${musicTrack.artist}` : 'Add music'}
+            </Text>
+            {musicTrack ? (
+              <Pressable
+                onPress={() => {
+                  setMusicTrack(null);
+                  setMusicStartMs(0);
+                  stopMusic();
+                }}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Remove music"
+              >
+                <Ionicons name="close" size={18} color={colors.textSecondary} />
+              </Pressable>
+            ) : (
+              <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+            )}
+          </Pressable>
+
+          {!isNormal && (
+            <Text style={[styles.appliedFilter, { color: colors.textSecondary }]}>{filter.name}</Text>
+          )}
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    );
   }
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
+    <View style={[styles.root, { backgroundColor: colors.surface }]}>
       {hideTabBar}
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
-        <Pressable onPress={() => setStep('filter')} hitSlop={12} disabled={posting}>
-          <Text style={[styles.headerAction, { color: colors.text }, posting && styles.disabled]}>
-            Back
-          </Text>
-        </Pressable>
-        <Text style={[styles.title, { color: colors.text }]}>New post</Text>
-        <Pressable onPress={share} hitSlop={12} disabled={posting}>
-          {posting ? (
-            <ActivityIndicator size="small" />
-          ) : (
-            <Text style={[styles.headerAction, styles.forward, { color: colors.accent }]}>Share</Text>
-          )}
-        </Pressable>
-      </View>
-
-      <KeyboardAvoidingView
-        style={styles.shareBody}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <View style={styles.captionRow}>
-          <FilterPreview
-            uri={picked.previewUri}
-            filter={filter}
-            strength={1}
-            size={72}
-            style={[styles.thumb, { backgroundColor: colors.imagePlaceholder }]}
-          />
-          <TextInput
-            style={[styles.caption, { color: colors.text }]}
-            placeholder="Write a caption…"
-            placeholderTextColor={colors.textSecondary}
-            value={caption}
-            onChangeText={setCaption}
-            multiline
-            autoFocus
-            maxLength={2200}
-          />
-        </View>
-        <Pressable
-          onPress={() => setStep('music')}
-          disabled={posting}
-          style={[styles.musicRow, { borderTopColor: colors.border }]}
-          accessibilityRole="button"
-          accessibilityLabel={musicTrack ? 'Change music' : 'Add music'}
-        >
-          <Ionicons name="musical-notes-outline" size={18} color={colors.text} />
-          <Text style={[styles.musicLabel, { color: colors.text }]} numberOfLines={1}>
-            {musicTrack ? `${musicTrack.title} · ${musicTrack.artist}` : 'Add music'}
-          </Text>
-          {musicTrack ? (
-            <Pressable
-              onPress={() => {
-                setMusicTrack(null);
-                setMusicStartMs(0);
-                stopMusic();
-              }}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Remove music"
-            >
-              <Ionicons name="close" size={18} color={colors.textSecondary} />
-            </Pressable>
-          ) : (
-            <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
-          )}
-        </Pressable>
-
-        {!isNormal && (
-          <Text style={[styles.appliedFilter, { color: colors.textSecondary }]}>{filter.name}</Text>
-        )}
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      {libraryLayer}
+      {screen ? (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.surface }]}>{screen}</View>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: {
     height: 44,
     flexDirection: 'row',
@@ -783,6 +892,9 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 17, fontWeight: '600' },
   headerAction: { fontSize: 15 },
+  // Balances a lone header action so the title stays centred under
+  // space-between; sized to roughly what "Cancel" takes up.
+  headerSpacer: { width: 48 },
   forward: { fontWeight: '600' },
   disabled: { opacity: 0.4 },
   // Always black, not theme-driven -- this is photo letterboxing, the same

@@ -20,7 +20,8 @@ import { downscaleForPreview } from '../lib/bake';
 import { useUpdateProfile, type ProfilePatch } from '../lib/queries';
 import { avatarUrl, supabase, AVATARS_BUCKET } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
-import { useTheme } from '../lib/theme';
+import { nativeHeaderHeight, useTheme } from '../lib/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const USERNAME_RULE = /^[a-z0-9._]{3,30}$/;
 
@@ -29,6 +30,7 @@ export default function EditProfile() {
   const { profile, session, refreshProfile } = useAuth();
   const updateProfile = useUpdateProfile();
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
 
   const [username, setUsername] = useState(profile?.username ?? '');
   const [displayName, setDisplayName] = useState(profile?.display_name ?? '');
@@ -116,6 +118,10 @@ export default function EditProfile() {
     <KeyboardAvoidingView
       style={[styles.root, { backgroundColor: colors.surface }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      // Under a native stack header, KAV under-pads by exactly the header's
+      // height -- see app/post/[id].tsx for the full reasoning. Without it
+      // the bottom of the form sat under the keyboard on shorter phones.
+      keyboardVerticalOffset={insets.top + nativeHeaderHeight}
     >
       <Stack.Screen
         options={{

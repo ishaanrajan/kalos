@@ -18,7 +18,14 @@ interface Props {
 export function UserRow({ profile, onPress, accessory }: Props) {
   const { colors } = useTheme();
   return (
-    <Pressable style={styles.row} onPress={onPress}>
+    <Pressable
+      style={styles.row}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={
+        profile.display_name ? `${profile.username}, ${profile.display_name}` : profile.username
+      }
+    >
       <Avatar url={avatarUrl(profile.avatar_path)} username={profile.username} size={44} />
       <View style={styles.names}>
         <Text style={[styles.username, { color: colors.text }]}>{profile.username}</Text>

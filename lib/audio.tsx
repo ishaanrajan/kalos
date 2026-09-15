@@ -152,7 +152,11 @@ export function MusicProvider({ children }: { children: ReactNode }) {
 
     try {
       player.replace({ uri: music.preview_url });
-      player.muted = mutedRef.current;
+      // The feed's mute is a feed preference. Auditioning a track in the
+      // composer is an explicit "let me hear this", and it used to come out
+      // silent for anyone who'd muted the feed, with nothing on the music
+      // step to say why.
+      player.muted = mutedRef.current && !postId.startsWith('__composer__');
       if (start > 0) player.seekTo(start);
       player.play();
     } catch {

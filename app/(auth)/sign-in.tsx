@@ -58,6 +58,7 @@ export default function SignIn() {
           placeholderTextColor={colors.textSecondary}
           autoCapitalize="none"
           autoComplete="email"
+          textContentType="username"
           keyboardType="email-address"
           value={email}
           onChangeText={setEmail}
@@ -70,9 +71,14 @@ export default function SignIn() {
           placeholder="Password"
           placeholderTextColor={colors.textSecondary}
           autoCapitalize="none"
+          // Lets iOS Keychain / Android autofill offer saved credentials --
+          // without these the one screen people type on most got no help.
+          autoComplete="password"
+          textContentType="password"
           secureTextEntry
           value={password}
           onChangeText={setPassword}
+          returnKeyType="go"
           onSubmitEditing={() => !disabled && submit()}
         />
 

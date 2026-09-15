@@ -1,3 +1,4 @@
+import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Avatar } from './Avatar';
@@ -7,6 +8,7 @@ import { EmptyState } from './EmptyState';
 import { useIsFollowing, useMutualFollowers, useProfilePosts, useToggleFollow } from '../lib/queries';
 import type { MutualFollowers } from '../lib/queries';
 import { avatarUrl, photoThumbUrl } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
 import { useTheme } from '../lib/theme';
 import type { Profile } from '../lib/types';
 
@@ -30,14 +32,36 @@ interface Props {
   /** True when this is the signed-in user's own profile. */
   isSelf: boolean;
   onSignOut?: () => void;
+  /**
+   * Re-fetches the profile row itself on pull-to-refresh; the grid's own
+   * posts query is always refetched. The row comes from a different place on
+   * each screen (AuthProvider for the own tab, react-query for everyone
+   * else's), so the caller owns that half.
+   */
+  onRefreshProfile?: () => Promise<unknown> | void;
 }
 
-export function ProfileView({ profile, isSelf, onSignOut }: Props) {
+export function ProfileView({ profile, isSelf, onSignOut, onRefreshProfile }: Props) {
   const router = useRouter();
-  const { data: posts, isLoading } = useProfilePosts(profile.id);
-  const { data: following, isLoading: followingLoading } = useIsFollowing(
-    isSelf ? undefined : profile.id
-  );
+  const { profile: me } = useAuth();
+  const {
+    data: posts,
+    isLoading,
+    isError: postsError,
+    refetch: refetchPosts,
+  } = useProfilePosts(profile.id);
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await Promise.all([refetchPosts(), onRefreshProfile?.()]).catch(() => undefined);
+    setRefreshing(false);
+  }, [refetchPosts, onRefreshProfile]);
+  const {
+    data: following,
+    isLoading: followingLoading,
+    isError: followingError,
+    refetch: refetchFollowing,
+  } = useIsFollowing(isSelf ? undefined : profile.id);
   const { data: mutuals } = useMutualFollowers(isSelf ? undefined : profile.id);
   const toggleFollow = useToggleFollow();
   const { colors } = useTheme();
@@ -110,8 +134,15 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
           <>
             <Button
               variant={isFollowing ? 'outline' : 'primary'}
-              label={isFollowing ? 'Following' : 'Follow'}
+              // If the follow-state read failed, the button becomes the retry
+              // -- it used to sit at 40% opacity saying "Follow", permanently
+              // disabled, with nothing to say why.
+              label={followingError ? 'Retry' : isFollowing ? 'Following' : 'Follow'}
               onPress={() => {
+                if (followingError) {
+                  void refetchFollowing();
+                  return;
+                }
                 // `disabled` below guarantees the read has resolved by the
                 // time this can fire, so `following` is a real answer here
                 // and not the undefined that used to force an INSERT.
@@ -133,7 +164,7 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
               // A spinner rather than a wrong label while we don't yet know
               // which way this button goes.
               loading={!followKnown && followingLoading}
-              disabled={!followKnown || toggleFollow.isPending}
+              disabled={(!followKnown && !followingError) || toggleFollow.isPending}
               style={styles.action}
             />
             {/* The only other account (besides ishaan) allowed to write into
@@ -145,7 +176,17 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
               <Button
                 variant="outline"
                 label="Message"
-                onPress={() => router.push(`/dm/${profile.username}`)}
+                // ishaan's own thread with the bot is addressed from his side
+                // (thread_user_id = ishaan) -- the same `own=1` the inbox
+                // uses. Without it this opened a second, empty thread keyed
+                // the other way round.
+                onPress={() =>
+                  router.push(
+                    me?.username === 'ishaan'
+                      ? `/dm/${profile.username}?own=1`
+                      : `/dm/${profile.username}`
+                  )
+                }
                 style={styles.action}
               />
             )}
@@ -160,7 +201,14 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
       posts={posts ?? []}
       imageUrlFor={photoThumbUrl}
       onPressPost={(p) => router.push(`/post/${p.id}`)}
-      ListHeaderComponent={() => header}
+      onRefresh={onRefresh}
+      refreshing={refreshing}
+      // The element, not a fresh arrow -- a new component *type* every render
+      // made FlatList unmount and remount the whole header each time
+      // `following`, `mutuals` or the follow mutation's pending state
+      // changed: the avatar's fade-in replayed and the Follow button lost its
+      // pressed state mid-tap.
+      ListHeaderComponent={header}
       ListEmptyComponent={
         // The header (avatar, counts, bio) is already in memory and has
         // nothing to wait on — only the grid below it depends on the posts
@@ -169,11 +217,27 @@ export function ProfileView({ profile, isSelf, onSignOut }: Props) {
           <View style={styles.gridLoading}>
             <ActivityIndicator />
           </View>
+        ) : postsError ? (
+          <EmptyState
+            icon="alert-circle"
+            title="Couldn't load posts"
+            actionLabel="Try again"
+            onAction={() => refetchPosts()}
+          />
         ) : (
           <EmptyState
             icon="camera"
             title={isSelf ? 'No posts yet' : 'No posts'}
-            body={isSelf ? 'Your photos will show up here.' : `${profile.username} hasn't posted yet.`}
+            // "hasn't posted yet" under a header that says "12 posts" reads
+            // as a broken screen. That combination is a viewer the author
+            // has hidden their posts from (post_blocks) -- keep it neutral.
+            body={
+              isSelf
+                ? 'Your photos will show up here.'
+                : profile.post_count > 0
+                  ? undefined
+                  : `${profile.username} hasn't posted yet.`
+            }
           />
         )
       }

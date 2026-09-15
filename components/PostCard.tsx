@@ -108,6 +108,9 @@ export interface PostCardProps {
  * 1.91:1. Anything outside that gets cropped back into range, and anything
  * near-square snaps to exactly square.
  */
+/** Extra touch area around the small text links (likes, "more", comments). */
+const LINK_HIT_SLOP = { top: 8, bottom: 8, left: 4, right: 12 };
+
 const MIN_RATIO = 4 / 5;
 const MAX_RATIO = 1.91;
 
@@ -471,13 +474,19 @@ function PostCardImpl({
       {/* Meta */}
       <View style={styles.meta}>
         {likeCount !== 0 ? (
-          <Text
-            style={[typography.bodyStrong, { color: colors.accent }]}
+          // Text links are only as tall as their glyphs (~15pt); the
+          // Pressable's hitSlop brings the three small ones up to a real
+          // tap target without moving anything.
+          <Pressable
             onPress={handlePressLikes}
-            suppressHighlighting
+            hitSlop={LINK_HIT_SLOP}
+            style={styles.inlineLink}
+            accessibilityRole="link"
           >
-            {formatCount(likeCount, 'like', 'likes')}
-          </Text>
+            <Text style={[typography.bodyStrong, { color: colors.accent }]}>
+              {formatCount(likeCount, 'like', 'likes')}
+            </Text>
+          </Pressable>
         ) : null}
 
         {caption ? (
@@ -497,7 +506,12 @@ function PostCardImpl({
               <MentionText text={caption} mentionColor={colors.mention} onPressMention={onPressMention} />
             </Text>
 
-            {/* Off-screen copy, measured to decide whether "more" is warranted. */}
+            {/* Off-screen copy, measured to decide whether "more" is
+                warranted. Same nested styles as the visible caption -- the
+                username in bodyStrong and mentions/hashtags at 600 are wider
+                than body, and measuring an all-body copy could disagree by a
+                line right at the 2-line boundary: a "more" that expanded
+                nothing, or a clipped caption with no "more" at all. */}
             {!captionExpanded ? (
               <Text
                 style={[typography.body, styles.measure, { color: colors.text }]}
@@ -505,32 +519,41 @@ function PostCardImpl({
                 accessible={false}
                 pointerEvents="none"
               >
-                {`${authorUsername}  ${caption}`}
+                <Text style={typography.bodyStrong}>{authorUsername}</Text>
+                {'  '}
+                <MentionText text={caption} mentionColor={colors.text} />
               </Text>
             ) : null}
 
             {captionOverflows && !captionExpanded ? (
-              <Text
-                style={[typography.meta, styles.more, { color: colors.textSecondary }]}
+              <Pressable
                 onPress={() => setCaptionExpanded(true)}
-                suppressHighlighting
+                hitSlop={LINK_HIT_SLOP}
+                style={styles.inlineLink}
+                accessibilityRole="button"
+                accessibilityLabel="Show full caption"
               >
-                more
-              </Text>
+                <Text style={[typography.meta, styles.more, { color: colors.textSecondary }]}>
+                  more
+                </Text>
+              </Pressable>
             ) : null}
           </View>
         ) : null}
 
         {showCommentPreview && commentCount > 0 ? (
-          <Text
-            style={[typography.meta, styles.viewComments, { color: colors.textSecondary }]}
+          <Pressable
             onPress={handlePressComments}
-            suppressHighlighting
+            hitSlop={LINK_HIT_SLOP}
+            style={styles.inlineLink}
+            accessibilityRole="link"
           >
-            {commentCount === 1
-              ? 'View 1 comment'
-              : `View all ${commentCount.toLocaleString()} comments`}
-          </Text>
+            <Text style={[typography.meta, styles.viewComments, { color: colors.textSecondary }]}>
+              {commentCount === 1
+                ? 'View 1 comment'
+                : `View all ${commentCount.toLocaleString()} comments`}
+            </Text>
+          </Pressable>
         ) : null}
 
         {previewComments?.map((comment) => (
@@ -576,6 +599,8 @@ function PostCardImpl({
 export const PostCard = React.memo(PostCardImpl);
 
 const styles = StyleSheet.create({
+  // Shrink-wraps a text link so its hit slop doesn't span the whole row.
+  inlineLink: { alignSelf: 'flex-start' },
   root: {
     width: '100%',
   },
