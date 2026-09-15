@@ -28,7 +28,7 @@ import { File } from 'expo-file-system';
 import { bakeFilteredImage, downscaleForPreview } from './bake';
 import { PHOTOS_BUCKET, supabase } from './supabase';
 import { setUpdatePromptSuppressed } from './updates';
-import type { Filter, PostMusic } from './types';
+import type { Filter, PostMusic, PostTag } from './types';
 
 export interface PostJob {
   userId: string;
@@ -39,6 +39,11 @@ export interface PostJob {
   filter: Filter;
   caption: string | null;
   music: PostMusic | null;
+  /**
+   * People tagged on the photo. Written after the post row exists; a failure
+   * there is logged, never surfaced -- see runPipeline for why.
+   */
+  tags: PostTag[];
   /**
    * Cache files that belong to this post's composer session. Deleted once
    * the job is finished with them -- success or discard -- so a post doesn't
@@ -169,17 +174,31 @@ async function runPipeline(job: PostJob): Promise<PostResult> {
     if (thumbUpload.error) throw thumbUpload.error;
 
     stage = 'saving';
-    const { error: insertError } = await supabase.from('posts').insert({
-      author_id: job.userId,
-      image_path: path,
-      thumb_path: thumbPath,
-      width: baked.width,
-      height: baked.height,
-      caption: job.caption,
-      filter_name: job.filter.name === 'Normal' ? null : job.filter.name,
-      music: job.music,
-    });
+    const { data: inserted, error: insertError } = await supabase
+      .from('posts')
+      .insert({
+        author_id: job.userId,
+        image_path: path,
+        thumb_path: thumbPath,
+        width: baked.width,
+        height: baked.height,
+        caption: job.caption,
+        filter_name: job.filter.name === 'Normal' ? null : job.filter.name,
+        music: job.music,
+      })
+      .select('id')
+      .single();
     if (insertError) throw insertError;
+
+    // The post exists from here on. A tag insert that fails must not throw:
+    // the banner's Retry re-runs this whole pipeline, which would upload and
+    // insert a second copy of the post. An untagged post is the lesser harm.
+    if (job.tags.length > 0) {
+      const { error: tagError } = await supabase.from('post_tags').insert(
+        job.tags.map((t) => ({ post_id: inserted.id, user_id: t.user_id, x: t.x, y: t.y })),
+      );
+      if (tagError) console.warn('Post saved but tagging failed', tagError.message);
+    }
     return { ok: true };
   } catch (e) {
     if (uploaded.length) {

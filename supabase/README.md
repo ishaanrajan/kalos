@@ -77,6 +77,7 @@ so re-applying a file after a tweak is safe.
 | `0029_comment_gif.sql` | `comments.gif` — GIF-only comments via GIPHY (see `lib/giphy.ts`). `comments.body` becomes nullable; `home_feed`/`activity_feed` coalesce a GIF comment's preview text to `[GIF]` |
 | `0030_fix_drake_comment_reply_cron.sql` | Reschedules `drake-comment-reply-flush-every-minute`, which had silently stopped running — re-run if that job ever goes quiet again |
 | `0031_post_blocks.sql` | `post_blocks` — lets one account hide their posts from a specific other account (post visibility only, not a general block). Admin-managed, no client UI yet; add a row with a plain insert |
+| `0034_post_tags.sql` | `post_tags` — tagging people on a photo, positioned as fractions of the displayed frame. `home_feed`/`explore_feed` gain a `tags` column; `activity_feed` gains a `'tag'` kind. Needs a fifth `notify` webhook — see [Push notifications](#5-push-notifications) |
 
 ### Option A — SQL editor (no tooling required)
 
@@ -219,15 +220,16 @@ through the UI at least once.
    `supabase/functions/notify/index.ts`. If it asks about **"Enforce JWT
    verification,"** turn that **off** — the webhook below calls it directly,
    with no user JWT to verify.
-2. **Create four Database Webhooks.** Dashboard → **Database** → **Webhooks**
+2. **Create five Database Webhooks.** Dashboard → **Database** → **Webhooks**
    → **Create a new hook**, once each for `dm_messages`, `likes`, `comments`,
-   `follows`:
+   `follows`, `post_tags` (the last one only once `0034_post_tags.sql` has
+   run — the table has to exist before a hook can be attached to it):
    - Events: **Insert** only
    - Type: **Supabase Edge Functions**
    - Edge Function: `notify`
 
 That's it — no URL or auth header to fill in by hand, the Dashboard wires
-those up for you. This is also why the four triggers don't live in
+those up for you. This is also why the triggers don't live in
 `0009_notifications.sql` itself: they were originally written as raw
 `supabase_functions.http_request` SQL, but that fails with
 `schema "supabase_functions" does not exist` on any project that has never
@@ -376,7 +378,9 @@ empty result rather than everything.
 ### `home_feed(before timestamptz = null, before_id uuid = null, lim int = 12)`
 
 Your posts plus the posts of everyone you follow, `(created_at, id) DESC`.
-Returns the full `FeedPost` shape from `lib/types.ts`.
+Returns the full `FeedPost` shape from `lib/types.ts`, including `tags` — a
+JSON array of `{ user_id, username, x, y }` for the people tagged on the
+photo (`0034_post_tags.sql`), `[]` when there are none.
 
 ```ts
 const { data } = await supabase.rpc('home_feed', {
@@ -393,8 +397,8 @@ clamped to 1–50.
 
 ### `explore_feed(before timestamptz = null, before_id uuid = null, lim int = 12)`
 
-Same shape as `home_feed`, plus `reason` (`'liked_by' | 'followed_by'`) and
-`reason_username`. Same cursor contract.
+Same shape as `home_feed` (minus `preview_comments`), plus `reason`
+(`'liked_by' | 'followed_by'`) and `reason_username`. Same cursor contract.
 
 Candidate set: posts **not** authored by you and **not** authored by anyone you
 already follow, where either an account you follow liked the post, or an account
@@ -403,9 +407,11 @@ apply. Ordered strictly by `(created_at, id) DESC`.
 
 ### `activity_feed(lim int = 30)`
 
-Likes and comments on your own posts, plus new followers, newest first.
-Matches the `ActivityEvent` union: a discriminated `kind` column
-(`'like' | 'comment' | 'follow'`) plus nullable `post_id`, `image_path`, `body`.
+Likes and comments on your own posts, new followers, @mentions of you in
+comments, and photos you've been tagged on, newest first. Matches the
+`ActivityEvent` union: a discriminated `kind` column
+(`'like' | 'comment' | 'follow' | 'mention' | 'tag'`) plus nullable `post_id`,
+`image_path`, `thumb_path`, `body`. For `'tag'` the actor is the post's author.
 `actor` is a JSON object in the `Profile` shape. `lim` is clamped to 1–100.
 
 ### `search_profiles(q text, lim int = 20)`
@@ -453,6 +459,7 @@ Explore possible. Anonymous callers get nothing — no policy grants `anon`.
 | `follows` | any authenticated | `follower_id = auth.uid()` | — | `follower_id = auth.uid()` |
 | `likes` | any authenticated | `user_id = auth.uid()` | — | `user_id = auth.uid()` |
 | `comments` | any authenticated | `author_id = auth.uid()` | — | comment author **or** post author |
+| `post_tags` | any authenticated, when the post itself is visible to them | post's author | — | post's author **or** the tagged account |
 
 ### Counters are not writable by clients
 

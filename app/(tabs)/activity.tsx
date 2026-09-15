@@ -92,7 +92,7 @@ export default function Activity() {
             <EmptyState
               icon="heart"
               title="Nothing yet"
-              body="Likes and comments on your photos will show up here."
+              body="Likes, comments and tags will show up here."
             />
           )
         }
@@ -114,6 +114,8 @@ function describe(event: ActivityEvent): string {
       return `${event.actor.username} started following you`;
     case 'mention':
       return `${event.actor.username} mentioned you: ${event.body}`;
+    case 'tag':
+      return `${event.actor.username} tagged you in a photo`;
   }
 }
 
@@ -141,6 +143,7 @@ function ActivityRow({
         {event.kind === 'like' && ' liked your photo.'}
         {event.kind === 'comment' && ` commented: ${event.body}`}
         {event.kind === 'follow' && ' started following you.'}
+        {event.kind === 'tag' && ' tagged you in a photo.'}
         {event.kind === 'mention' && (
           <>
             {' mentioned you: '}

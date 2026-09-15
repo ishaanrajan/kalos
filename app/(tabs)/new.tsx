@@ -31,15 +31,16 @@ import { CropAdjust } from '../../components/CropAdjust';
 import type { CropAdjustHandle } from '../../components/CropAdjust';
 import { displayAspectRatio } from '../../components/PostCard';
 import { FILTERS, getFilter } from '../../lib/filters';
-import type { CropRect, ImageSize } from '../../lib/types';
+import type { CropRect, ImageSize, PostTag } from '../../lib/types';
 import { downscaleForPreview, prepareSource } from '../../lib/bake';
 import { getPostUploadState, startPost } from '../../lib/postUpload';
-import { useUpdateProfile } from '../../lib/queries';
+import { useFollowList, useUpdateProfile } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import { useTheme } from '../../lib/theme';
 import { useMusic } from '../../lib/audio';
 import { trackToPostMusic, type Track } from '../../lib/music';
 import { MusicPicker } from '../../components/MusicPicker';
+import { TagPeopleEditor } from '../../components/TagPeopleEditor';
 
 const SCREEN = Dimensions.get('window').width;
 // The composer preview is a single canvas (unlike FilterStrip's 18 at once,
@@ -97,7 +98,7 @@ type Picked = {
  * scroll position were gone. Now Back returns you to exactly the framing you
  * left. `libraryReady` is that session flag.
  */
-type Step = 'library' | 'adjust' | 'filter' | 'share' | 'music';
+type Step = 'library' | 'adjust' | 'filter' | 'share' | 'music' | 'tag';
 
 /**
  * Requests a permission, then re-checks it once if the request came back
@@ -161,6 +162,7 @@ export default function NewPost() {
   const [caption, setCaption] = useState('');
   const [musicTrack, setMusicTrack] = useState<Track | null>(null);
   const [musicStartMs, setMusicStartMs] = useState(0);
+  const [tags, setTags] = useState<PostTag[]>([]);
   const [posting, setPosting] = useState(false);
   /**
    * Set when a permission was refused, so there's something to retry from.
@@ -179,6 +181,9 @@ export default function NewPost() {
   const [processing, setProcessing] = useState(false);
 
   const { stop: stopMusic } = useMusic();
+  // Who can be tagged: the people you follow, same set the comment
+  // composer's @mention typeahead offers.
+  const { data: following } = useFollowList(session?.user.id, 'following');
 
   const cropRef = useRef<CropAdjustHandle>(null);
   const postingRef = useRef(false);
@@ -378,6 +383,7 @@ export default function NewPost() {
       setCaption('');
       setMusicTrack(null);
       setMusicStartMs(0);
+      setTags([]);
       stopMusic();
     },
     [stopMusic]
@@ -443,6 +449,9 @@ export default function NewPost() {
           thumbUri: thumb.uri,
           assetId,
         });
+        // The caption survives a re-crop; tags can't. Their coordinates
+        // describe where a person was in the *old* framing.
+        setTags([]);
         setRawPicked(null);
         setStep('filter');
       } catch (e) {
@@ -494,6 +503,7 @@ export default function NewPost() {
       filter,
       caption: caption.trim() || null,
       music: musicTrack ? trackToPostMusic(musicTrack, musicStartMs) : null,
+      tags,
       tempFiles: [picked.uri, picked.previewUri, picked.thumbUri],
       onSuccess: async () => {
         qc.invalidateQueries({ queryKey: ['home_feed'] });
@@ -564,6 +574,7 @@ export default function NewPost() {
     caption,
     musicTrack,
     musicStartMs,
+    tags,
     qc,
     router,
     isForcedFirstPost,
@@ -774,6 +785,33 @@ export default function NewPost() {
         />
       </SafeAreaView>
     );
+  } else if (step === 'tag') {
+    screen = (
+      <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
+        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+          <Pressable onPress={() => setStep('share')} hitSlop={12} accessibilityRole="button">
+            <Text style={[styles.headerAction, { color: colors.text }]}>Back</Text>
+          </Pressable>
+          <Text style={[styles.title, { color: colors.text }]}>Tag people</Text>
+          <Pressable onPress={() => setStep('share')} hitSlop={12} accessibilityRole="button">
+            <Text style={[styles.headerAction, styles.forward, { color: colors.accent }]}>Done</Text>
+          </Pressable>
+        </View>
+
+        <TagPeopleEditor
+          image={previewImage}
+          filter={filter}
+          // previewAspectRatio, not frameAspectRatio: the photo here is the
+          // already-cropped one, and this is the same size the filter step
+          // draws it at -- which is what makes a tap's fraction line up with
+          // where PostCard puts the bubble later.
+          frame={{ width: SCREEN, height: SCREEN / previewAspectRatio }}
+          tags={tags}
+          onChangeTags={setTags}
+          candidates={following ?? []}
+        />
+      </SafeAreaView>
+    );
   } else {
     screen = (
       <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top', 'bottom']}>
@@ -833,14 +871,31 @@ export default function NewPost() {
             />
           </View>
           <Pressable
+            onPress={() => setStep('tag')}
+            disabled={posting}
+            style={[styles.optionRow, { borderTopColor: colors.border }]}
+            accessibilityRole="button"
+            accessibilityLabel={tags.length ? 'Edit tagged people' : 'Tag people'}
+          >
+            <Ionicons name="person-outline" size={18} color={colors.text} />
+            <Text style={[styles.optionLabel, { color: colors.text }]} numberOfLines={1}>
+              {tags.length === 0
+                ? 'Tag people'
+                : tags.length === 1
+                  ? tags[0].username
+                  : `${tags.length} people`}
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+          </Pressable>
+          <Pressable
             onPress={() => setStep('music')}
             disabled={posting}
-            style={[styles.musicRow, { borderTopColor: colors.border }]}
+            style={[styles.optionRow, { borderTopColor: colors.border }]}
             accessibilityRole="button"
             accessibilityLabel={musicTrack ? 'Change music' : 'Add music'}
           >
             <Ionicons name="musical-notes-outline" size={18} color={colors.text} />
-            <Text style={[styles.musicLabel, { color: colors.text }]} numberOfLines={1}>
+            <Text style={[styles.optionLabel, { color: colors.text }]} numberOfLines={1}>
               {musicTrack ? `${musicTrack.title} · ${musicTrack.artist}` : 'Add music'}
             </Text>
             {musicTrack ? (
@@ -905,7 +960,7 @@ const styles = StyleSheet.create({
   captionRow: { flexDirection: 'row', gap: 12, padding: 16 },
   thumb: { borderRadius: 3, overflow: 'hidden' },
   caption: { flex: 1, fontSize: 15, paddingTop: 2, minHeight: 72 },
-  musicRow: {
+  optionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -913,7 +968,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  musicLabel: { flex: 1, fontSize: 15 },
+  optionLabel: { flex: 1, fontSize: 15 },
   appliedFilter: {
     paddingHorizontal: 16,
     fontSize: 12,

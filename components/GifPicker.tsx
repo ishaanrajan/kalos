@@ -1,6 +1,12 @@
 /**
  * A GIF comment's picker: search GIPHY, tap a result to send it immediately.
  *
+ * Results play in the grid. The cell's source is GIPHY's downsampled
+ * animated rendition (see Gif.previewGifUrl), with the static still as the
+ * placeholder so a cell paints the instant its frame is known and starts
+ * moving when the animation arrives -- a grid of frozen first frames read
+ * as "which one is this?" for every result.
+ *
  * Deliberately simpler than MusicPicker -- there's no scrub/trim step and no
  * audition player, since a GIF is either right or it isn't; tapping a result
  * just calls onSelect and the caller (CommentComposer) submits it as its own
@@ -107,9 +113,13 @@ export function GifPicker({ visible, onSelect, onClose }: GifPickerProps) {
               accessibilityLabel="Send this GIF"
             >
               <Image
-                source={item.previewUrl}
+                source={item.previewGifUrl}
+                placeholder={item.previewUrl}
+                placeholderContentFit="cover"
                 style={[styles.cellImage, { aspectRatio: item.width / item.height, backgroundColor: colors.imagePlaceholder }]}
                 contentFit="cover"
+                recyclingKey={item.id}
+                cachePolicy="memory-disk"
               />
             </Pressable>
           )}

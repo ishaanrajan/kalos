@@ -18,6 +18,7 @@ import {
   type DMMessage,
   type DMThreadSummary,
   type FeedPost,
+  type PostTag,
   type Profile,
 } from './types';
 
@@ -196,7 +197,7 @@ export function usePost(postId: string | undefined) {
     queryKey: ['post', postId, userId],
     enabled: !!postId,
     queryFn: async () => {
-      const [postResult, likeResult] = await Promise.all([
+      const [postResult, likeResult, tagsResult] = await Promise.all([
         supabase
           .from('posts')
           .select('*, author:profiles!posts_author_id_fkey(id, username, display_name, avatar_path)')
@@ -205,13 +206,69 @@ export function usePost(postId: string | undefined) {
         userId
           ? supabase.from('likes').select('post_id').eq('post_id', postId!).eq('user_id', userId).maybeSingle()
           : Promise.resolve({ data: null, error: null }),
+        // Its own query rather than an embed on the posts select: an embed
+        // fails the whole screen against a database where 0034 hasn't run,
+        // where this just comes back empty. (RLS on post_tags defers to the
+        // post's own visibility, so nothing extra to check here.)
+        supabase
+          .from('post_tags')
+          .select('user_id, x, y, user:profiles!post_tags_user_id_fkey(username)')
+          .eq('post_id', postId!)
+          .order('created_at', { ascending: true }),
       ]);
       if (postResult.error) throw postResult.error;
       if (likeResult.error) throw likeResult.error;
       return {
         ...postResult.data,
         viewer_has_liked: !!likeResult.data,
+        tags: tagsResult.error ? undefined : normalizeTags(tagsResult.data),
       } as FeedPost & { author: Pick<Profile, 'id' | 'username' | 'display_name' | 'avatar_path'> };
+    },
+  });
+}
+
+/**
+ * Tags arrive in two shapes: the feed RPCs build `{user_id, username, x, y}`
+ * directly, while a PostgREST embed nests the username under `user`. One
+ * shape leaves this file. Anything that isn't an array (a database without
+ * 0034 yet) resolves to undefined, which every consumer treats as "no tags".
+ */
+function normalizeTags(raw: unknown): PostTag[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const tags: PostTag[] = [];
+  for (const row of raw as Array<Record<string, unknown>>) {
+    const userId = row.user_id;
+    const nested = row.user as { username?: unknown } | null | undefined;
+    const username = typeof row.username === 'string' ? row.username : nested?.username;
+    const x = Number(row.x);
+    const y = Number(row.y);
+    if (typeof userId !== 'string' || typeof username !== 'string') continue;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    tags.push({ user_id: userId, username, x, y });
+  }
+  return tags;
+}
+
+/**
+ * Posts this account is tagged on -- the profile's "Photos of you" grid.
+ * post_tags' select policy only shows a row when the post itself is visible
+ * to the viewer, so an account the author has hidden their posts from
+ * (post_blocks) sees neither the tag nor the post here.
+ */
+export function useTaggedPosts(profileId: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['tagged-posts', profileId],
+    enabled: !!profileId && enabled,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('post_tags')
+        .select('created_at, post:posts!post_tags_post_id_fkey(*)')
+        .eq('user_id', profileId!)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data ?? [])
+        .map((row) => row.post as unknown as FeedPost | null)
+        .filter((post): post is FeedPost => !!post);
     },
   });
 }
@@ -639,6 +696,9 @@ export function useDeletePost() {
       qc.invalidateQueries({ queryKey: ['home_feed'] });
       qc.invalidateQueries({ queryKey: ['explore_feed'] });
       qc.invalidateQueries({ queryKey: ['profile-posts'] });
+      // Tags cascade with the post; anyone tagged on it loses a "Photos of
+      // you" cell.
+      qc.invalidateQueries({ queryKey: ['tagged-posts'] });
       qc.invalidateQueries({ queryKey: ['profile'] });
       qc.invalidateQueries({ queryKey: ['post', post.id] });
       // Deleting today's only post re-locks Explore; and the Profile tab's

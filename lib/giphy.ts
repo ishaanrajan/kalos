@@ -27,8 +27,15 @@ export interface Gif {
   id: string;
   /** A size-capped, displayable asset -- never GIPHY's full-resolution original. */
   url: string;
-  /** A small static/looping still, for a fast first paint. */
+  /** A small static still, for a fast first paint. */
   previewUrl: string;
+  /**
+   * A cut-down *animated* rendition for the picker grid -- GIPHY's
+   * downsampled variant (fewer frames, heavier compression, same width as
+   * `url`), so 24 of them can play at once without pulling 24 full GIFs.
+   * `url` is what the comment stores and plays in the thread.
+   */
+  previewGifUrl: string;
   width: number;
   height: number;
 }
@@ -48,6 +55,8 @@ interface GiphyResult {
   id?: string;
   images?: {
     fixed_width?: GiphyImage;
+    fixed_width_downsampled?: GiphyImage;
+    preview_gif?: GiphyImage;
     fixed_width_small_still?: GiphyImage;
     fixed_width_still?: GiphyImage;
   };
@@ -56,6 +65,10 @@ interface GiphyResult {
 function toGif(raw: GiphyResult): Gif | null {
   const asset = raw.images?.fixed_width;
   const preview = raw.images?.fixed_width_small_still ?? raw.images?.fixed_width_still;
+  // The grid's moving preview. Falls back through GIPHY's other small
+  // animated rendition to the full asset -- a result should never be still
+  // in the picker just because one variant was missing.
+  const previewGif = raw.images?.fixed_width_downsampled ?? raw.images?.preview_gif ?? asset;
   const width = Number(asset?.width);
   const height = Number(asset?.height);
   // A result missing a playable asset, its dimensions, or a preview still is
@@ -63,7 +76,14 @@ function toGif(raw: GiphyResult): Gif | null {
   if (!raw.id || !asset?.url || !preview?.url || !Number.isFinite(width) || !Number.isFinite(height)) {
     return null;
   }
-  return { id: raw.id, url: asset.url, previewUrl: preview.url, width, height };
+  return {
+    id: raw.id,
+    url: asset.url,
+    previewUrl: preview.url,
+    previewGifUrl: previewGif?.url ?? asset.url,
+    width,
+    height,
+  };
 }
 
 function apiKey(): string {

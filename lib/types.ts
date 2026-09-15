@@ -118,6 +118,23 @@ export interface CommentPreview {
 }
 
 /**
+ * One person tagged on a photo (0034_post_tags.sql).
+ *
+ * `x`/`y` are fractions (0..1) of the *displayed* frame -- the cover-cropped
+ * rectangle whose ratio is displayAspectRatio(width, height) -- not pixels of
+ * the stored image. The composer and every feed surface fit the same
+ * already-cropped pixels into a frame of that same ratio, so a fraction lands
+ * on the same point of the photo everywhere, and stays right if the image is
+ * ever re-encoded at a different resolution.
+ */
+export interface PostTag {
+  user_id: UUID;
+  username: string;
+  x: number;
+  y: number;
+}
+
+/**
  * A post as returned by the home_feed / explore_feed RPCs: the post columns
  * flattened together with its author and the viewer's own like state.
  */
@@ -129,6 +146,10 @@ export interface FeedPost extends Post {
   viewer_has_liked: boolean;
   /** Only populated by home_feed. */
   preview_comments?: CommentPreview[];
+  /** People tagged on the photo, oldest first. Optional until 0034 is
+   * applied: the feed RPCs didn't return it before, and usePost's lookup
+   * tolerates the table not existing yet. */
+  tags?: PostTag[];
   /** Only populated by explore_feed — why this post is being shown. */
   reason?: ExploreReason;
   /** Username of the follow that connects the viewer to this post. */
@@ -158,7 +179,9 @@ export type ActivityEvent =
   | ({ kind: 'like'; actor: Profile; created_at: Timestamp } & ActivityPostRef)
   | ({ kind: 'comment'; actor: Profile; body: string; created_at: Timestamp } & ActivityPostRef)
   | { kind: 'follow'; actor: Profile; created_at: Timestamp }
-  | ({ kind: 'mention'; actor: Profile; body: string; created_at: Timestamp } & ActivityPostRef);
+  | ({ kind: 'mention'; actor: Profile; body: string; created_at: Timestamp } & ActivityPostRef)
+  /** Someone tagged you on their photo. `actor` is the post's author. */
+  | ({ kind: 'tag'; actor: Profile; created_at: Timestamp } & ActivityPostRef);
 
 /**
  * A single DM. Every thread is with "ishaan" — thread_user_id is always the

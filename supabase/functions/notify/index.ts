@@ -1,8 +1,9 @@
 // Supabase Edge Function: notify
 //
 // Triggered by Database Webhooks (see 0009_notifications.sql) on insert into
-// dm_messages, likes, comments, and follows, plus a second webhook on
-// dm_messages UPDATE (0023_dm_message_likes.sql) for message reactions.
+// dm_messages, likes, comments, follows, and post_tags (0034_post_tags.sql),
+// plus a second webhook on dm_messages UPDATE (0023_dm_message_likes.sql)
+// for message reactions.
 // Resolves who should hear about it, skips notifying someone about their
 // own action, and pushes through Expo's push API to every token that
 // person has registered.
@@ -20,7 +21,7 @@ const db = createClient(supabaseUrl, serviceRoleKey);
 
 interface WebhookPayload {
   type: 'INSERT' | 'UPDATE';
-  table: 'dm_messages' | 'likes' | 'comments' | 'follows';
+  table: 'dm_messages' | 'likes' | 'comments' | 'follows' | 'post_tags';
   record: Record<string, any>;
   /** Only present on UPDATE -- the row's values before this change. */
   old_record?: Record<string, any>;
@@ -171,6 +172,30 @@ async function resolve(payload: WebhookPayload): Promise<Notification[]> {
           title: 'Kalos',
           body: `${followerUsername} started following you`,
           url: `/profile/${followerUsername}`,
+        },
+      ];
+    }
+
+    case 'post_tags': {
+      if (!r.post_id || !r.user_id) return [];
+      const { data: post } = await db.from('posts').select('author_id').eq('id', r.post_id).single();
+      if (!post || post.author_id === r.user_id) return []; // tagged yourself
+      // An author can tag someone they've hidden their posts from
+      // (post_blocks -- the tag picker is just the follow list). The post
+      // is invisible to that person, so the deep link would land on an
+      // error screen; better no push at all.
+      const { data: blocked } = await db.rpc('post_blocked', {
+        author: post.author_id,
+        viewer: r.user_id,
+      });
+      if (blocked === true) return [];
+      const authorUsername = await usernameOf(post.author_id);
+      return [
+        {
+          recipientId: r.user_id,
+          title: 'Kalos',
+          body: `${authorUsername} tagged you in a photo`,
+          url: `/post/${r.post_id}`,
         },
       ];
     }

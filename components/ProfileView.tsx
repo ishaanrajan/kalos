@@ -1,16 +1,26 @@
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { Avatar } from './Avatar';
 import { Button } from './Button';
 import { PhotoGrid } from './PhotoGrid';
 import { EmptyState } from './EmptyState';
-import { useIsFollowing, useMutualFollowers, useProfilePosts, useToggleFollow } from '../lib/queries';
+import {
+  useIsFollowing,
+  useMutualFollowers,
+  useProfilePosts,
+  useTaggedPosts,
+  useToggleFollow,
+} from '../lib/queries';
 import type { MutualFollowers } from '../lib/queries';
 import { avatarUrl, photoThumbUrl } from '../lib/supabase';
 import { useAuth } from '../lib/auth';
-import { useTheme } from '../lib/theme';
+import { hairlineWidth, useTheme } from '../lib/theme';
 import type { Profile } from '../lib/types';
+
+/** The two grids under the header: the account's own posts, and photos it's tagged on. */
+type GridTab = 'posts' | 'tagged';
 
 /**
  * "Followed by X" / "Followed by X and Y" / "Followed by X, Y and Z" / then
@@ -44,18 +54,26 @@ interface Props {
 export function ProfileView({ profile, isSelf, onSignOut, onRefreshProfile }: Props) {
   const router = useRouter();
   const { profile: me } = useAuth();
+  const [tab, setTab] = useState<GridTab>('posts');
   const {
     data: posts,
     isLoading,
     isError: postsError,
     refetch: refetchPosts,
   } = useProfilePosts(profile.id);
+  // Fetched the first time the tab is opened, not on every profile visit --
+  // most views never leave the posts grid.
+  const tagged = useTaggedPosts(profile.id, tab === 'tagged');
   const [refreshing, setRefreshing] = useState(false);
+  const refetchTagged = tagged.refetch;
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([refetchPosts(), onRefreshProfile?.()]).catch(() => undefined);
+    await Promise.all([
+      tab === 'tagged' ? refetchTagged() : refetchPosts(),
+      onRefreshProfile?.(),
+    ]).catch(() => undefined);
     setRefreshing(false);
-  }, [refetchPosts, onRefreshProfile]);
+  }, [tab, refetchPosts, refetchTagged, onRefreshProfile]);
   const {
     data: following,
     isLoading: followingLoading,
@@ -193,12 +211,34 @@ export function ProfileView({ profile, isSelf, onSignOut, onRefreshProfile }: Pr
           </>
         )}
       </View>
+
+      {/* Grid / "Photos of you" switch, sitting where 2015 put it: a strip
+          right on top of the grid, edge to edge like the cells below it. */}
+      <View style={[styles.tabs, { borderTopColor: colors.border, borderBottomColor: colors.border }]}>
+        <GridTabButton
+          icon="grid-outline"
+          label="Posts"
+          active={tab === 'posts'}
+          onPress={() => setTab('posts')}
+        />
+        <GridTabButton
+          icon="person-outline"
+          label="Photos of you"
+          active={tab === 'tagged'}
+          onPress={() => setTab('tagged')}
+        />
+      </View>
     </View>
   );
 
+  const showingTagged = tab === 'tagged';
+  const gridLoading = showingTagged ? tagged.isLoading : isLoading;
+  const gridError = showingTagged ? tagged.isError : postsError;
+  const refetchGrid = showingTagged ? refetchTagged : refetchPosts;
+
   return (
     <PhotoGrid
-      posts={posts ?? []}
+      posts={(showingTagged ? tagged.data : posts) ?? []}
       imageUrlFor={photoThumbUrl}
       onPressPost={(p) => router.push(`/post/${p.id}`)}
       onRefresh={onRefresh}
@@ -213,16 +253,26 @@ export function ProfileView({ profile, isSelf, onSignOut, onRefreshProfile }: Pr
         // The header (avatar, counts, bio) is already in memory and has
         // nothing to wait on — only the grid below it depends on the posts
         // query, so that's the only part allowed to show a spinner.
-        isLoading ? (
+        gridLoading ? (
           <View style={styles.gridLoading}>
             <ActivityIndicator />
           </View>
-        ) : postsError ? (
+        ) : gridError ? (
           <EmptyState
             icon="alert-circle"
             title="Couldn't load posts"
             actionLabel="Try again"
-            onAction={() => refetchPosts()}
+            onAction={() => refetchGrid()}
+          />
+        ) : showingTagged ? (
+          <EmptyState
+            icon="user"
+            title={isSelf ? 'No photos of you' : 'No photos'}
+            body={
+              isSelf
+                ? 'When someone tags you in a photo, it will show up here.'
+                : `Photos ${profile.username} is tagged in will show up here.`
+            }
           />
         ) : (
           <EmptyState
@@ -242,6 +292,32 @@ export function ProfileView({ profile, isSelf, onSignOut, onRefreshProfile }: Pr
         )
       }
     />
+  );
+}
+
+function GridTabButton({
+  icon,
+  label,
+  active,
+  onPress,
+}: {
+  icon: 'grid-outline' | 'person-outline';
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  return (
+    <Pressable
+      style={styles.tab}
+      onPress={onPress}
+      accessibilityRole="tab"
+      accessibilityLabel={label}
+      accessibilityState={{ selected: active }}
+    >
+      <Ionicons name={icon} size={22} color={active ? colors.text : colors.textSecondary} />
+      {active ? <View style={[styles.tabUnderline, { backgroundColor: colors.text }]} /> : null}
+    </Pressable>
   );
 }
 
@@ -284,4 +360,14 @@ const styles = StyleSheet.create({
   mutuals: { fontSize: 13, marginTop: 10 },
   actions: { flexDirection: 'row', gap: 8, marginTop: 16, marginBottom: 16 },
   action: { flex: 1 },
+  // Pulls out of the header's 16pt side padding so the strip runs edge to
+  // edge over the grid.
+  tabs: {
+    flexDirection: 'row',
+    marginHorizontal: -16,
+    borderTopWidth: hairlineWidth,
+    borderBottomWidth: hairlineWidth,
+  },
+  tab: { flex: 1, alignItems: 'center', justifyContent: 'center', height: 44 },
+  tabUnderline: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 1 },
 });

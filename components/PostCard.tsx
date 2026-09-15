@@ -5,7 +5,8 @@
  * like count -> caption -> comment preview -> uppercase relative timestamp.
  *
  * Double-tapping the photo likes it and plays the white heart burst. A single
- * tap falls through to `onPressImage`, so the two gestures are composed with
+ * tap toggles the tagged-people bubbles (when the post has any) and falls
+ * through to `onPressImage`, so the two gestures are composed with
  * `Gesture.Exclusive(doubleTap, singleTap)` — the double tap gets first refusal
  * and the single tap only fires once the double-tap window has lapsed.
  */
@@ -13,6 +14,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type {
+  LayoutChangeEvent,
   NativeSyntheticEvent,
   StyleProp,
   TextLayoutEventData,
@@ -37,6 +39,7 @@ import type { CommentPreview, FeedPost, Timestamp } from '../lib/types';
 import { Avatar } from './Avatar';
 import { LikeButton } from './LikeButton';
 import { MentionText } from './MentionText';
+import { TagBubble } from './TagBubble';
 
 export interface PostCardProps {
   /**
@@ -234,7 +237,9 @@ function PostCardImpl({
     reason,
     reason_username: reasonUsername,
     music,
+    tags,
   } = post;
+  const hasTags = !!tags && tags.length > 0;
 
   const aspectRatio = useMemo(
     () => displayAspectRatio(post.width, post.height),
@@ -257,6 +262,17 @@ function PostCardImpl({
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [captionOverflows, setCaptionOverflows] = useState(false);
 
+  // Tag bubbles are hidden until the photo is tapped, the way 2015 showed
+  // them. The frame is the laid-out photo size the bubbles position against.
+  const [tagsVisible, setTagsVisible] = useState(false);
+  const [tagFrame, setTagFrame] = useState<{ width: number; height: number } | null>(null);
+  const onTagLayerLayout = useCallback((e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    setTagFrame((prev) =>
+      prev && prev.width === width && prev.height === height ? prev : { width, height },
+    );
+  }, []);
+
   const burstScale = useSharedValue(0);
   const burstOpacity = useSharedValue(0);
 
@@ -264,6 +280,10 @@ function PostCardImpl({
   // from being rebuilt on every like.
   const likedRef = useRef(liked);
   likedRef.current = liked;
+  // Same trick for the tag toggle: read through a ref so a post gaining or
+  // losing tags doesn't rebuild the gesture either.
+  const hasTagsRef = useRef(hasTags);
+  hasTagsRef.current = hasTags;
 
   const playBurst = useCallback(() => {
     // Pop in with the spring's overshoot, hold at rest, then fade -- the real
@@ -301,9 +321,9 @@ function PostCardImpl({
       .numberOfTaps(1)
       .runOnJS(true)
       .onEnd((_event, success) => {
-        if (success && handlePressImage) {
-          handlePressImage();
-        }
+        if (!success) return;
+        if (hasTagsRef.current) setTagsVisible((v) => !v);
+        if (handlePressImage) handlePressImage();
       });
 
     return Gesture.Exclusive(doubleTap, singleTap);
@@ -438,6 +458,38 @@ function PostCardImpl({
             </Animated.View>
           </View>
         </GestureDetector>
+
+        {/* Tagged people. Both layers are siblings of the gesture surface for
+            the same reason the mute button is. The reveal layer is box-none,
+            so a tap that misses every bubble still reaches the photo and
+            hides them again. */}
+        {hasTags && !tagsVisible ? (
+          <Pressable
+            onPress={() => setTagsVisible(true)}
+            hitSlop={10}
+            style={styles.tagBadge}
+            accessibilityRole="button"
+            accessibilityLabel={`Tagged: ${tags!.map((t) => t.username).join(', ')}`}
+          >
+            <Ionicons name="person" size={13} color="#ffffff" />
+          </Pressable>
+        ) : null}
+        {hasTags && tagsVisible ? (
+          <View style={StyleSheet.absoluteFill} pointerEvents="box-none" onLayout={onTagLayerLayout}>
+            {tagFrame
+              ? tags!.map((t) => (
+                  <TagBubble
+                    key={t.user_id}
+                    username={t.username}
+                    x={t.x}
+                    y={t.y}
+                    frame={tagFrame}
+                    onPress={onPressMention ? () => onPressMention(t.username) : undefined}
+                  />
+                ))
+              : null}
+          </View>
+        ) : null}
 
         {isMusicActive && music ? (
           <Pressable
@@ -631,6 +683,17 @@ const styles = StyleSheet.create({
   musicText: {
     marginLeft: spacing.xs - 1,
     flexShrink: 1,
+  },
+  tagBadge: {
+    position: 'absolute',
+    left: spacing.sm,
+    bottom: spacing.sm,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
   },
   muteButton: {
     position: 'absolute',
