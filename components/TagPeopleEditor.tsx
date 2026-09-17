@@ -82,6 +82,9 @@ export function TagPeopleEditor({
 
   const remove = (userId: string) => onChangeTags(tags.filter((t) => t.user_id !== userId));
 
+  const move = (userId: string, nx: number, ny: number) =>
+    onChangeTags(tags.map((t) => (t.user_id === userId ? { ...t, x: nx, y: ny } : t)));
+
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     const tagged = new Set(tags.map((t) => t.user_id));
@@ -173,13 +176,17 @@ export function TagPeopleEditor({
               x={t.x}
               y={t.y}
               frame={frame}
+              draggable
+              onMove={(nx, ny) => move(t.user_id, nx, ny)}
               onRemove={() => remove(t.user_id)}
             />
           ))}
         </View>
       </View>
       {tags.length > 0 ? (
-        <Text style={[styles.hint, { color: colors.textSecondary }]}>Tap a name to remove it</Text>
+        <Text style={[styles.hint, { color: colors.textSecondary }]}>
+          Drag a name to reposition it, or tap it to remove it
+        </Text>
       ) : null}
     </View>
   );

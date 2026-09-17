@@ -155,11 +155,49 @@ allowed to reach the device.
 
 Two third-party catalogs are searched directly from the device rather than
 through an Edge Function -- see the doc comments in `lib/music.ts` and
-`lib/giphy.ts` for why (mainly: per-IP/per-key rate limits that a shared
-server-side budget would exhaust immediately).
+`lib/giphy.ts` for why (mainly: per-IP/per-key/per-token rate limits that a
+shared server-side budget would exhaust immediately).
 
-- **Music** (`lib/music.ts`) — Apple's iTunes Search API. Free, unauthenticated,
-  no env var needed.
+- **Music** (`lib/music.ts`) — Apple's real Music Catalog API (MusicKit), not
+  the legacy free `itunes.apple.com/search` endpoint this used to hit. That
+  endpoint turned out to default to the *clean* edition of a song for search
+  terms that would obviously return an explicit one (verified directly:
+  "HUMBLE.", "WAP" — nothing but `cleaned` results, regardless of query
+  parameters); the real catalog carries both editions as distinct resources
+  with a genuine `contentRating` field, and `lib/music.ts` picks the explicit
+  one when both exist.
+
+  Needs a developer token — a JWT signed with a MusicKit private key, not an
+  API key — added to `.env` as:
+  ```dotenv
+  EXPO_PUBLIC_APPLE_MUSIC_DEVELOPER_TOKEN=...
+  ```
+  Apple caps a token's validity at 6 months, so this is a periodic manual
+  task, not a one-time setup:
+
+  1. **One-time**: Apple Developer account → **Certificates, Identifiers &
+     Profiles → Identifiers → +** → type **Media IDs** → register one (Kalos's
+     is `media.kalos.music`). Then **Keys → +**, check **Media Services
+     (MusicKit, ShazamKit)**, register, and **download the `.p8` file
+     immediately** — it's a one-time download; losing it means revoking the
+     key and making a new one. Save it as `secrets/AuthKey_<KEY_ID>.p8`
+     (`*.p8` is git-ignored — this file must never be committed). Kalos's key
+     ID is `5P8H7A8FPA`; the Team ID is the same one in `AGENTS.md`
+     (`C3AWB7CGFQ`).
+  2. **Every ~5 months**, before the current token expires: `npx tsx
+     scripts/mint-apple-music-token.ts`, paste the printed token over the
+     `.env` value above, then `eas update` to both branches. It's a plain
+     env var baked into the JS bundle at publish time, so rotating it never
+     needs a native build.
+
+  Catalog search and 30-second previews need only this developer token — no
+  Music-User-Token, no Apple Music subscription from anyone, so this still
+  runs straight from the device the same way the old iTunes-based version
+  did. Unlike the iTunes endpoint's per-IP throttle, Apple doesn't publish
+  exact limits for this one and it may be scoped to the token rather than
+  the caller — unconfirmed, and not a concern at this app's size, but worth
+  knowing if search ever starts failing for everyone at once rather than one
+  device.
 - **GIF comments** (`lib/giphy.ts`, `0029_comment_gif.sql`) — GIPHY's search
   API. Needs a free key from <https://developers.giphy.com>, added to `.env` as:
   ```dotenv
