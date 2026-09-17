@@ -21,7 +21,7 @@ import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 
-import { fontFamily } from '../lib/theme';
+import { fontFamily, radius } from '../lib/theme';
 
 export interface TagBubbleProps {
   username: string;
@@ -232,9 +232,12 @@ const styles = StyleSheet.create({
     position: 'absolute',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 4,
+    // radius.pill (999) is intentionally past the pill's own height -- RN
+    // clamps it there, which is exactly what turns a rectangle into a
+    // stadium shape instead of just a rounded-corner box.
+    borderRadius: radius.pill,
     backgroundColor: SCRIM,
   },
   text: {
