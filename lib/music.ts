@@ -197,3 +197,22 @@ export function trackToPostMusic(track: Track, startMs: number): PostMusic {
     start_ms: Math.max(0, Math.round(startMs)),
   };
 }
+
+/**
+ * The inverse -- seeds MusicPicker's `selected` when opening a post that
+ * already has music attached, so editing shows the current track rather
+ * than an empty search. `album` isn't stored on a post (there was never a
+ * reason to), so this Track just doesn't have one; nothing downstream reads
+ * it once a track only exists to be re-attached, not searched for again.
+ */
+export function postMusicToTrack(music: PostMusic): Track {
+  return {
+    id: music.track_id,
+    title: music.title,
+    artist: music.artist,
+    album: null,
+    artworkUrl: music.artwork_url,
+    previewUrl: music.preview_url,
+    storeUrl: music.store_url,
+  };
+}

@@ -200,6 +200,10 @@ export default function PostScreen() {
     if (!post) return;
     showActionSheet('Post options', [
       { label: 'Edit Caption', onPress: () => router.push(`/edit-caption/${post.id}`) },
+      {
+        label: post.music ? 'Edit Music' : 'Add Music',
+        onPress: () => router.push(`/edit-music/${post.id}`),
+      },
       { label: 'Delete Post', destructive: true, onPress: deleteThisPost },
     ]);
   }, [post, router, deleteThisPost]);

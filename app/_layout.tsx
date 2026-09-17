@@ -203,9 +203,26 @@ function RootNavigator() {
         <Stack.Screen name="post/[id]" options={{ headerShown: true, title: 'Post' }} />
         <Stack.Screen name="profile/[username]" options={{ headerShown: true, title: '' }} />
         <Stack.Screen name="follows/[username]" options={{ headerShown: true, title: '' }} />
-        <Stack.Screen name="likes/[postId]" options={{ headerShown: true, title: 'Likes' }} />
+        <Stack.Screen
+          name="likes/[postId]"
+          options={{
+            headerShown: true,
+            title: 'Likes',
+            // Every row's avatar sits ~16pt from the left edge (UserRow's
+            // own padding) -- squarely inside iOS's ~20-27pt edge-swipe
+            // strip. A tap that starts there with even a slight sideways
+            // component reads as the start of a swipe-back to the native
+            // gesture recognizer, not a Pressable tap: the row's own
+            // onPress never fires, and the screen just pops -- which looks
+            // exactly like "tapping a username took me back to the post."
+            // The header back button still works; this only removes the
+            // swipe.
+            gestureEnabled: false,
+          }}
+        />
         <Stack.Screen name="edit-profile" options={{ headerShown: true, title: 'Edit profile' }} />
         <Stack.Screen name="edit-caption/[id]" options={{ headerShown: true, title: 'Edit caption' }} />
+        <Stack.Screen name="edit-music/[id]" options={{ headerShown: true, title: 'Music' }} />
         <Stack.Screen name="search" options={{ headerShown: true, title: 'Search' }} />
         <Stack.Screen name="dm/index" options={{ headerShown: true, title: 'Messages' }} />
         <Stack.Screen name="dm/[username]" options={{ headerShown: true, title: '' }} />

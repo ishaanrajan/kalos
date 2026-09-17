@@ -46,7 +46,15 @@ export const palette = {
   red: '#ed4956',
   black: '#000000',
   darkFill: '#1a1a1a',
-  darkPlaceholder: '#1c1c1c',
+  // Distinctly lighter than the pure-black dark surface it sits on --
+  // #1c1c1c was only 28 levels off #000000, so any image still loading (an
+  // avatar, a feed photo, a library-picker tile mid-fling) was
+  // indistinguishable from nothing there at all. The library picker's grid
+  // made this worst: cells cancel and re-request their thumbnail as they
+  // recycle during a fast scroll, so several tiles sit in that state at
+  // once, and it read as the whole grid going black rather than a normal
+  // brief load.
+  darkPlaceholder: '#2c2c2e',
   darkDivider: '#262626',
   darkInk: '#fafafa',
   /** Fixed tab-bar chrome: 2015 Instagram's bar was black regardless of

@@ -18,6 +18,7 @@ import {
   type DMMessage,
   type DMThreadSummary,
   type FeedPost,
+  type PostMusic,
   type PostTag,
   type Profile,
 } from './types';
@@ -726,6 +727,29 @@ export function useUpdatePostCaption() {
       qc.invalidateQueries({ queryKey: ['home_feed'] });
       qc.invalidateQueries({ queryKey: ['explore_feed'] });
       qc.invalidateQueries({ queryKey: ['profile-posts'] });
+      qc.invalidateQueries({ queryKey: ['post', postId] });
+    },
+  });
+}
+
+/**
+ * Adding, changing, or removing an existing post's music (0035_edit_post_music.sql).
+ * RLS (`posts_update_own`) and the column grant scope this to the post's own
+ * author; `posts_music_shape` (0024_post_music.sql) still rejects a
+ * half-built object regardless of which screen writes it.
+ */
+export function useUpdatePostMusic() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ postId, music }: { postId: string; music: PostMusic | null }) => {
+      const { error } = await supabase.from('posts').update({ music }).eq('id', postId);
+      if (error) throw error;
+    },
+    onSuccess: (_d, { postId }) => {
+      qc.invalidateQueries({ queryKey: ['home_feed'] });
+      qc.invalidateQueries({ queryKey: ['explore_feed'] });
+      qc.invalidateQueries({ queryKey: ['profile-posts'] });
+      qc.invalidateQueries({ queryKey: ['tagged-posts'] });
       qc.invalidateQueries({ queryKey: ['post', postId] });
     },
   });
