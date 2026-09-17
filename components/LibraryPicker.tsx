@@ -42,15 +42,29 @@
  * The tradeoff is that a `ph://` uri isn't a file, so it can't be handed to
  * ImageManipulator or Skia. That's resolved once, for the one photo the user
  * actually commits to, in `handleNext` below.
+ *
+ * ---------------------------------------------------------------------------
+ * Why FlashList, not FlatList
+ * ---------------------------------------------------------------------------
+ *
+ * The rewrite above removed the *decode* work from a fling; what was left is
+ * ordinary FlatList behaviour -- a cell mounts a brand-new native Image view
+ * every time it scrolls into range and unmounts it going the other way. On a
+ * library with thousands of photos that's still real churn per frame, tuned
+ * away at the margins (batch size, window size) but never actually gone.
+ * FlashList recycles: a cell scrolling off the top is reused for the one
+ * scrolling in at the bottom rather than torn down and rebuilt, which is the
+ * actual fix for "the grid feels heavier the faster you scroll" rather than
+ * another constant-factor tweak. v2 is pure JS (no native module, so this
+ * needed no build to try), auto-sizes without an `estimatedItemSize`, and is
+ * close enough to FlatList's API that GridCell itself didn't have to change.
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -58,7 +72,8 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import type { ListRenderItemInfo } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
+import type { FlashListRef, ListRenderItemInfo } from '@shopify/flash-list';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import Feather from '@expo/vector-icons/Feather';
@@ -171,7 +186,7 @@ export function LibraryPicker({
   const [albumsLoading, setAlbumsLoading] = useState(false);
 
   const cropRef = useRef<CropAdjustHandle>(null);
-  const listRef = useRef<FlatList<MediaLibrary.Asset>>(null);
+  const listRef = useRef<FlashListRef<MediaLibrary.Asset>>(null);
   const loadingRef = useRef(false);
   /**
    * Bumped on every source switch. A load captures the version it started
@@ -365,17 +380,11 @@ export function LibraryPicker({
   // Nothing to toggle to on a photo that's already square.
   const canToggleAspect = Math.abs(naturalRatio - 1) > 0.01;
 
-  const cellSize = (width - GUTTER * (COLUMNS - 1)) / COLUMNS;
-
-  // Fixed-size cells in fixed-height rows. Telling FlatList the geometry up
-  // front means a fling never has to measure a row before it can scroll to it.
-  const getItemLayout = useCallback(
-    (_data: ArrayLike<MediaLibrary.Asset> | null | undefined, index: number) => {
-      const length = cellSize + GUTTER;
-      return { length, offset: length * Math.floor(index / COLUMNS), index };
-    },
-    [cellSize]
-  );
+  // FlashList's numColumns zig-zags items like flexWrap, sized off whatever
+  // width the cell itself reports -- there's no columnWrapperStyle to hang a
+  // gap on. Reserving the gutter as padding inside a fixed slot (below)
+  // instead of a margin between siblings gets the same look without it.
+  const slotSize = width / COLUMNS;
 
   const selectedId = selection?.asset.id ?? null;
 
@@ -383,13 +392,14 @@ export function LibraryPicker({
     ({ item }: ListRenderItemInfo<MediaLibrary.Asset>) => (
       <GridCell
         asset={item}
-        size={cellSize}
+        slotSize={slotSize}
+        gutter={GUTTER}
         selected={item.id === selectedId}
         placeholderColor={colors.imagePlaceholder}
         onPress={handleSelect}
       />
     ),
-    [cellSize, selectedId, colors.imagePlaceholder, handleSelect]
+    [slotSize, selectedId, colors.imagePlaceholder, handleSelect]
   );
 
   const keyExtractor = useCallback((item: MediaLibrary.Asset) => item.id, []);
@@ -507,28 +517,16 @@ export function LibraryPicker({
         </Pressable>
       ) : null}
 
-      <FlatList
+      <FlashList
         ref={listRef}
         data={assets}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         numColumns={COLUMNS}
-        columnWrapperStyle={styles.row}
-        contentContainerStyle={styles.content}
         style={styles.list}
         onEndReached={onEndReached}
         onEndReachedThreshold={1.5}
         showsVerticalScrollIndicator={false}
-        getItemLayout={getItemLayout}
-        initialNumToRender={COLUMNS * 8}
-        maxToRenderPerBatch={COLUMNS * 6}
-        updateCellsBatchingPeriod={30}
-        windowSize={9}
-        // Android only. On iOS this has a long history of clipping cells that
-        // are still on screen, and the reason it was here -- keeping a lid on
-        // how many images were resident -- no longer applies now that nothing
-        // holds a full-resolution decode.
-        removeClippedSubviews={Platform.OS === 'android'}
         ListEmptyComponent={
           loading ? (
             <ActivityIndicator style={styles.listSpinner} color={colors.textSecondary} />
@@ -589,18 +587,31 @@ export function LibraryPicker({
  * level thumbnail cache, the concurrency-capped queue, the per-cell
  * cancellation token -- went away with the thumbnails it was managing.
  *
- * Memoized on identity, with a `size` and `selected` that only change when
- * they genuinely do, so a fling re-renders nothing that isn't new.
+ * `slotSize` is the full column width FlashList allocates; `gutter` is
+ * reserved as padding around the visible image rather than a margin between
+ * siblings (FlashList's grid has no columnWrapperStyle to hang a gap on --
+ * see the note on FlashList above).
+ *
+ * `recyclingKey` matters more here than it ever did under FlatList: this
+ * cell's underlying native view is now actually reused for a different
+ * asset rather than torn down, and without it expo-image would hold the
+ * previous photo on screen (or cross-fade into the new one) while the new
+ * uri decodes.
+ *
+ * Memoized on identity, with a `selected` that only changes when it
+ * genuinely does, so a fling re-renders nothing that isn't new.
  */
 const GridCell = memo(function GridCell({
   asset,
-  size,
+  slotSize,
+  gutter,
   selected,
   placeholderColor,
   onPress,
 }: {
   asset: MediaLibrary.Asset;
-  size: number;
+  slotSize: number;
+  gutter: number;
   selected: boolean;
   placeholderColor: string;
   onPress: (asset: MediaLibrary.Asset) => void;
@@ -610,36 +621,38 @@ const GridCell = memo(function GridCell({
   useEffect(() => setUri(asset.uri), [asset.uri]);
 
   return (
-    <Pressable
-      onPress={() => onPress(asset)}
-      accessibilityRole="imagebutton"
-      accessibilityLabel="Photo"
-      accessibilityState={{ selected }}
-      style={{ width: size, height: size, backgroundColor: placeholderColor }}
-    >
-      <Image
-        source={uri}
-        style={styles.cellImage}
-        contentFit="cover"
-        // No cross-fade. A tile appearing under your thumb mid-scroll should
-        // just be there, the way it is in Photos.app -- a fade reads as lag.
-        transition={0}
-        cachePolicy="memory-disk"
-        recyclingKey={asset.id}
-        accessible={false}
-        onError={() => {
-          void resolveFallbackUri(asset).then((resolved) => {
-            if (resolved) setUri(resolved);
-          });
-        }}
-      />
-      {selected ? (
-        <>
-          <View style={styles.selectedDim} />
-          <View style={styles.selectedRing} />
-        </>
-      ) : null}
-    </Pressable>
+    <View style={{ width: slotSize, height: slotSize, padding: gutter / 2 }}>
+      <Pressable
+        onPress={() => onPress(asset)}
+        accessibilityRole="imagebutton"
+        accessibilityLabel="Photo"
+        accessibilityState={{ selected }}
+        style={[styles.cell, { backgroundColor: placeholderColor }]}
+      >
+        <Image
+          source={uri}
+          style={styles.cellImage}
+          contentFit="cover"
+          // No cross-fade. A tile appearing under your thumb mid-scroll should
+          // just be there, the way it is in Photos.app -- a fade reads as lag.
+          transition={0}
+          cachePolicy="memory-disk"
+          recyclingKey={asset.id}
+          accessible={false}
+          onError={() => {
+            void resolveFallbackUri(asset).then((resolved) => {
+              if (resolved) setUri(resolved);
+            });
+          }}
+        />
+        {selected ? (
+          <>
+            <View style={styles.selectedDim} />
+            <View style={styles.selectedRing} />
+          </>
+        ) : null}
+      </Pressable>
+    </View>
   );
 });
 
@@ -834,8 +847,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   list: { flex: 1 },
-  row: { gap: GUTTER },
-  content: { gap: GUTTER },
+  cell: { flex: 1, overflow: 'hidden' },
   cellImage: { width: '100%', height: '100%' },
   selectedDim: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(255,255,255,0.35)' },
   selectedRing: {
