@@ -42,35 +42,15 @@
  * The tradeoff is that a `ph://` uri isn't a file, so it can't be handed to
  * ImageManipulator or Skia. That's resolved once, for the one photo the user
  * actually commits to, in `handleNext` below.
- *
- * ---------------------------------------------------------------------------
- * Why FlashList, not FlatList
- * ---------------------------------------------------------------------------
- *
- * The rewrite above removed the *decode* work from a fling; what was left is
- * ordinary FlatList behaviour -- a cell mounts a brand-new native Image view
- * every time it scrolls into range and unmounts it going the other way.
- * FlashList recycles: a cell scrolling off the top is reused for the one
- * scrolling in at the bottom rather than torn down and rebuilt. v2 is pure
- * JS (confirmed against the installed package -- no ios/android sources, no
- * podspec, no gradle file), so this ships as an ordinary dependency, no
- * native build on either platform.
- *
- * The grid's own gap took a wrong turn the first time this shipped: giving
- * each cell an explicit pixel width/height plus padding for the gutter is a
- * documented FlashList pitfall (Shopify/flash-list#706) -- "uneven column
- * widths and visual inconsistencies," which on a device looked like the
- * whole grid growing a gap partway down. The fix the FlashList team actually
- * recommends there is what's below: `flex: 1` (no explicit size at all --
- * numColumns divides the row, Yoga does the rest), `marginHorizontal` for
- * the horizontal gap, and `ItemSeparatorComponent` for the vertical one.
  */
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -78,8 +58,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { FlashList } from '@shopify/flash-list';
-import type { FlashListRef, ListRenderItemInfo } from '@shopify/flash-list';
+import type { ListRenderItemInfo } from 'react-native';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import Feather from '@expo/vector-icons/Feather';
@@ -192,7 +171,7 @@ export function LibraryPicker({
   const [albumsLoading, setAlbumsLoading] = useState(false);
 
   const cropRef = useRef<CropAdjustHandle>(null);
-  const listRef = useRef<FlashListRef<MediaLibrary.Asset>>(null);
+  const listRef = useRef<FlatList<MediaLibrary.Asset>>(null);
   const loadingRef = useRef(false);
   /**
    * Bumped on every source switch. A load captures the version it started
@@ -386,18 +365,31 @@ export function LibraryPicker({
   // Nothing to toggle to on a photo that's already square.
   const canToggleAspect = Math.abs(naturalRatio - 1) > 0.01;
 
+  const cellSize = (width - GUTTER * (COLUMNS - 1)) / COLUMNS;
+
+  // Fixed-size cells in fixed-height rows. Telling FlatList the geometry up
+  // front means a fling never has to measure a row before it can scroll to it.
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<MediaLibrary.Asset> | null | undefined, index: number) => {
+      const length = cellSize + GUTTER;
+      return { length, offset: length * Math.floor(index / COLUMNS), index };
+    },
+    [cellSize]
+  );
+
   const selectedId = selection?.asset.id ?? null;
 
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<MediaLibrary.Asset>) => (
       <GridCell
         asset={item}
+        size={cellSize}
         selected={item.id === selectedId}
         placeholderColor={colors.imagePlaceholder}
         onPress={handleSelect}
       />
     ),
-    [selectedId, colors.imagePlaceholder, handleSelect]
+    [cellSize, selectedId, colors.imagePlaceholder, handleSelect]
   );
 
   const keyExtractor = useCallback((item: MediaLibrary.Asset) => item.id, []);
@@ -515,25 +507,28 @@ export function LibraryPicker({
         </Pressable>
       ) : null}
 
-      <FlashList
+      <FlatList
         ref={listRef}
         data={assets}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         numColumns={COLUMNS}
-        // The confirmed-working pattern from the FlashList team, not the
-        // pixel-math one that shipped (and broke) the first time -- see the
-        // header comment. contentContainerStyle insets the outer edges by
-        // the same half-gutter each cell's own marginHorizontal already
-        // reserves between siblings, and ItemSeparatorComponent is the
-        // vertical half of the gap FlatList's columnWrapperStyle used to
-        // give us for free.
+        columnWrapperStyle={styles.row}
         contentContainerStyle={styles.content}
-        ItemSeparatorComponent={GridRowSeparator}
         style={styles.list}
         onEndReached={onEndReached}
         onEndReachedThreshold={1.5}
         showsVerticalScrollIndicator={false}
+        getItemLayout={getItemLayout}
+        initialNumToRender={COLUMNS * 8}
+        maxToRenderPerBatch={COLUMNS * 6}
+        updateCellsBatchingPeriod={30}
+        windowSize={9}
+        // Android only. On iOS this has a long history of clipping cells that
+        // are still on screen, and the reason it was here -- keeping a lid on
+        // how many images were resident -- no longer applies now that nothing
+        // holds a full-resolution decode.
+        removeClippedSubviews={Platform.OS === 'android'}
         ListEmptyComponent={
           loading ? (
             <ActivityIndicator style={styles.listSpinner} color={colors.textSecondary} />
@@ -594,21 +589,18 @@ export function LibraryPicker({
  * level thumbnail cache, the concurrency-capped queue, the per-cell
  * cancellation token -- went away with the thumbnails it was managing.
  *
- * No explicit width/height: `flex: 1` lets numColumns (via Yoga) divide the
- * row, and `aspectRatio: 1` derives the height from whatever that resolves
- * to. Declaring a pixel size ourselves is the FlashList pitfall this file's
- * header comment is about.
- *
- * Memoized on identity, with a `selected` that only changes when it
- * genuinely does, so a fling re-renders nothing that isn't new.
+ * Memoized on identity, with a `size` and `selected` that only change when
+ * they genuinely do, so a fling re-renders nothing that isn't new.
  */
 const GridCell = memo(function GridCell({
   asset,
+  size,
   selected,
   placeholderColor,
   onPress,
 }: {
   asset: MediaLibrary.Asset;
+  size: number;
   selected: boolean;
   placeholderColor: string;
   onPress: (asset: MediaLibrary.Asset) => void;
@@ -623,7 +615,7 @@ const GridCell = memo(function GridCell({
       accessibilityRole="imagebutton"
       accessibilityLabel="Photo"
       accessibilityState={{ selected }}
-      style={[styles.cell, { backgroundColor: placeholderColor }]}
+      style={{ width: size, height: size, backgroundColor: placeholderColor }}
     >
       <Image
         source={uri}
@@ -650,14 +642,6 @@ const GridCell = memo(function GridCell({
     </Pressable>
   );
 });
-
-/**
- * The vertical half of the grid's gap -- GridCell's own marginHorizontal is
- * the horizontal half. A plain height spacer, full width, between every row.
- */
-function GridRowSeparator() {
-  return <View style={{ height: GUTTER }} />;
-}
 
 /**
  * Last resort for a tile whose uri the image loader couldn't handle.
@@ -850,8 +834,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   list: { flex: 1 },
-  content: { padding: GUTTER / 2 },
-  cell: { flex: 1, aspectRatio: 1, marginHorizontal: GUTTER / 2, overflow: 'hidden' },
+  row: { gap: GUTTER },
+  content: { gap: GUTTER },
   cellImage: { width: '100%', height: '100%' },
   selectedDim: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(255,255,255,0.35)' },
   selectedRing: {
