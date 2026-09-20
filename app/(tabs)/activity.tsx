@@ -96,6 +96,14 @@ export default function Activity() {
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={onMomentumScrollEnd}
+        // Without this, the ScrollView opens at its native default offset
+        // (x: 0) on every fresh mount -- physically the FOLLOWING page,
+        // since that's PAGES[0] -- regardless of `tab`'s own default of
+        // 'you'. That mismatch is exactly the "restart lands on Following"
+        // bug: the tab underline said YOU (driven by `tab` state) while the
+        // visible page was actually FOLLOWING. Pin the initial offset to
+        // wherever 'you' actually sits in PAGES so both agree from frame one.
+        contentOffset={{ x: PAGES.indexOf('you') * width, y: 0 }}
         // The pager itself doesn't scroll vertically -- each page's own
         // FlatList does.
         style={styles.pager}
