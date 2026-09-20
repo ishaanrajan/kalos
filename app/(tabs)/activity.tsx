@@ -1,13 +1,16 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
+import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -25,53 +28,52 @@ import type { ActivityEvent } from '../../lib/types';
  * Activity is a plain chronological log of things people did to your posts.
  * No "suggested for you", no re-engagement nudges, no notifications invented
  * by the app to pull you back in.
+ *
+ * FOLLOWING and YOU are two real pages in a horizontal pager (plain
+ * ScrollView + pagingEnabled -- no new dependency, this is a core RN
+ * primitive), not a filter switch on one feed: both stay mounted and
+ * swiping between them is the same gesture as swiping between photos in
+ * the crop-adjust screen. Tapping a tab and swiping both land on the same
+ * `tab` state, kept in sync in both directions below.
  */
+const PAGES: ActivityTab[] = ['following', 'you'];
+
 export default function Activity() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
   const [tab, setTab] = useState<ActivityTab>('you');
-  const { data, isLoading, isError, refetch } = useActivity(tab);
   const { refreshProfile } = useAuth();
   const markRead = useMarkActivityRead();
   const { colors } = useTheme();
-  const [refreshing, setRefreshing] = useState(false);
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await refetch();
-    setRefreshing(false);
-  }, [refetch]);
+  const scrollRef = useRef<ScrollView>(null);
 
-  // Opening this tab is what "read" means here. This has to be tied to
-  // *focus*, not mount: bottom-tab screens mount on first focus and are never
-  // unmounted (no unmountOnBlur in (tabs)/_layout.tsx), so a mount effect ran
-  // exactly once per app launch. Open Activity at 9am, get a like at 10am --
-  // useActivity refetches on focus and lights the red dot, but returning to
-  // this already-mounted tab re-ran nothing, so activity_read_at never
-  // advanced and the dot stayed lit for the rest of the session.
-  //
-  // The callback deliberately takes no dependencies: markRead is a new object
-  // every render, and depending on it would re-fire the effect mid-focus.
-  // AuthContext's profile is separate state from react-query's cache, so the
-  // mutation's own invalidation doesn't touch it -- refresh it explicitly or
-  // the red dot (driven by profile.activity_read_at) never clears.
-  //
-  // The refetch is here for the same reason: useActivity only refetches on
-  // app foreground or when a push arrives, so with notifications off a like
-  // that landed while you were on Home didn't show up by switching to this
-  // tab. The pull-to-refresh below is the manual version of the same thing.
+  // Opening this tab is what "read" means here -- see the note that used to
+  // live here about focus vs. mount. Unchanged by the pager: this is about
+  // your own activity regardless of which page you land on or swipe to.
   useFocusEffect(
     useCallback(() => {
       markRead.mutate(undefined, { onSuccess: () => refreshProfile() });
-      void refetch();
     }, [])
   );
 
-  if (isLoading) {
-    return (
-      <SafeAreaView style={[styles.center, { backgroundColor: colors.surface }]} edges={['top']}>
-        <ActivityIndicator />
-      </SafeAreaView>
-    );
-  }
+  const scrollToTab = useCallback(
+    (next: ActivityTab) => {
+      setTab(next);
+      scrollRef.current?.scrollTo({ x: PAGES.indexOf(next) * width, animated: true });
+    },
+    [width]
+  );
+
+  // Fires once a swipe (or the animated scroll from tapping a tab above)
+  // settles on a page -- keeps the underline honest when the pager, not the
+  // tab button, is what moved.
+  const onMomentumScrollEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const index = Math.round(e.nativeEvent.contentOffset.x / width);
+      setTab(PAGES[index] ?? 'you');
+    },
+    [width]
+  );
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
@@ -84,43 +86,84 @@ export default function Activity() {
           happened on your own -- two different questions, not a filter on
           one feed. Order matches the reference (FOLLOWING first). */}
       <View style={[styles.tabs, { borderBottomColor: colors.border }]}>
-        <SegmentTab label="Following" active={tab === 'following'} onPress={() => setTab('following')} />
-        <SegmentTab label="You" active={tab === 'you'} onPress={() => setTab('you')} />
+        <SegmentTab label="Following" active={tab === 'following'} onPress={() => scrollToTab('following')} />
+        <SegmentTab label="You" active={tab === 'you'} onPress={() => scrollToTab('you')} />
       </View>
 
-      <FlatList
-        data={data ?? []}
-        keyExtractor={(e, i) => `${e.kind}-${e.created_at}-${i}`}
-        ListEmptyComponent={
-          isError ? (
-            <EmptyState
-              icon="alert-circle"
-              title="Couldn't load activity"
-              actionLabel="Try again"
-              onAction={() => refetch()}
-            />
-          ) : tab === 'you' ? (
-            <EmptyState
-              icon="camera"
-              title="Recent Activity on your posts"
-              body="When someone comments on or likes one of your photos or videos, you'll see it here."
-              actionLabel="Post a photo"
-              onAction={() => router.push('/(tabs)/new')}
-            />
-          ) : (
-            <EmptyState
-              icon="users"
-              title="Activity from people you follow"
-              body="When someone you follow comments on or likes a post, you'll see it here."
-              actionLabel="Find People to Follow"
-              onAction={() => router.push('/search')}
-            />
-          )
-        }
-        renderItem={({ item }) => <ActivityRow event={item} tab={tab} router={router} />}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      />
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onMomentumScrollEnd={onMomentumScrollEnd}
+        // The pager itself doesn't scroll vertically -- each page's own
+        // FlatList does.
+        style={styles.pager}
+      >
+        {PAGES.map((page) => (
+          <View key={page} style={{ width }}>
+            <ActivityFeedPage tab={page} router={router} />
+          </View>
+        ))}
+      </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/** One page of the pager -- its own query, its own pull-to-refresh, its own
+ *  empty/error state. Both pages mount together so swiping between them
+ *  never waits on a fetch. */
+function ActivityFeedPage({ tab, router }: { tab: ActivityTab; router: ReturnType<typeof useRouter> }) {
+  const { data, isLoading, isError, refetch } = useActivity(tab);
+  const { colors } = useTheme();
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refetch();
+    setRefreshing(false);
+  }, [refetch]);
+
+  if (isLoading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  return (
+    <FlatList
+      data={data ?? []}
+      keyExtractor={(e, i) => `${e.kind}-${e.created_at}-${i}`}
+      ListEmptyComponent={
+        isError ? (
+          <EmptyState
+            icon="alert-circle"
+            title="Couldn't load activity"
+            actionLabel="Try again"
+            onAction={() => refetch()}
+          />
+        ) : tab === 'you' ? (
+          <EmptyState
+            icon="camera"
+            title="Recent Activity on your posts"
+            body="When someone comments on or likes one of your photos or videos, you'll see it here."
+            actionLabel="Post a photo"
+            onAction={() => router.push('/(tabs)/new')}
+          />
+        ) : (
+          <EmptyState
+            icon="users"
+            title="Activity from people you follow"
+            body="When someone you follow comments on or likes a post, you'll see it here."
+            actionLabel="Find People to Follow"
+            onAction={() => router.push('/search')}
+          />
+        )
+      }
+      renderItem={({ item }) => <ActivityRow event={item} tab={tab} router={router} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textSecondary} />}
+    />
   );
 }
 
@@ -159,8 +202,12 @@ function ActivityRow({
   router: ReturnType<typeof useRouter>;
 }) {
   const { colors } = useTheme();
+  // The row's own tap target -- everywhere but the name/avatar, which open
+  // the actor's profile instead (see below). For `follow` these are already
+  // the same destination.
   const target =
     event.kind === 'follow' ? `/profile/${event.actor.username}` : `/post/${event.post_id}`;
+  const openActor = () => router.push(`/profile/${event.actor.username}` as never);
 
   return (
     <Pressable
@@ -169,9 +216,19 @@ function ActivityRow({
       accessibilityRole="button"
       accessibilityLabel={describe(event, tab)}
     >
-      <Avatar url={avatarUrl(event.actor.avatar_path)} username={event.actor.username} size={40} />
+      <Avatar
+        url={avatarUrl(event.actor.avatar_path)}
+        username={event.actor.username}
+        size={40}
+        onPress={openActor}
+      />
       <Text style={[styles.text, { color: colors.text }]} numberOfLines={2}>
-        <Text style={styles.username}>{event.actor.username}</Text>
+        {/* Nested onPress wins the touch over the row's own Pressable --
+            same technique PostCard and CommentRow already use for an
+            author's name inside a larger tappable row. */}
+        <Text style={styles.username} onPress={openActor} suppressHighlighting>
+          {event.actor.username}
+        </Text>
         {event.kind === 'like' && (tab === 'you' ? ' liked your photo.' : ' liked a photo.')}
         {event.kind === 'comment' && ` commented: ${event.body}`}
         {event.kind === 'follow' && ' started following you.'}
@@ -235,7 +292,7 @@ function SegmentTab({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 48 },
   header: {
     height: 44,
     alignItems: 'center',
@@ -258,6 +315,7 @@ const styles = StyleSheet.create({
   // label.
   tabText: { fontSize: 12 },
   tabTextActive: { fontWeight: '700' },
+  pager: { flex: 1 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
