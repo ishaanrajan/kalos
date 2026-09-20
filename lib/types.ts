@@ -219,6 +219,8 @@ export interface DMThreadSummary {
   last_body: string;
   last_sender_id: UUID;
   last_created_at: Timestamp;
+  /** True while any incoming message in the thread is still unread. */
+  has_unread: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -9,13 +9,20 @@ interface Props {
   onPress: () => void;
   /** Rendered at the trailing edge -- a follow button on the follow lists. */
   accessory?: React.ReactNode;
+  /**
+   * Bolder than the row's own default weight, the way an unread thread's
+   * name reads in iMessage. Nothing sets this outside the DM inbox -- every
+   * other list this row appears in (search, followers/following) has no
+   * concept of "unread" and keeps the plain default.
+   */
+  unread?: boolean;
 }
 
 /**
  * One account in a list. Shared by search and by the followers/following
  * lists so a person looks the same wherever you run into them.
  */
-export function UserRow({ profile, onPress, accessory }: Props) {
+export function UserRow({ profile, onPress, accessory, unread }: Props) {
   const { colors } = useTheme();
   return (
     <Pressable
@@ -28,7 +35,9 @@ export function UserRow({ profile, onPress, accessory }: Props) {
     >
       <Avatar url={avatarUrl(profile.avatar_path)} username={profile.username} size={44} />
       <View style={styles.names}>
-        <Text style={[styles.username, { color: colors.text }]}>{profile.username}</Text>
+        <Text style={[styles.username, { color: colors.text }, unread && styles.unread]}>
+          {profile.username}
+        </Text>
         {profile.display_name && (
           <Text style={[styles.displayName, { color: colors.textSecondary }]}>
             {profile.display_name}
@@ -50,5 +59,6 @@ const styles = StyleSheet.create({
   },
   names: { flex: 1 },
   username: { fontSize: 14, fontWeight: '600' },
+  unread: { fontWeight: '800' },
   displayName: { fontSize: 13, marginTop: 1 },
 });

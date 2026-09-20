@@ -1003,17 +1003,22 @@ export function useMyDMThreads() {
     queryFn: async () => {
       const { data, error } = await supabase.rpc('my_dm_thread_previews');
       if (error) throw error;
-      const latest = new Map<string, { sender_id: string; body: string; created_at: string }>();
+      const latest = new Map<
+        string,
+        { sender_id: string; body: string; created_at: string; has_unread: boolean }
+      >();
       for (const row of (data ?? []) as {
         thread_with_id: string;
         last_sender_id: string;
         last_body: string;
         last_created_at: string;
+        has_unread: boolean;
       }[]) {
         latest.set(row.thread_with_id, {
           sender_id: row.last_sender_id,
           body: row.last_body,
           created_at: row.last_created_at,
+          has_unread: row.has_unread,
         });
       }
       return latest;

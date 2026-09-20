@@ -43,12 +43,20 @@ function IshaanInbox() {
       <UserRow
         profile={bot}
         onPress={() => router.push(`/dm/${bot.username}?own=1`)}
+        unread={myThreads?.get(bot.id)?.has_unread ?? false}
         accessory={
           (() => {
             const latest = myThreads?.get(bot.id);
             return latest ? (
               <View style={styles.preview}>
-                <Text style={[styles.previewBody, { color: colors.textSecondary }]} numberOfLines={1}>
+                <Text
+                  style={[
+                    styles.previewBody,
+                    { color: latest.has_unread ? colors.text : colors.textSecondary },
+                    latest.has_unread && styles.previewUnread,
+                  ]}
+                  numberOfLines={1}
+                >
                   {latest.sender_id === me?.id ? 'You: ' : ''}
                   {latest.body}
                 </Text>
@@ -122,9 +130,17 @@ function IshaanInbox() {
               avatar_path: item.avatar_path,
             }}
             onPress={() => router.push(`/dm/${item.username}`)}
+            unread={item.has_unread}
             accessory={
               <View style={styles.preview}>
-                <Text style={[styles.previewBody, { color: colors.textSecondary }]} numberOfLines={1}>
+                <Text
+                  style={[
+                    styles.previewBody,
+                    { color: item.has_unread ? colors.text : colors.textSecondary },
+                    item.has_unread && styles.previewUnread,
+                  ]}
+                  numberOfLines={1}
+                >
                   {item.last_sender_id === me?.id ? 'You: ' : ''}
                   {item.last_body}
                 </Text>
@@ -216,10 +232,18 @@ function MyThreads() {
           <UserRow
             profile={item}
             onPress={() => router.push(`/dm/${item.username}`)}
+            unread={latest?.has_unread ?? false}
             accessory={
               latest ? (
                 <View style={styles.preview}>
-                  <Text style={[styles.previewBody, { color: colors.textSecondary }]} numberOfLines={1}>
+                  <Text
+                    style={[
+                      styles.previewBody,
+                      { color: latest.has_unread ? colors.text : colors.textSecondary },
+                      latest.has_unread && styles.previewUnread,
+                    ]}
+                    numberOfLines={1}
+                  >
                     {latest.sender_id === me?.id ? 'You: ' : ''}
                     {latest.body}
                   </Text>
@@ -243,6 +267,7 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   preview: { alignItems: 'flex-end', maxWidth: 110 },
   previewBody: { fontSize: 12 },
+  previewUnread: { fontWeight: '700' },
   previewAge: { fontSize: 11, marginTop: 2 },
   // Separated from the admin list below it with a hairline -- it isn't one
   // of the "people who've messaged you" rows the empty state below refers
