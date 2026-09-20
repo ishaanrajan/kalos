@@ -17,6 +17,7 @@ import { Image } from 'expo-image';
 import { Avatar } from '../../components/Avatar';
 import { EmptyState } from '../../components/EmptyState';
 import { MentionText } from '../../components/MentionText';
+import { formatActivityTimestamp } from '../../components/PostCard';
 import { useActivity, useMarkActivityRead } from '../../lib/queries';
 import type { ActivityTab } from '../../lib/queries';
 import { avatarUrl, photoThumbUrl } from '../../lib/supabase';
@@ -230,28 +231,33 @@ function ActivityRow({
         size={40}
         onPress={openActor}
       />
-      <Text style={[styles.text, { color: colors.text }]} numberOfLines={2}>
-        {/* Nested onPress wins the touch over the row's own Pressable --
-            same technique PostCard and CommentRow already use for an
-            author's name inside a larger tappable row. */}
-        <Text style={styles.username} onPress={openActor} suppressHighlighting>
-          {event.actor.username}
+      <View style={styles.textContainer}>
+        <Text style={[styles.text, { color: colors.text }]} numberOfLines={2}>
+          {/* Nested onPress wins the touch over the row's own Pressable --
+              same technique PostCard and CommentRow already use for an
+              author's name inside a larger tappable row. */}
+          <Text style={styles.username} onPress={openActor} suppressHighlighting>
+            {event.actor.username}
+          </Text>
+          {event.kind === 'like' && (tab === 'you' ? ' liked your photo.' : ' liked a photo.')}
+          {event.kind === 'comment' && ` commented: ${event.body}`}
+          {event.kind === 'follow' && ' started following you.'}
+          {event.kind === 'tag' && ' tagged you in a photo.'}
+          {event.kind === 'mention' && (
+            <>
+              {' mentioned you: '}
+              <MentionText
+                text={event.body}
+                mentionColor={colors.mention}
+                onPressMention={(username) => router.push(`/profile/${username}`)}
+              />
+            </>
+          )}
         </Text>
-        {event.kind === 'like' && (tab === 'you' ? ' liked your photo.' : ' liked a photo.')}
-        {event.kind === 'comment' && ` commented: ${event.body}`}
-        {event.kind === 'follow' && ' started following you.'}
-        {event.kind === 'tag' && ' tagged you in a photo.'}
-        {event.kind === 'mention' && (
-          <>
-            {' mentioned you: '}
-            <MentionText
-              text={event.body}
-              mentionColor={colors.mention}
-              onPressMention={(username) => router.push(`/profile/${username}`)}
-            />
-          </>
-        )}
-      </Text>
+        <Text style={[typography.timestamp, styles.timestamp, { color: colors.textSecondary }]}>
+          {formatActivityTimestamp(event.created_at)}
+        </Text>
+      </View>
       {event.kind !== 'follow' && (
         <Image
           // The grid derivative, not the full-size original -- 50 rows of
@@ -331,7 +337,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
-  text: { flex: 1, fontSize: 14, lineHeight: 19 },
+  textContainer: { flex: 1 },
+  text: { fontSize: 14, lineHeight: 19 },
   username: { fontWeight: '600' },
+  timestamp: { marginTop: 2 },
   thumb: { width: 44, height: 44 },
 });

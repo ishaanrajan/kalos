@@ -173,6 +173,41 @@ export function formatPostTimestamp(iso: Timestamp, now: number = Date.now()): s
   });
 }
 
+/**
+ * The Activity list's own timestamp -- terser than formatPostTimestamp
+ * ("2 hrs ago" not "2 hours ago"), since a whole list of these sits stacked
+ * one under the next instead of standing alone under a single post.
+ */
+export function formatActivityTimestamp(iso: Timestamp, now: number = Date.now()): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) {
+    return '';
+  }
+  const elapsed = Math.max(0, now - then);
+
+  if (elapsed < MINUTE) {
+    return 'Just now';
+  }
+  if (elapsed < HOUR) {
+    return plural(Math.floor(elapsed / MINUTE), 'minute');
+  }
+  if (elapsed < DAY) {
+    const hours = Math.floor(elapsed / HOUR);
+    return `${hours} hr${hours === 1 ? '' : 's'} ago`;
+  }
+  if (elapsed < WEEK) {
+    return plural(Math.floor(elapsed / DAY), 'day');
+  }
+
+  const date = new Date(then);
+  const sameYear = date.getFullYear() === new Date(now).getFullYear();
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? null : { year: 'numeric' }),
+  });
+}
+
 function formatCount(count: number, singular: string, pluralWord: string): string {
   return `${count.toLocaleString()} ${count === 1 ? singular : pluralWord}`;
 }
