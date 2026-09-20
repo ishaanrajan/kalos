@@ -59,6 +59,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import type { ListRenderItemInfo } from 'react-native';
+import Animated, { clamp, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import Feather from '@expo/vector-icons/Feather';
@@ -355,6 +356,22 @@ export function LibraryPicker({
     [width, height]
   );
 
+  // Instagram's own composer: scroll the grid up and the preview collapses
+  // out of the way one-to-one with the drag, so a determined scroll gets you
+  // the whole screen of photos; scroll back down and it's there again. The
+  // *inner* box (below) stays pane.height always -- only this outer wrapper's
+  // height shrinks, clipped by its own overflow:hidden -- so CropAdjust never
+  // reflows or remounts over the course of a drag, just gets progressively
+  // clipped from the bottom. scrollY is clamped to [0, pane.height] up front
+  // so an iOS rubber-band overscroll past either end can't overshoot it.
+  const scrollY = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler((e) => {
+    scrollY.value = e.contentOffset.y;
+  });
+  const paneWrapStyle = useAnimatedStyle(() => ({
+    height: pane.height - clamp(scrollY.value, 0, pane.height),
+  }));
+
   const naturalRatio = selection
     ? displayAspectRatio(selection.natural.width, selection.natural.height)
     : 1;
@@ -436,44 +453,46 @@ export function LibraryPicker({
         </Pressable>
       </View>
 
-      <View style={[styles.pane, { width: pane.width, height: pane.height }]}>
-        {selection ? (
-          <>
-            <CropAdjust
-              // Remounting is how a new photo (or a new framing) gets a clean
-              // zoom/pan. The shared values that hold the gesture state are
-              // seeded once, so without this the second photo you tapped
-              // would inherit the first one's zoom.
-              key={`${selection.asset.id}:${aspectMode}:${frame.width}x${frame.height}`}
-              ref={cropRef}
-              uri={selection.asset.uri}
-              natural={selection.natural}
-              frame={frame}
-              onImageLoad={handleImageLoad}
-            />
-            {canToggleAspect ? (
-              <Pressable
-                onPress={() => setAspectMode((m) => (m === 'square' ? 'original' : 'square'))}
-                style={styles.aspectButton}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  aspectMode === 'square' ? 'Use original shape' : 'Crop to square'
-                }
-              >
-                <Ionicons
-                  name={aspectMode === 'square' ? 'scan-outline' : 'square-outline'}
-                  size={15}
-                  color="#fff"
-                />
-                <Text style={styles.aspectLabel}>
-                  {aspectMode === 'square' ? 'Original' : 'Square'}
-                </Text>
-              </Pressable>
-            ) : null}
-          </>
-        ) : null}
-      </View>
+      <Animated.View style={[styles.paneWrap, { width: pane.width }, paneWrapStyle]}>
+        <View style={[styles.pane, { width: pane.width, height: pane.height }]}>
+          {selection ? (
+            <>
+              <CropAdjust
+                // Remounting is how a new photo (or a new framing) gets a clean
+                // zoom/pan. The shared values that hold the gesture state are
+                // seeded once, so without this the second photo you tapped
+                // would inherit the first one's zoom.
+                key={`${selection.asset.id}:${aspectMode}:${frame.width}x${frame.height}`}
+                ref={cropRef}
+                uri={selection.asset.uri}
+                natural={selection.natural}
+                frame={frame}
+                onImageLoad={handleImageLoad}
+              />
+              {canToggleAspect ? (
+                <Pressable
+                  onPress={() => setAspectMode((m) => (m === 'square' ? 'original' : 'square'))}
+                  style={styles.aspectButton}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    aspectMode === 'square' ? 'Use original shape' : 'Crop to square'
+                  }
+                >
+                  <Ionicons
+                    name={aspectMode === 'square' ? 'scan-outline' : 'square-outline'}
+                    size={15}
+                    color="#fff"
+                  />
+                  <Text style={styles.aspectLabel}>
+                    {aspectMode === 'square' ? 'Original' : 'Square'}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </>
+          ) : null}
+        </View>
+      </Animated.View>
 
       <View style={[styles.toolbar, { borderBottomColor: colors.border }]}>
         <Pressable onPress={openAlbums} hitSlop={8} style={styles.sourceButton}>
@@ -507,7 +526,7 @@ export function LibraryPicker({
         </Pressable>
       ) : null}
 
-      <FlatList
+      <Animated.FlatList
         ref={listRef}
         data={assets}
         renderItem={renderItem}
@@ -516,6 +535,8 @@ export function LibraryPicker({
         columnWrapperStyle={styles.row}
         contentContainerStyle={styles.content}
         style={styles.list}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
         onEndReached={onEndReached}
         onEndReachedThreshold={1.5}
         showsVerticalScrollIndicator={false}
@@ -794,6 +815,10 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.4 },
   // Always black: this is photo letterboxing, which doesn't follow the
   // screen's light/dark state any more than a photo viewer's backdrop does.
+  // Clips the inner (always pane.height) box as paneWrapStyle's animated
+  // height shrinks it -- same reasoning as the pane's own background: photo
+  // letterboxing, not a themed surface.
+  paneWrap: { backgroundColor: '#000', overflow: 'hidden' },
   pane: { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
   aspectButton: {
     position: 'absolute',
