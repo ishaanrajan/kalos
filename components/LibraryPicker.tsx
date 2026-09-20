@@ -364,12 +364,20 @@ export function LibraryPicker({
   // reflows or remounts over the course of a drag, just gets progressively
   // clipped from the bottom. scrollY is clamped to [0, pane.height] up front
   // so an iOS rubber-band overscroll past either end can't overshoot it.
+  // Clamped *here*, at the write, not just when it's read below. scrollY
+  // otherwise keeps climbing for as long as a scroll continues, however far
+  // past pane.height that goes -- and since paneWrapStyle depends on it, an
+  // unclamped value means that layout-affecting style keeps recomputing and
+  // recommitting every single frame for the rest of a long scroll, not just
+  // the brief bit where the preview is actually collapsing. Pinning the
+  // value here means it stops changing the moment the preview is fully
+  // collapsed, and a shared value that isn't changing triggers nothing.
   const scrollY = useSharedValue(0);
   const onScroll = useAnimatedScrollHandler((e) => {
-    scrollY.value = e.contentOffset.y;
+    scrollY.value = clamp(e.contentOffset.y, 0, pane.height);
   });
   const paneWrapStyle = useAnimatedStyle(() => ({
-    height: pane.height - clamp(scrollY.value, 0, pane.height),
+    height: pane.height - scrollY.value,
   }));
 
   const naturalRatio = selection

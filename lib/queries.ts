@@ -126,13 +126,24 @@ function patchCachedPost(
   return [...feedSnapshots, ...listSnapshots, ...postSnapshots] as [readonly unknown[], unknown][];
 }
 
-export function useActivity() {
+export type ActivityTab = 'you' | 'following';
+
+/**
+ * `'you'` (the default) is activity on your own posts -- likes, comments,
+ * follows, mentions, tags. `'following'` is a different question entirely:
+ * what people *you* follow are doing on posts generally (2015 Instagram's
+ * two-tab Activity screen). Kept as one hook with a tab argument, not two
+ * hooks, so callers that only ever want their own activity (the unread-dot
+ * check below) don't have to know the split exists.
+ */
+export function useActivity(tab: ActivityTab = 'you') {
   const userId = useUserId();
   return useQuery({
-    queryKey: ['activity', userId],
+    queryKey: ['activity', tab, userId],
     enabled: !!userId,
     queryFn: async () => {
-      const { data, error } = await supabase.rpc('activity_feed', { lim: 50 });
+      const fn = tab === 'you' ? 'activity_feed' : 'activity_feed_following';
+      const { data, error } = await supabase.rpc(fn, { lim: 50 });
       if (error) throw error;
       return (data ?? []) as ActivityEvent[];
     },
@@ -1182,6 +1193,9 @@ export function useTypingIndicator(
 /** Red-dot state for the Activity tab: anything newer than the last visit? */
 export function useHasUnreadActivity() {
   const { profile } = useAuth();
+  // Deliberately the default ('you') -- the red dot is about things that
+  // happened to you, the same thing it's always meant. Following activity
+  // gets no badge, same as 2015 Instagram's own FOLLOWING tab didn't.
   const { data: events } = useActivity();
   const newest = events?.[0]?.created_at;
   if (!newest) return false;

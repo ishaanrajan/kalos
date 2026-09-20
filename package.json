@@ -59,6 +59,7 @@
     "verify:gif-comments": "tsx scripts/verify-gif-comments.ts",
     "verify:post-blocks": "tsx scripts/verify-post-blocks.ts",
     "verify:post-tags": "tsx scripts/verify-post-tags.ts",
+    "verify:activity-following": "tsx scripts/verify-activity-following.ts",
     "seed": "tsx scripts/seed.ts"
   },
   "private": true
