@@ -1,13 +1,14 @@
 // Supabase Edge Function: daily-drake
 //
-// Called twice a day by a pg_cron schedule (see 0011_drake_bot.sql). Posts a
-// photo as @prosecco_daddy -- picked from the ones it hasn't posted yet, so
-// today's photo can never repeat one already used -- and swaps its avatar to
-// another random one from the same pool. Photos are the account owner's own
-// curated set, pre-uploaded to the `photos` bucket under the bot's own user
-// folder (photos/<bot_id>/source-N.jpg) rather than fetched from Wikimedia
-// Commons -- same upload-then-insert flow either way, just a different
-// source for the bytes.
+// Called once a day by a pg_cron schedule (see 0011_drake_bot.sql, cut down
+// to once daily by 0039_drake_daily_once.sql). Posts a photo as
+// @prosecco_daddy -- picked from the ones it hasn't posted yet, so today's
+// photo can never repeat one already used -- and, once every 3 posts (so
+// once every 3 days), swaps its avatar to another random one from the same
+// pool. Photos are the account owner's own curated set, pre-uploaded to the
+// `photos` bucket under the bot's own user folder (photos/<bot_id>/source-N.jpg)
+// rather than fetched from Wikimedia Commons -- same upload-then-insert flow
+// either way, just a different source for the bytes.
 //
 // Posts never get an explicit width/height (posts.width/height default to
 // 1080x1080 -- see 0002_schema.sql), so every source photo displays as a
@@ -174,7 +175,18 @@ Deno.serve(async () => {
   }
 
   const postUrl = await pickUnusedPhoto();
-  const avatarUrl = pickRandom(PHOTOS);
+
+  // Avatar changes once every 3 posts rather than every run -- since
+  // daily-drake now fires once a day (0039_drake_daily_once.sql), that's
+  // once every 3 days. Gated on how many posts the bot has made so far
+  // (not a date), so a missed or extra cron fire just shifts the count
+  // instead of ever skipping two swaps in a row.
+  const { count: postCount, error: countErr } = await db
+    .from('posts')
+    .select('id', { count: 'exact', head: true })
+    .eq('author_id', bot.id);
+  if (countErr) console.error('could not read post count, swapping avatar anyway', countErr);
+  const shouldSwapAvatar = countErr != null || (postCount ?? 0) % 3 === 0;
 
   const { data: lastPost, error: lastPostErr } = await db
     .from('posts')
@@ -211,16 +223,19 @@ Deno.serve(async () => {
   const { error: logErr } = await db.from('drake_bot_photo_log').insert({ source_url: postUrl });
   if (logErr) console.error('photo log insert failed (post still went out)', logErr);
 
-  // Swap the avatar too.
-  const avatarBytes = await fetchBytes(avatarUrl);
-  const avatarPath = `${bot.id}/${crypto.randomUUID()}.jpg`;
-  const { error: avatarUploadErr } = await db.storage
-    .from('avatars')
-    .upload(avatarPath, avatarBytes, { contentType: 'image/jpeg', upsert: false });
-  if (!avatarUploadErr) {
-    await db.from('profiles').update({ avatar_path: avatarPath }).eq('id', bot.id);
-  } else {
-    console.error('avatar upload failed (post still went out)', avatarUploadErr);
+  // Swap the avatar too, but only on the runs it's due (see shouldSwapAvatar above).
+  if (shouldSwapAvatar) {
+    const avatarUrl = pickRandom(PHOTOS);
+    const avatarBytes = await fetchBytes(avatarUrl);
+    const avatarPath = `${bot.id}/${crypto.randomUUID()}.jpg`;
+    const { error: avatarUploadErr } = await db.storage
+      .from('avatars')
+      .upload(avatarPath, avatarBytes, { contentType: 'image/jpeg', upsert: false });
+    if (!avatarUploadErr) {
+      await db.from('profiles').update({ avatar_path: avatarPath }).eq('id', bot.id);
+    } else {
+      console.error('avatar upload failed (post still went out)', avatarUploadErr);
+    }
   }
 
   return new Response('posted', { status: 200 });
