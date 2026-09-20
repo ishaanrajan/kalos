@@ -281,7 +281,7 @@ created a webhook through the UI before.
 ## 6. Drake bot
 
 A joke account, `@prosecco_daddy`, that posts a Drake photo and swaps its own
-avatar once a day, picked from a pool of 40 curated photos pre-uploaded to
+avatar once a day, picked from a pool of 59 curated photos pre-uploaded to
 the `photos` storage bucket under the bot's own user folder
 (`photos/<bot_id>/source-N.jpg`) -- originally a pool of 22 Wikimedia Commons
 images, swapped out for a locally-sourced set. Same shape as push
