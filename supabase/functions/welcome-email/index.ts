@@ -47,16 +47,15 @@ function greetingName(username: string, displayName: string | null): string {
 function emailBody(name: string): string {
   return `Hey ${name} — you're in.
 
-Kalos is basically Instagram circa 2015: your friends, chronological feed, no algo, no reels, no randos. That's it.
+Kalos is what [REDACTED] was before the algorithm got involved.
 
-Two things:
-1. Post a bit — the app gets better the more real photos are in it.
-2. See the message icon on your feed? That's a direct line to me. Bug, idea, complaint, whatever — DM it over, I read and respond to everything.
+No ads, no bots, and a chronological feed that ends when you've seen everyone.
 
-Have fun with it.
+Go post something. Nobody's watching but your friends.
 
-Yours truly,
-Ishaan`;
+The message icon on your feed goes straight to me. Bugs, ideas, complaints — I read all of it.
+
+— Ishaan`;
 }
 
 Deno.serve(async (req) => {
@@ -101,7 +100,7 @@ Deno.serve(async (req) => {
     await client.send({
       from: `Kalos <${gmailUser}>`,
       to: email,
-      subject: 'Welcome to Kalos',
+      subject: "You're in.",
       content: emailBody(greetingName(username, display_name)),
     });
     await db.from('profiles').update({ welcome_emailed_at: new Date().toISOString() }).eq('id', id);
