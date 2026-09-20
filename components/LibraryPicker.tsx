@@ -550,9 +550,18 @@ export function LibraryPicker({
         showsVerticalScrollIndicator={false}
         getItemLayout={getItemLayout}
         initialNumToRender={COLUMNS * 8}
-        maxToRenderPerBatch={COLUMNS * 6}
+        // Smaller than before (was 6 rows/9 screens): a fast fling queues one
+        // native PHImageManager/Glide thumbnail request per cell that enters
+        // this window, cancelling it again if the cell recycles before it
+        // lands. A wide window means a lot of those get queued at once, and
+        // the ones that were still in flight when the fling actually stopped
+        // all complete in a burst right then -- visible as photos popping in
+        // -- and that burst's leftover work is what made the very next bit of
+        // gentle scrolling stutter. Fewer concurrently-mounted cells means a
+        // smaller burst to begin with.
+        maxToRenderPerBatch={COLUMNS * 3}
         updateCellsBatchingPeriod={30}
-        windowSize={9}
+        windowSize={5}
         // Android only. On iOS this has a long history of clipping cells that
         // are still on screen, and the reason it was here -- keeping a lid on
         // how many images were resident -- no longer applies now that nothing
