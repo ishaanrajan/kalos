@@ -1,9 +1,9 @@
 // Supabase Edge Function: notify
 //
 // Triggered by Database Webhooks (see 0009_notifications.sql) on insert into
-// dm_messages, likes, comments, follows, and post_tags (0034_post_tags.sql),
-// plus a second webhook on dm_messages UPDATE (0023_dm_message_likes.sql)
-// for message reactions.
+// dm_messages, likes, comments, follows, post_tags (0034_post_tags.sql), and
+// comment_likes (0038_comment_likes.sql), plus a second webhook on
+// dm_messages UPDATE (0023_dm_message_likes.sql) for message reactions.
 // Resolves who should hear about it, skips notifying someone about their
 // own action, and pushes through Expo's push API to every token that
 // person has registered.
@@ -21,7 +21,7 @@ const db = createClient(supabaseUrl, serviceRoleKey);
 
 interface WebhookPayload {
   type: 'INSERT' | 'UPDATE';
-  table: 'dm_messages' | 'likes' | 'comments' | 'follows' | 'post_tags';
+  table: 'dm_messages' | 'likes' | 'comments' | 'follows' | 'post_tags' | 'comment_likes';
   record: Record<string, any>;
   /** Only present on UPDATE -- the row's values before this change. */
   old_record?: Record<string, any>;
@@ -117,6 +117,25 @@ async function resolve(payload: WebhookPayload): Promise<Notification[]> {
           title: 'Kalos',
           body: `${likerUsername} liked your photo`,
           url: `/post/${r.post_id}`,
+        },
+      ];
+    }
+
+    case 'comment_likes': {
+      if (!r.comment_id || !r.user_id) return [];
+      const { data: comment } = await db
+        .from('comments')
+        .select('author_id, post_id')
+        .eq('id', r.comment_id)
+        .single();
+      if (!comment || comment.author_id === r.user_id) return []; // liking your own comment
+      const likerUsername = await usernameOf(r.user_id);
+      return [
+        {
+          recipientId: comment.author_id,
+          title: 'Kalos',
+          body: `${likerUsername} liked your comment`,
+          url: `/post/${comment.post_id}`,
         },
       ];
     }

@@ -78,6 +78,7 @@ so re-applying a file after a tweak is safe.
 | `0030_fix_drake_comment_reply_cron.sql` | Reschedules `drake-comment-reply-flush-every-minute`, which had silently stopped running — re-run if that job ever goes quiet again |
 | `0031_post_blocks.sql` | `post_blocks` — lets one account hide their posts from a specific other account (post visibility only, not a general block). Admin-managed, no client UI yet; add a row with a plain insert |
 | `0034_post_tags.sql` | `post_tags` — tagging people on a photo, positioned as fractions of the displayed frame. `home_feed`/`explore_feed` gain a `tags` column; `activity_feed` gains a `'tag'` kind. Needs a fifth `notify` webhook — see [Push notifications](#5-push-notifications) |
+| `0038_comment_likes.sql` | `comment_likes` — a heart on an individual comment, separate from liking the post. Adds `comments.like_count`. Needs a sixth `notify` webhook — see [Push notifications](#5-push-notifications) |
 
 ### Option A — SQL editor (no tooling required)
 
@@ -258,10 +259,11 @@ through the UI at least once.
    `supabase/functions/notify/index.ts`. If it asks about **"Enforce JWT
    verification,"** turn that **off** — the webhook below calls it directly,
    with no user JWT to verify.
-2. **Create five Database Webhooks.** Dashboard → **Database** → **Webhooks**
+2. **Create six Database Webhooks.** Dashboard → **Database** → **Webhooks**
    → **Create a new hook**, once each for `dm_messages`, `likes`, `comments`,
-   `follows`, `post_tags` (the last one only once `0034_post_tags.sql` has
-   run — the table has to exist before a hook can be attached to it):
+   `follows`, `post_tags`, `comment_likes` (the last two only once their own
+   migration — `0034_post_tags.sql`, `0038_comment_likes.sql` — has run each
+   time: the table has to exist before a hook can be attached to it):
    - Events: **Insert** only
    - Type: **Supabase Edge Functions**
    - Edge Function: `notify`
