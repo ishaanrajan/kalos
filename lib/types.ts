@@ -107,6 +107,11 @@ export interface Comment {
   body: string | null;
   gif: CommentGif | null;
   created_at: Timestamp;
+  /** Trigger-maintained (0038_comment_likes.sql), like posts.like_count. */
+  like_count: number;
+  /** Not a real column -- merged in by useComments from a separate lookup,
+   * same reasoning as FeedPost's own viewer_has_liked. */
+  viewer_has_liked: boolean;
   author?: Pick<Profile, 'id' | 'username' | 'avatar_path'>;
 }
 

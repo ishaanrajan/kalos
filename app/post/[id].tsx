@@ -29,6 +29,7 @@ import {
   useDeletePost,
   useFollowList,
   usePost,
+  useToggleCommentLike,
   useToggleLike,
 } from '../../lib/queries';
 import type { ProfileSummary } from '../../lib/queries';
@@ -79,6 +80,7 @@ export default function PostScreen() {
   const addComment = useAddComment(id!);
   const addGifComment = useAddGifComment(id!);
   const toggleLike = useToggleLike();
+  const toggleCommentLike = useToggleCommentLike(id!);
   const deletePost = useDeletePost();
   const deleteComment = useDeleteComment();
   const { data: following } = useFollowList(userId ?? undefined, 'following');
@@ -223,6 +225,13 @@ export default function PostScreen() {
     [post, deleteComment.mutate]
   );
 
+  const likeThisComment = useCallback(
+    (comment: Comment) => {
+      toggleCommentLike.mutate({ commentId: comment.id, liked: comment.viewer_has_liked });
+    },
+    [toggleCommentLike.mutate]
+  );
+
   const showPostOptions = useCallback(() => {
     if (!post) return;
     showActionSheet('Post options', [
@@ -315,12 +324,14 @@ export default function PostScreen() {
       <CommentRow
         comment={item}
         avatarUrl={avatarUrl(item.author?.avatar_path ?? null)}
+        liked={item.viewer_has_liked}
         onPressAuthor={openCommentAuthor}
+        onPressLike={likeThisComment}
         onPressMention={openMention}
         onLongPress={canDeleteComment(item) ? deleteThisComment : undefined}
       />
     ),
-    [openCommentAuthor, openMention, canDeleteComment, deleteThisComment]
+    [openCommentAuthor, openMention, canDeleteComment, deleteThisComment, likeThisComment]
   );
 
   if (!post) {

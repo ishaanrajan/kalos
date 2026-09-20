@@ -286,8 +286,9 @@ export function useTaggedPosts(profileId: string | undefined, enabled = true) {
 }
 
 export function useComments(postId: string | undefined) {
+  const userId = useUserId();
   return useQuery({
-    queryKey: ['comments', postId],
+    queryKey: ['comments', postId, userId],
     enabled: !!postId,
     queryFn: async () => {
       const { data, error } = await supabase
@@ -296,7 +297,66 @@ export function useComments(postId: string | undefined) {
         .eq('post_id', postId!)
         .order('created_at', { ascending: true });
       if (error) throw error;
-      return data as Comment[];
+      const comments = data as Comment[];
+
+      // Its own query rather than an embed, same reasoning as usePost's like
+      // lookup: an embed fails the whole thread against a database where
+      // 0038 hasn't run yet, where this just comes back empty.
+      const likedIds = new Set<string>();
+      if (userId && comments.length > 0) {
+        const { data: likeRows } = await supabase
+          .from('comment_likes')
+          .select('comment_id')
+          .eq('user_id', userId)
+          .in('comment_id', comments.map((c) => c.id));
+        for (const row of likeRows ?? []) likedIds.add(row.comment_id as string);
+      }
+      return comments.map((c) => ({ ...c, viewer_has_liked: likedIds.has(c.id) }));
+    },
+  });
+}
+
+/**
+ * A comment's own heart, separate from liking the post -- optimistic against
+ * the one place a comment lives, the ['comments', postId, userId] list, the
+ * same shape as useToggleLike but scoped to a single list instead of every
+ * cached copy of a post.
+ */
+export function useToggleCommentLike(postId: string) {
+  const qc = useQueryClient();
+  const userId = useUserId();
+  const queryKey = ['comments', postId, userId];
+
+  return useMutation({
+    mutationFn: async ({ commentId, liked }: { commentId: string; liked: boolean }) => {
+      if (liked) {
+        const { error } = await supabase
+          .from('comment_likes')
+          .delete()
+          .eq('comment_id', commentId)
+          .eq('user_id', userId!);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('comment_likes')
+          .insert({ comment_id: commentId, user_id: userId! });
+        if (error) throw error;
+      }
+    },
+    onMutate: async ({ commentId, liked }) => {
+      await qc.cancelQueries({ queryKey });
+      const previous = qc.getQueryData<Comment[]>(queryKey);
+      qc.setQueryData<Comment[]>(queryKey, (data) =>
+        data?.map((c) =>
+          c.id === commentId
+            ? { ...c, viewer_has_liked: !liked, like_count: c.like_count + (liked ? -1 : 1) }
+            : c
+        )
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx) qc.setQueryData(queryKey, ctx.previous);
     },
   });
 }
