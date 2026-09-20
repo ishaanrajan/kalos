@@ -25,6 +25,7 @@ import {
   useAddComment,
   useAddGifComment,
   useComments,
+  useDeleteComment,
   useDeletePost,
   useFollowList,
   usePost,
@@ -79,6 +80,7 @@ export default function PostScreen() {
   const addGifComment = useAddGifComment(id!);
   const toggleLike = useToggleLike();
   const deletePost = useDeletePost();
+  const deleteComment = useDeleteComment();
   const { data: following } = useFollowList(userId ?? undefined, 'following');
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
@@ -196,6 +198,31 @@ export default function PostScreen() {
     });
   }, [post, deletePost.mutate, router]);
 
+  // Either the comment's own author or the post's author may delete it --
+  // matches comments_delete_author_or_post_owner (0004_rls.sql) exactly, so
+  // this is purely about which rows get a long-press affordance at all
+  // rather than a permission check the server would ever refuse.
+  const canDeleteComment = useCallback(
+    (comment: Comment) => comment.author_id === userId || post?.author.id === userId,
+    [userId, post?.author.id]
+  );
+
+  const deleteThisComment = useCallback(
+    (comment: Comment) => {
+      if (!post) return;
+      confirmDestructive('Delete this comment?', 'Delete', () => {
+        deleteComment.mutate(
+          { id: comment.id, postId: post.id },
+          {
+            onError: (e) =>
+              Alert.alert('Could not delete comment', e instanceof Error ? e.message : undefined),
+          }
+        );
+      });
+    },
+    [post, deleteComment.mutate]
+  );
+
   const showPostOptions = useCallback(() => {
     if (!post) return;
     showActionSheet('Post options', [
@@ -290,9 +317,10 @@ export default function PostScreen() {
         avatarUrl={avatarUrl(item.author?.avatar_path ?? null)}
         onPressAuthor={openCommentAuthor}
         onPressMention={openMention}
+        onLongPress={canDeleteComment(item) ? deleteThisComment : undefined}
       />
     ),
-    [openCommentAuthor, openMention]
+    [openCommentAuthor, openMention, canDeleteComment, deleteThisComment]
   );
 
   if (!post) {

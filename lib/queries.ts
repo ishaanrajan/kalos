@@ -711,6 +711,36 @@ export function useDeletePost() {
 }
 
 /**
+ * Deleting a comment. RLS (`comments_delete_author_or_post_owner`,
+ * 0004_rls.sql) already lets either the comment's own author or the post's
+ * author do this -- nothing new needed on the database side, only the UI
+ * that was missing to reach it. `comment_count` is trigger-owned
+ * (0003_counters.sql), so the server is the source of truth for it; this
+ * only patches the cache optimistically so the count and any inline preview
+ * don't wait on a refetch.
+ */
+export function useDeleteComment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id }: { id: string; postId: string }) => {
+      const { error } = await supabase.from('comments').delete().eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: (_d, { id, postId }) => {
+      patchCachedPost(qc, postId, (p) => ({
+        ...p,
+        comment_count: Math.max(0, p.comment_count - 1),
+        preview_comments: p.preview_comments?.filter((c) => c.id !== id),
+      }));
+      qc.invalidateQueries({ queryKey: ['comments', postId] });
+      qc.invalidateQueries({ queryKey: ['post', postId] });
+      qc.invalidateQueries({ queryKey: ['home_feed'] });
+      qc.invalidateQueries({ queryKey: ['explore_feed'] });
+    },
+  });
+}
+
+/**
  * Editing your own post's caption. RLS (`posts_update_own`) and the column
  * grant (`update (caption, filter_name)` -- see 0004_rls.sql) already scope
  * this to the post's own author and this one column; nothing new needed on
