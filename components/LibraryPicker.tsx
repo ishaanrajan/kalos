@@ -544,12 +544,7 @@ export function LibraryPicker({
         contentContainerStyle={styles.content}
         style={styles.list}
         onScroll={onScroll}
-        // 60/sec is overkill for a preview that only ever moves as fast as a
-        // finger drags -- and it means a JS/UI-thread round trip competing
-        // for the same thread FlatList uses to mount its post-fling render
-        // backlog, right when that backlog is heaviest. 30/sec is still
-        // smooth for the collapse and gives that catch-up more headroom.
-        scrollEventThrottle={32}
+        scrollEventThrottle={16}
         onEndReached={onEndReached}
         onEndReachedThreshold={1.5}
         showsVerticalScrollIndicator={false}
