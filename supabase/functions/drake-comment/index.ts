@@ -4,6 +4,16 @@
 // Drops one canned one-liner as @prosecco_daddy on a random real post he
 // hasn't already commented on, made earlier today.
 //
+// It also drains the @mention reply queue first, every tick, by calling
+// drake-comment-reply-flush over HTTP. That function's own per-minute cron
+// job has silently deregistered itself twice (0030, 0040) while this hourly
+// job kept firing normally both times -- so this is the fallback that turns
+// "replies never arrive until someone notices" into "replies arrive within
+// the hour". The per-minute job stays; this is belt-and-suspenders, not a
+// replacement. An HTTP call rather than a copy of the flush loop because
+// these functions deploy independently with no shared imports, and two
+// copies of the claim/stale/never-twice logic would drift.
+//
 // "Sporadic" is handled here, not in the schedule: an hourly tick that always
 // fires would read as clockwork the moment anyone noticed the pattern (drake-dm
 // already ticks every 4 hours on a fixed clock, and this deliberately isn't
@@ -63,7 +73,24 @@ function pickRandom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// See the header. Never lets a flush failure block the sporadic comment --
+// the two are independent, and the per-minute cron is still the primary
+// path for the queue.
+async function flushPendingReplies(): Promise<void> {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/drake-comment-reply-flush`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceRoleKey}` },
+    });
+    console.log(`reply flush fallback: ${res.status} ${await res.text()}`);
+  } catch (e) {
+    console.error('reply flush fallback failed', e);
+  }
+}
+
 Deno.serve(async () => {
+  await flushPendingReplies();
+
   const { data: bot, error: botErr } = await db
     .from('profiles')
     .select('id')
@@ -112,6 +139,19 @@ Deno.serve(async () => {
     return new Response('query failed', { status: 502 });
   }
   const excludePostIds = (alreadyCommented ?? []).map((c) => c.post_id);
+
+  // Also skip any post with an @mention reply still queued. If a one-liner
+  // landed there first, drake-comment-reply-flush would then see the bot as
+  // the thread's latest comment and drop the reply as "twice in a row" --
+  // the human's mention would go unanswered because of a coin flip here.
+  const { data: pending, error: pendingErr } = await db
+    .from('drake_pending_comment_replies')
+    .select('post_id');
+  if (pendingErr) {
+    console.error('could not read the reply queue', pendingErr);
+    return new Response('query failed', { status: 502 });
+  }
+  for (const p of pending ?? []) excludePostIds.push(p.post_id);
 
   let query = db.from('posts').select('id').neq('author_id', bot.id).gte('created_at', todayStart);
   if (excludePostIds.length > 0) {

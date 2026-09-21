@@ -75,11 +75,13 @@ so re-applying a file after a tweak is safe.
 | `0027_dm_peer_sandbox.sql` | `dm_peer_pairs` — sandboxed peer-to-peer DMs between two non-hub accounts, starting with `alex` ↔ `cmcclel7`. RLS + `my_dm_thread_previews()` updated to recognize an allowlisted pair; add more later with a plain insert |
 | `0028_music_everyone.sql` | Repeals `0025_music_ishaan_only.sql` — `posts_insert_own` goes back to a plain ownership check, so any account can post with music |
 | `0029_comment_gif.sql` | `comments.gif` — GIF-only comments via GIPHY (see `lib/giphy.ts`). `comments.body` becomes nullable; `home_feed`/`activity_feed` coalesce a GIF comment's preview text to `[GIF]` |
-| `0030_fix_drake_comment_reply_cron.sql` | Reschedules `drake-comment-reply-flush-every-minute`, which had silently stopped running — re-run if that job ever goes quiet again |
+| `0026_drake_comments.sql` | `drake_pending_comment_replies` + two `pg_cron` jobs: the per-minute reply flush and the hourly sporadic-comment check — see [Drake comments](#drake-comments) below |
+| `0030_fix_drake_comment_reply_cron.sql` | Reschedules `drake-comment-reply-flush-every-minute`, which had silently stopped running — superseded by `0040_cron_health.sql`, which does the same plus diagnostics |
 | `0031_post_blocks.sql` | `post_blocks` — lets one account hide their posts from a specific other account (post visibility only, not a general block). Admin-managed, no client UI yet; add a row with a plain insert |
 | `0034_post_tags.sql` | `post_tags` — tagging people on a photo, positioned as fractions of the displayed frame. `home_feed`/`explore_feed` gain a `tags` column; `activity_feed` gains a `'tag'` kind. Needs a fifth `notify` webhook — see [Push notifications](#5-push-notifications) |
 | `0038_comment_likes.sql` | `comment_likes` — a heart on an individual comment, separate from liking the post. Adds `comments.like_count`. Needs a sixth `notify` webhook — see [Push notifications](#5-push-notifications) |
 | `0039_drake_daily_once.sql` | Reschedules `daily-drake-post` from twice a day down to once, at 15:30 UTC — see [Drake bot](#6-drake-bot) below |
+| `0040_cron_health.sql` | Re-registers `drake-comment-reply-flush-every-minute` (second silent death, after 0030) and adds `cron_health()`, a service-role-only RPC exposing `cron.job`, recent `cron.job_run_details` and recent `pg_net` responses over REST — re-run whenever any `pg_cron` job goes quiet. See [Drake comments](#drake-comments) |
 
 ### Option A — SQL editor (no tooling required)
 
@@ -410,6 +412,59 @@ messages to Drake are silently invisible to the whole pipeline.
    then check `drake_pending_replies` in the Table Editor for a queued row —
    it should appear in the thread within a few minutes once
    `drake-reply-flush`'s next tick picks it up.
+
+### Drake comments
+
+Two more behaviors, both mirroring the DM ones above (`0026_drake_comments.sql`):
+
+- `drake-comment` — `pg_cron`, hourly. A 12% coin flip per tick (hard ceiling
+  3/day) drops a canned one-liner on a random post made today that he hasn't
+  commented on. It skips any post with an @mention reply still queued, so a
+  one-liner can't land first and get the real reply dropped as "twice in a
+  row". **It also drains the reply queue on every tick** (an HTTP call to
+  `drake-comment-reply-flush`) — see below for why.
+- `drake-comment-reply-generate` — Database Webhook on `comments` insert.
+  When a human `@prosecco_daddy`s in a comment, it hands Claude the thread
+  (each human turn prefixed `@handle:` so it can tell who said what), and
+  queues the reply in `drake_pending_comment_replies` with a random 20s–3min
+  `send_at`. The queued reply always opens with the mentioner's `@handle`, so
+  `notify` pushes them and it shows in their Activity as a mention — without
+  that, someone who @'d him on a post they don't own never finds out he
+  answered. A second mention on the same post while one is queued *replaces*
+  the queued reply (regenerated against the fuller thread) rather than being
+  ignored.
+- `drake-comment-reply-flush` — `pg_cron`, every minute. Posts what's due;
+  drops anything more than 2h late (a nine-hour-late reply reads as a bug),
+  and never posts if the bot is already the thread's latest comment.
+
+**The per-minute flush job has silently deregistered itself twice** (0030,
+0040) while every other cron job kept firing. The hourly `drake-comment` tick
+calling the flush is the fallback: a dead per-minute job now degrades to
+"replies within the hour" instead of "never". The 2h stale cutoff is wider
+than that worst case on purpose.
+
+To see what `pg_cron` is actually doing without the SQL editor:
+
+```sh
+/usr/bin/curl -s -X POST "$SUPABASE_URL/rest/v1/rpc/cron_health" \
+  -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+  -H "Content-Type: application/json" -d '{}'
+```
+
+`jobs` missing an entry = deregistered; `active: false` = disabled; present
+but no recent `last_run` = launcher not picking it up; `recent_http` with
+non-200s = the function itself failing. Fix for the first three is the same
+either way: re-run `0040_cron_health.sql`.
+
+1. **Deploy three Edge Functions** (`drake-comment`, `drake-comment-reply-generate`,
+   `drake-comment-reply-flush`), JWT verification **off**. `ANTHROPIC_API_KEY`
+   is already set from Drake replies.
+2. **Create the webhook**: `comments`, event **Insert**, Edge Function
+   `drake-comment-reply-generate` (alongside `notify`'s own `comments` hook).
+3. **Run `0026_drake_comments.sql`, then `0040_cron_health.sql`.**
+4. **Test it**: `@prosecco_daddy` in a comment from any account; a row
+   appears in `drake_pending_comment_replies`, and the reply lands within a
+   few minutes, opening with your handle.
 
 ---
 

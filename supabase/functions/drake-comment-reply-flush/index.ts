@@ -1,12 +1,16 @@
 // Supabase Edge Function: drake-comment-reply-flush
 //
-// Called every minute by a pg_cron schedule (0026_drake_comments.sql). Posts
+// Called every minute by a pg_cron schedule (0026_drake_comments.sql), and
+// once an hour by drake-comment as a fallback for when that per-minute job
+// silently deregisters itself (it has, twice -- see 0030 and 0040). Posts
 // whatever's due out of drake_pending_comment_replies -- rows
 // drake-comment-reply-generate queued with a randomized send_at, so the
 // reply doesn't land the instant a human posts the comment that provoked it.
 // Inserting into public.comments here (as the service role, same as
 // drake-comment) reuses the existing `notify` webhook for free: whoever the
 // reply is relevant to gets a real push notification when it actually posts.
+// Safe to run from both callers at once: each row is claimed by delete
+// before it's posted, so an overlapping run just finds nothing to take.
 //
 // Deploy via Dashboard -> Edge Functions -> New Function (paste this file),
 // name it exactly `drake-comment-reply-flush`. Turn off "Enforce JWT
@@ -30,7 +34,10 @@ const BATCH_LIMIT = 20;
 // 0030_fix_drake_comment_reply_cron.sql); when it came back it drained a
 // 9-hour-old backlog in one tick, including a second reply on a thread the
 // human had already been answered in. A reply to "@prosecco_daddy ..." nine
-// hours later reads as a bug, not a bit -- better to stay quiet.
+// hours later reads as a bug, not a bit -- better to stay quiet. Two hours
+// is deliberately wider than the hourly fallback's worst case (a reply due
+// just after one drake-comment tick waits ~60 min for the next), so a dead
+// per-minute job degrades to late replies, not dropped ones.
 const MAX_LATE_MS = 2 * 60 * 60 * 1000;
 
 Deno.serve(async () => {

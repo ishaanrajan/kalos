@@ -7,8 +7,10 @@
 // an in-character reply and queues it in drake_pending_comment_replies
 // (0026_drake_comments.sql) with a randomized send_at a few minutes out. It
 // does NOT insert into comments itself -- that's drake-comment-reply-flush's
-// job, on its own pg_cron timer, so the reply doesn't land the instant the
-// human hits post.
+// job, on its own pg_cron timer (with drake-comment's hourly tick as a
+// fallback), so the reply doesn't land the instant the human hits post.
+// The queued reply always opens with the mentioner's @handle, so `notify`
+// and activity_feed treat it as a mention of them -- see addressTo().
 //
 // The voice here is deliberately turned up from the DM persona
 // (drake-reply-generate): a comment @mention is a human calling him out in
@@ -64,6 +66,8 @@ const SYSTEM_PROMPT = `You are an AI personality of the musician Drake, commenti
 
 Voice: still smooth and confident underneath, but this is public and someone just called him out -- the correct response is funnier and more theatrical than a private DM would be, not just charming. Lean into bits: mock-offended, absurdly dramatic, comedic overreactions, a punchline that plays to the crowd reading the thread. Loosely reference Drake lyrics/album titles/vibes as material without being a wall of references. Lowercase, casual, texting cadence.
 
+Format: each human comment in the thread arrives as "@handle: text", so you can tell who said what when several people are in the thread. Your reply is aimed at whoever wrote the final comment. Your reply is posted as-is with their @handle added to the front automatically -- so write only the line itself: no "@handle:" prefix, no @mentions of anyone, and never "@prosecco_daddy", which is your own handle.
+
 Hard rules:
 - Funnier than what provoked it. That is the entire bar this has to clear -- a merely smooth line is a miss here.
 - Never apologize, never back down, never get defensive. If someone's rude, dismissive, or roasting him, that does not faze him -- he roasts back or turns it into a bit, always confident, never actually hurt.
@@ -107,6 +111,23 @@ function looksBrokenCharacter(text: string): boolean {
   return BREAK_CHARACTER_PATTERNS.some((re) => re.test(text));
 }
 
+// The posted comment always leads with the mentioner's handle, 2015-style
+// ("@alice washed? I'm marinated"). That's not cosmetic: `notify` pings
+// whoever a comment @mentions, and activity_feed surfaces it as a 'mention'
+// -- without it, someone who @'d Drake on a post they don't own would never
+// find out he answered. The model is told not to write handles itself, but
+// one queued reply once opened with "@prosecco_daddy" anyway (it echoed the
+// human's format and tagged himself), so this strips whatever it did write
+// before putting the right one on.
+function addressTo(username: string, reply: string): string {
+  const stripped = reply
+    .replace(/@prosecco_daddy\b/gi, '')
+    .replace(/^(?:@[a-z0-9._]{3,30}:?\s*)+/i, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return `@${username} ${stripped}`;
+}
+
 Deno.serve(async (req) => {
   if (!anthropicApiKey) {
     console.error('ANTHROPIC_API_KEY is not set');
@@ -132,31 +153,14 @@ Deno.serve(async (req) => {
     return new Response('not a mention', { status: 200 });
   }
 
-  // One reply in the queue per post at a time. A thread once ended up with
-  // two Drake replies to a single mention, back to back, because two rows
-  // were queued for it -- whether from a double-fired webhook or a fast
-  // second mention, one in-flight reply per thread is the right ceiling for
-  // something that posts publicly with no review. (drake-comment-reply-flush
-  // has its own last line of defence against consecutive comments.)
-  const { count: queued, error: queuedErr } = await db
-    .from('drake_pending_comment_replies')
-    .select('id', { count: 'exact', head: true })
-    .eq('post_id', r.post_id);
-  if (queuedErr) {
-    console.error('could not check the queue', queuedErr);
-    return new Response('queue check failed', { status: 200 });
-  }
-  if ((queued ?? 0) > 0) {
-    return new Response('reply already queued for this post', { status: 200 });
-  }
-
   // The rest of the post's comment section, oldest first, as conversational
-  // context -- every non-bot comment collapses to a single 'user' role
-  // regardless of who actually wrote it. A post's comments can have more
-  // than one human in them, unlike a DM thread's fixed two participants, but
-  // Claude's messages API only has two sides to work with, and getting the
-  // *tone* of the thread right matters far more here than attributing which
-  // line came from which of the post's commenters.
+  // context. A post's comments can have more than one human in them, unlike
+  // a DM thread's fixed two participants, and Claude's messages API only has
+  // two sides to work with -- so every human collapses to the 'user' role,
+  // but each turn is prefixed with the commenter's handle (see the system
+  // prompt) so the model can still tell who said what and answer the right
+  // person. If the history read fails, reply to the mention alone rather
+  // than not at all: a slightly context-blind answer beats silence.
   const { data: history, error: historyErr } = await db
     .from('comments')
     .select('id, author_id, body, created_at')
@@ -164,22 +168,37 @@ Deno.serve(async (req) => {
     .neq('id', r.id)
     .order('created_at', { ascending: false })
     .limit(HISTORY_LIMIT);
-  if (historyErr || !history) {
-    console.error('could not load comment history', historyErr);
-    return new Response('no history', { status: 200 });
+  if (historyErr) console.error('could not load comment history, replying without it', historyErr);
+  const thread = (history ?? []).slice().reverse();
+
+  const authorIds = new Set<string>([r.author_id]);
+  for (const c of thread) if (c.author_id !== bot.id) authorIds.add(c.author_id);
+  const { data: authors, error: authorsErr } = await db
+    .from('profiles')
+    .select('id, username')
+    .in('id', [...authorIds]);
+  if (authorsErr) console.error('could not resolve commenter usernames', authorsErr);
+  const usernameOf = new Map<string, string>((authors ?? []).map((a) => [a.id, a.username]));
+  const mentioner = usernameOf.get(r.author_id);
+  if (!mentioner) {
+    // The reply is addressed by handle (addressTo) -- without one there's
+    // nothing to address it to, and a reply nobody gets told about is the
+    // exact gap that handle exists to close.
+    console.error('could not resolve the mentioner\'s username', { author_id: r.author_id });
+    return new Response('no mentioner', { status: 200 });
   }
 
-  const messages = history
-    .slice()
-    .reverse()
-    .map((c) => ({
-      role: c.author_id === bot.id ? ('assistant' as const) : ('user' as const),
-      // c.body is null for a GIF-only comment (0029_comment_gif.sql) --
-      // Claude's API rejects a null content turn, and this thread's history
-      // can easily contain one even when it's not the comment that
-      // triggered this reply.
-      content: c.body ?? '[GIF]',
-    }));
+  const messages = thread.map((c) => ({
+    role: c.author_id === bot.id ? ('assistant' as const) : ('user' as const),
+    // c.body is null for a GIF-only comment (0029_comment_gif.sql) --
+    // Claude's API rejects a null content turn, and this thread's history
+    // can easily contain one even when it's not the comment that triggered
+    // this reply.
+    content:
+      c.author_id === bot.id
+        ? (c.body ?? '[GIF]')
+        : `@${usernameOf.get(c.author_id) ?? 'someone'}: ${c.body ?? '[GIF]'}`,
+  }));
   // Claude rejects a conversation that doesn't start on a user turn. Drake's
   // own sporadic comment (drake-comment) can easily be the first comment on
   // a post, which would otherwise put an assistant turn first the moment
@@ -189,7 +208,7 @@ Deno.serve(async (req) => {
   }
   // Always the guaranteed final turn, so the conversation reliably ends on
   // 'user' regardless of what the history query above found.
-  messages.push({ role: 'user', content: r.body });
+  messages.push({ role: 'user', content: `@${mentioner}: ${r.body}` });
 
   const anthropic = new Anthropic({ apiKey: anthropicApiKey });
 
@@ -227,10 +246,32 @@ Deno.serve(async (req) => {
     return new Response('suppressed', { status: 200 });
   }
 
+  // One in-flight reply per post, but the *newest* mention wins rather than
+  // the first. This used to skip generating at all if a row was already
+  // queued for the post -- so a second person @'ing him within the ~3 minute
+  // delay window (or the same person following up) was silently ignored,
+  // which from their side is just "Drake doesn't reply". Now the earlier
+  // queued reply is replaced by one generated against the thread as it
+  // stands, which includes the earlier mention as context. Still one row
+  // per post at a time, so the original reason for the gate -- a thread once
+  // got two back-to-back Drake replies from a double-fired webhook -- holds.
+  // Cleared only after generation succeeded, so a Claude failure here leaves
+  // the existing reply queued instead of losing both. If drake-comment-
+  // reply-flush claimed the old row between this delete and its post, the
+  // new reply lands behind it and its never-twice-in-a-row check drops it.
+  const { error: clearErr } = await db
+    .from('drake_pending_comment_replies')
+    .delete()
+    .eq('post_id', r.post_id);
+  if (clearErr) {
+    console.error('could not clear the queued reply for this post', clearErr);
+    return new Response('queue clear failed', { status: 502 });
+  }
+
   const sendAt = new Date(Date.now() + randomDelaySeconds() * 1000).toISOString();
   const { error: insertErr } = await db.from('drake_pending_comment_replies').insert({
     post_id: r.post_id,
-    body: replyText,
+    body: addressTo(mentioner, replyText),
     send_at: sendAt,
   });
   if (insertErr) {
