@@ -18,12 +18,11 @@
 // fires would read as clockwork the moment anyone noticed the pattern (drake-dm
 // already ticks every 4 hours on a fixed clock, and this deliberately isn't
 // meant to feel like a second one of those). COMMENT_CHANCE below is what
-// actually makes it sporadic -- most hourly ticks do nothing, and the ones
-// that don't land at no predictable offset. MAX_DAILY_COMMENTS is a hard
-// ceiling on top of that: a 12% hourly chance averages out to roughly 2-3 a
-// day on its own, but variance in 24 independent coin flips could otherwise
-// occasionally run higher -- the ceiling is what actually guarantees it never
-// does, not just makes it unlikely.
+// actually makes it sporadic -- most hourly ticks do nothing, and the one
+// that doesn't lands at no predictable offset. MAX_DAILY_COMMENTS is a hard
+// ceiling on top of that, not just a statistical tendency: once the first
+// coin flip of the day lands, every later hour's flip that day is a no-op
+// regardless of how it comes up.
 //
 // Deploy via Dashboard -> Edge Functions -> New Function (paste this file),
 // name it exactly `drake-comment`. Turn off "Enforce JWT verification" --
@@ -42,7 +41,7 @@ const BOT_USERNAME = 'prosecco_daddy';
 const COMMENT_CHANCE = 0.12;
 
 // A hard ceiling, not just a statistical tendency -- see the header.
-const MAX_DAILY_COMMENTS = 3;
+const MAX_DAILY_COMMENTS = 1;
 
 /** Start of the current UTC day, as an ISO string -- posts and prior
  *  comments are both compared against this, not calendar-local time, same

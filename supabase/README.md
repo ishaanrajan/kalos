@@ -418,7 +418,7 @@ messages to Drake are silently invisible to the whole pipeline.
 Two more behaviors, both mirroring the DM ones above (`0026_drake_comments.sql`):
 
 - `drake-comment` — `pg_cron`, hourly. A 12% coin flip per tick (hard ceiling
-  3/day) drops a canned one-liner on a random post made today that he hasn't
+  1/day) drops a canned one-liner on a random post made today that he hasn't
   commented on. It skips any post with an @mention reply still queued, so a
   one-liner can't land first and get the real reply dropped as "twice in a
   row". **It also drains the reply queue on every tick** (an HTTP call to
