@@ -292,6 +292,15 @@ export function LibraryPicker({
     // photo out from under a prepare that's already reading the old one.
     if (advancingRef.current) return;
     setSelection({ asset, natural: { width: asset.width, height: asset.height } });
+    // A tap deep in the grid, with the pane scrolled fully out of view (see
+    // paneWrapStyle above), used to swap the framed photo with nothing on
+    // screen to show it -- the only way to see what you'd picked was to
+    // scroll back up yourself. This does it for you. It's just a scroll --
+    // the grid's own contents and your place in them aren't touched, so
+    // scrolling back down afterwards lands on exactly the same photos in
+    // exactly the same spot, the same as if you'd scrolled up and back down
+    // by hand.
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, []);
 
   /** Corrects a ratio the library's metadata got wrong (see Selection). */

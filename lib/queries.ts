@@ -24,14 +24,64 @@ import {
 } from './types';
 
 /**
- * Every list in this app is strictly reverse-chronological and paginated by
- * keyset on (created_at, id). No offsets — offsets skip and duplicate rows when
- * new posts land mid-scroll — and no ranking, ever.
+ * Every list in this app is paginated by keyset on (created_at, id) — no
+ * offsets, since those skip and duplicate rows when new posts land
+ * mid-scroll — and no post ever enters a candidate set on engagement, ever.
+ *
+ * home_feed's DISPLAY order is also strictly reverse-chronological, with no
+ * exception. explore_feed's is not quite: see despineAuthorRuns below. That
+ * only ever rearranges which slot an already-selected post lands in on the
+ * client, within one already-fetched page — the fetched SET, and the true
+ * created_at order cursorFrom computes the next page from, are unaffected
+ * either way.
  */
-function cursorFrom(page: FeedPost[]) {
-  const last = page.at(-1);
-  if (!last) return undefined;
-  return { before: last.created_at, before_id: last.id };
+function cursorFrom(page: FeedPost[]): Cursor {
+  if (page.length === 0) return undefined;
+  // Not page.at(-1) — despineAuthorRuns means explore_feed's page array can
+  // no longer be assumed sorted, so the cursor has to be the true oldest row
+  // by (created_at, id), found by scanning, not assumed from position.
+  const oldest = page.reduce((min, p) =>
+    p.created_at < min.created_at || (p.created_at === min.created_at && p.id < min.id) ? p : min
+  );
+  return { before: oldest.created_at, before_id: oldest.id };
+}
+
+/**
+ * Explore's one exception to strict chronological order: spaces out a run of
+ * consecutive posts from the same account (someone posting 5 photos back to
+ * back used to just fill five slots in a row) rather than leaving them
+ * clustered together. Deliberately not the general "reorganize string"
+ * algorithm (sort by frequency, fill even slots then odd) — that reshuffles
+ * the whole page by author frequency and throws away recency almost
+ * entirely. This instead does the smallest thing that removes the adjacency:
+ * walk the page in its true created_at order, and the moment the next post
+ * would repeat the author just placed, hold it back and keep going; the
+ * held post gets slotted in the moment a different author creates a gap.
+ * Everyone who isn't part of a burst keeps their exact relative order.
+ *
+ * Page-local only (never reordered across the page boundary into the next
+ * fetch) — that's what keeps cursorFrom's pagination cursor exact regardless
+ * of this, and keeps an already-rendered earlier page from ever reshuffling
+ * under the user as a later page loads. A burst that runs all the way to
+ * the end of a page with nothing left in that page to interleave with is
+ * the one case left unspaced — there's no gap left within this page to put
+ * it in, and reaching into the next page would break both guarantees above.
+ */
+function despineAuthorRuns(page: FeedPost[]): FeedPost[] {
+  const result: FeedPost[] = [];
+  const held: FeedPost[] = [];
+  for (const post of page) {
+    if (post.author_id === result.at(-1)?.author_id) {
+      held.push(post);
+      continue;
+    }
+    result.push(post);
+    if (held.length > 0 && held[0].author_id !== post.author_id) {
+      result.push(held.shift()!);
+    }
+  }
+  result.push(...held);
+  return result;
 }
 
 type Cursor = { before: string; before_id: string } | undefined;
@@ -48,7 +98,8 @@ function feedQuery(fn: 'home_feed' | 'explore_feed', userId: string | null) {
         lim: PAGE_SIZE,
       });
       if (error) throw error;
-      return (data ?? []) as FeedPost[];
+      const page = (data ?? []) as FeedPost[];
+      return fn === 'explore_feed' ? despineAuthorRuns(page) : page;
     },
     // A short page means we've reached the end. That's the whole point: the
     // feed terminates instead of backfilling with strangers.
