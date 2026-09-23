@@ -59,7 +59,15 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import type { ListRenderItemInfo } from 'react-native';
-import Animated, { clamp, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import Animated, {
+  clamp,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import Feather from '@expo/vector-icons/Feather';
@@ -287,20 +295,29 @@ export function LibraryPicker({
   // into every grid cell) and so can't close over `advancing` as state.
   const advancingRef = useRef(false);
 
+  // A tap deep in the grid, with the pane scrolled fully out of view (see
+  // paneWrapStyle below), used to swap the framed photo with nothing on
+  // screen to show it -- the only way to see it was to scroll back up
+  // yourself. handleSelect below pops the pane open regardless of scroll
+  // depth to show it for you, but deliberately *not* by moving the grid's
+  // own scroll position (an earlier version called scrollToOffset(0) here) --
+  // that's a real cost, not a free peek: it leaves you back at the top of
+  // however many hundred photos you'd already scrolled past, so getting back
+  // to where you were costs the same scroll a second time. This instead
+  // overrides paneWrapStyle's height independently of scrollY for a moment,
+  // then eases back off so the pane settles back to whatever the real,
+  // never-touched scroll position dictates -- a peek, not a jump.
+  const revealBoost = useSharedValue(0);
+
   const handleSelect = useCallback((asset: MediaLibrary.Asset) => {
     // Tapping another photo while "Next" is mid-flight would swap the framed
     // photo out from under a prepare that's already reading the old one.
     if (advancingRef.current) return;
     setSelection({ asset, natural: { width: asset.width, height: asset.height } });
-    // A tap deep in the grid, with the pane scrolled fully out of view (see
-    // paneWrapStyle above), used to swap the framed photo with nothing on
-    // screen to show it -- the only way to see what you'd picked was to
-    // scroll back up yourself. This does it for you. It's just a scroll --
-    // the grid's own contents and your place in them aren't touched, so
-    // scrolling back down afterwards lands on exactly the same photos in
-    // exactly the same spot, the same as if you'd scrolled up and back down
-    // by hand.
-    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    revealBoost.value = withSequence(
+      withTiming(1, { duration: 160 }),
+      withDelay(650, withTiming(0, { duration: 280 }))
+    );
   }, []);
 
   /** Corrects a ratio the library's metadata got wrong (see Selection). */
@@ -385,8 +402,14 @@ export function LibraryPicker({
   const onScroll = useAnimatedScrollHandler((e) => {
     scrollY.value = clamp(e.contentOffset.y, 0, pane.height);
   });
+  // revealBoost (see handleSelect above) temporarily discounts how much
+  // scrollY is allowed to collapse the pane by, independently of the actual
+  // scroll position -- at boost 1 the pane is fully open no matter how far
+  // scrolled down the grid genuinely is; at 0 (its resting value the rest of
+  // the time) this is exactly the plain `pane.height - scrollY.value` it's
+  // always been.
   const paneWrapStyle = useAnimatedStyle(() => ({
-    height: pane.height - scrollY.value,
+    height: pane.height - scrollY.value * (1 - revealBoost.value),
   }));
 
   const naturalRatio = selection
