@@ -64,8 +64,6 @@ import Animated, {
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
-  withSequence,
   withTiming,
 } from 'react-native-reanimated';
 import { Image } from 'expo-image';
@@ -303,10 +301,16 @@ export function LibraryPicker({
   // own scroll position (an earlier version called scrollToOffset(0) here) --
   // that's a real cost, not a free peek: it leaves you back at the top of
   // however many hundred photos you'd already scrolled past, so getting back
-  // to where you were costs the same scroll a second time. This instead
-  // overrides paneWrapStyle's height independently of scrollY for a moment,
-  // then eases back off so the pane settles back to whatever the real,
-  // never-touched scroll position dictates -- a peek, not a jump.
+  // to where you were costs the same scroll a second time.
+  //
+  // This instead overrides paneWrapStyle's height independently of scrollY,
+  // and leaves it there -- frozen open -- until the grid is actually
+  // touched again (onScrollBeginDrag below), not on a timer. An earlier
+  // version eased it back closed a second or so after opening on its own,
+  // which on a deep scroll position reads as the exact thing this is meant
+  // to avoid: it pops open, then pops itself shut again with nobody asking
+  // it to. Scrolling by hand is what hands control back to scrollY, and
+  // that resumes exactly where the real, never-touched offset already was.
   const revealBoost = useSharedValue(0);
 
   const handleSelect = useCallback((asset: MediaLibrary.Asset) => {
@@ -314,10 +318,14 @@ export function LibraryPicker({
     // photo out from under a prepare that's already reading the old one.
     if (advancingRef.current) return;
     setSelection({ asset, natural: { width: asset.width, height: asset.height } });
-    revealBoost.value = withSequence(
-      withTiming(1, { duration: 160 }),
-      withDelay(650, withTiming(0, { duration: 280 }))
-    );
+    revealBoost.value = withTiming(1, { duration: 160 });
+  }, []);
+
+  // The moment the grid is actually dragged again -- not a timer -- is what
+  // un-freezes the pane, easing control back to the plain scrollY-driven
+  // collapse (see paneWrapStyle) from wherever the real offset already is.
+  const onScrollBeginDrag = useCallback(() => {
+    revealBoost.value = withTiming(0, { duration: 200 });
   }, []);
 
   /** Corrects a ratio the library's metadata got wrong (see Selection). */
@@ -576,6 +584,7 @@ export function LibraryPicker({
         contentContainerStyle={styles.content}
         style={styles.list}
         onScroll={onScroll}
+        onScrollBeginDrag={onScrollBeginDrag}
         scrollEventThrottle={16}
         onEndReached={onEndReached}
         onEndReachedThreshold={1.5}
