@@ -154,14 +154,15 @@ export interface LibraryPickerProps {
 
 // ---------------------------------------------------------------------------
 // TEMP DEBUG INSTRUMENTATION -- fast-scroll/pause/gentle-scroll jank
-// investigation. Not for commit. __DEV__-gated so it can never ship even if
-// left in by accident. Remove once the repro's been captured.
+// investigation. Not for commit. Logs unconditionally (no Metro/dev-client
+// available to view __DEV__-gated output against the installed TestFlight
+// build) so it can be captured via `xcrun devicectl ... --console` instead.
+// Remove once the repro's been captured.
 // ---------------------------------------------------------------------------
 const PERF_TAG = '[picker-perf]';
 let mountBurst: { id: string; t: number }[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 function logCellMount(id: string) {
-  if (!__DEV__) return;
   mountBurst.push({ id: id.slice(0, 8), t: Date.now() });
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = setTimeout(() => {
@@ -187,7 +188,6 @@ export function LibraryPicker({
   // doing something else (e.g. mounting a catch-up burst of grid cells)
   // instead of servicing this loop.
   useEffect(() => {
-    if (!__DEV__) return;
     let raf = 0;
     let last = Date.now();
     let alive = true;
@@ -370,7 +370,7 @@ export function LibraryPicker({
   // un-freezes the pane, easing control back to the plain scrollY-driven
   // collapse (see paneWrapStyle) from wherever the real offset already is.
   const onScrollBeginDrag = useCallback(() => {
-    if (__DEV__) console.log(`${PERF_TAG} scrollBeginDrag @${Date.now()}`);
+    console.log(`${PERF_TAG} scrollBeginDrag @${Date.now()}`);
     revealBoost.value = withTiming(0, { duration: 200 });
   }, []);
 
@@ -378,13 +378,13 @@ export function LibraryPicker({
   // (momentum) apart from a hand-driven drag, and pinpoint exactly when a
   // fling's momentum stopped vs. when the next drag actually began.
   const onScrollEndDrag = useCallback(() => {
-    if (__DEV__) console.log(`${PERF_TAG} scrollEndDrag @${Date.now()}`);
+    console.log(`${PERF_TAG} scrollEndDrag @${Date.now()}`);
   }, []);
   const onMomentumScrollBegin = useCallback(() => {
-    if (__DEV__) console.log(`${PERF_TAG} momentumBegin @${Date.now()}`);
+    console.log(`${PERF_TAG} momentumBegin @${Date.now()}`);
   }, []);
   const onMomentumScrollEnd = useCallback(() => {
-    if (__DEV__) console.log(`${PERF_TAG} momentumEnd @${Date.now()}`);
+    console.log(`${PERF_TAG} momentumEnd @${Date.now()}`);
   }, []);
 
   /** Corrects a ratio the library's metadata got wrong (see Selection). */
