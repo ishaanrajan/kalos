@@ -152,6 +152,27 @@ export interface LibraryPickerProps {
   }) => Promise<void> | void;
 }
 
+// ---------------------------------------------------------------------------
+// TEMP DEBUG INSTRUMENTATION -- fast-scroll/pause/gentle-scroll jank
+// investigation. Not for commit. __DEV__-gated so it can never ship even if
+// left in by accident. Remove once the repro's been captured.
+// ---------------------------------------------------------------------------
+const PERF_TAG = '[picker-perf]';
+let mountBurst: { id: string; t: number }[] = [];
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+function logCellMount(id: string) {
+  if (!__DEV__) return;
+  mountBurst.push({ id: id.slice(0, 8), t: Date.now() });
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => {
+    const batch = mountBurst;
+    mountBurst = [];
+    flushTimer = null;
+    const span = batch.length > 1 ? batch[batch.length - 1].t - batch[0].t : 0;
+    console.log(`${PERF_TAG} mounted ${batch.length} cells over ${span}ms, ending @${batch[batch.length - 1]?.t}`);
+  }, 80);
+}
+
 export function LibraryPicker({
   onCancel,
   canCancel = true,
@@ -160,6 +181,30 @@ export function LibraryPicker({
 }: LibraryPickerProps) {
   const { colors, typography } = useTheme();
   const { width, height } = useWindowDimensions();
+
+  // TEMP: JS-thread stall detector -- a gap meaningfully bigger than one
+  // frame (16.7ms @60fps) between rAF ticks means the JS thread was busy
+  // doing something else (e.g. mounting a catch-up burst of grid cells)
+  // instead of servicing this loop.
+  useEffect(() => {
+    if (!__DEV__) return;
+    let raf = 0;
+    let last = Date.now();
+    let alive = true;
+    const tick = () => {
+      if (!alive) return;
+      const now = Date.now();
+      const gap = now - last;
+      last = now;
+      if (gap > 32) console.log(`${PERF_TAG} JS-thread stall: ${gap}ms`);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      alive = false;
+      cancelAnimationFrame(raf);
+    };
+  }, []);
 
   const [source, setSource] = useState<PhotoSource>({ kind: 'all' });
   const [assets, setAssets] = useState<MediaLibrary.Asset[]>([]);
@@ -325,7 +370,21 @@ export function LibraryPicker({
   // un-freezes the pane, easing control back to the plain scrollY-driven
   // collapse (see paneWrapStyle) from wherever the real offset already is.
   const onScrollBeginDrag = useCallback(() => {
+    if (__DEV__) console.log(`${PERF_TAG} scrollBeginDrag @${Date.now()}`);
     revealBoost.value = withTiming(0, { duration: 200 });
+  }, []);
+
+  // TEMP: the rest of the scroll lifecycle, so a captured log can tell fling
+  // (momentum) apart from a hand-driven drag, and pinpoint exactly when a
+  // fling's momentum stopped vs. when the next drag actually began.
+  const onScrollEndDrag = useCallback(() => {
+    if (__DEV__) console.log(`${PERF_TAG} scrollEndDrag @${Date.now()}`);
+  }, []);
+  const onMomentumScrollBegin = useCallback(() => {
+    if (__DEV__) console.log(`${PERF_TAG} momentumBegin @${Date.now()}`);
+  }, []);
+  const onMomentumScrollEnd = useCallback(() => {
+    if (__DEV__) console.log(`${PERF_TAG} momentumEnd @${Date.now()}`);
   }, []);
 
   /** Corrects a ratio the library's metadata got wrong (see Selection). */
@@ -585,6 +644,9 @@ export function LibraryPicker({
         style={styles.list}
         onScroll={onScroll}
         onScrollBeginDrag={onScrollBeginDrag}
+        onScrollEndDrag={onScrollEndDrag}
+        onMomentumScrollBegin={onMomentumScrollBegin}
+        onMomentumScrollEnd={onMomentumScrollEnd}
         scrollEventThrottle={16}
         onEndReached={onEndReached}
         onEndReachedThreshold={1.5}
@@ -685,6 +747,12 @@ const GridCell = memo(function GridCell({
   // Normally just `asset.uri`. See the fallback below for when it isn't.
   const [uri, setUri] = useState(asset.uri);
   useEffect(() => setUri(asset.uri), [asset.uri]);
+
+  // TEMP: see the instrumentation block above -- logs this cell's mount, to
+  // size and time the catch-up burst after a fast fling.
+  useEffect(() => {
+    logCellMount(asset.id);
+  }, [asset.id]);
 
   return (
     <Pressable
