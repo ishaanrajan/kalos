@@ -45,9 +45,7 @@ export default function SignIn() {
         <Text style={[styles.wordmark, { color: colors.text, fontFamily: wordmarkFontFamily }]}>
           Kalos
         </Text>
-        <Text style={[styles.tagline, { color: colors.textSecondary }]}>
-          Photos from people you actually follow.
-        </Text>
+        <Text style={[styles.tagline, { color: colors.textSecondary }]}>2015 Vibes</Text>
 
         <TextInput
           style={[
