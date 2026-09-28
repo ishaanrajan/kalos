@@ -182,7 +182,11 @@ function CommentRowImpl({
           onPress={handlePressLike}
           hitSlop={10}
           accessibilityRole="button"
-          accessibilityLabel={liked ? 'Unlike comment' : 'Like comment'}
+          accessibilityLabel={
+            liked
+              ? `Unlike comment, ${comment.like_count} ${comment.like_count === 1 ? 'like' : 'likes'}`
+              : `Like comment, ${comment.like_count} ${comment.like_count === 1 ? 'like' : 'likes'}`
+          }
           accessibilityState={{ selected: liked === true }}
           style={styles.like}
         >
@@ -191,6 +195,11 @@ function CommentRowImpl({
             size={13}
             color={liked ? colors.heart : colors.textSecondary}
           />
+          {comment.like_count > 0 ? (
+            <Text style={[typography.timestamp, styles.likeCount, { color: colors.textSecondary }]}>
+              {comment.like_count}
+            </Text>
+          ) : null}
         </Pressable>
       ) : null}
     </Pressable>
@@ -233,8 +242,12 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs + 1,
   },
   like: {
+    alignItems: 'center',
     paddingLeft: spacing.sm,
     paddingTop: spacing.xs,
+  },
+  likeCount: {
+    marginTop: 2,
   },
 });
 
