@@ -42,7 +42,7 @@ export interface Post {
   width: number;
   height: number;
   caption: string | null;
-  /** Name of the filter applied at capture time, e.g. "Valencia". */
+  /** Name of the filter applied at capture time, e.g. "Lima". */
   filter_name: string | null;
   /** Track attached at capture time, or null. Chosen once, like the filter. */
   music: PostMusic | null;
@@ -249,7 +249,7 @@ export interface FilterOverlay {
 }
 
 export interface Filter {
-  /** Display name, e.g. "X-Pro II". */
+  /** Display name, e.g. "Reykjavik". */
   name: string;
   /**
    * 4x5 row-major colour matrix (20 numbers), the same layout Skia's

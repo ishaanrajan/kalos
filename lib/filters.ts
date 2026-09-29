@@ -241,62 +241,65 @@ export const FILTERS: Filter[] = [
   },
   {
     // Punchy and cold: crushed contrast, boosted saturation, icy highlights
-    // from the pale-blue overlay. The 2015 default-looking "make it pop".
-    name: 'Clarendon',
-    matrix: compose(sepia(0.12), contrast(1.2), brightness(1.06), saturate(1.35), hueRotate(4)),
-    overlay: solid('#7FBBE3FF', 'overlay', 0.22),
+    // from the pale-blue overlay. The default-looking "make it pop".
+    name: 'Oslo',
+    matrix: compose(sepia(0.1), contrast(1.22), brightness(1.05), saturate(1.4), hueRotate(6)),
+    overlay: solid('#5FA8D3FF', 'overlay', 0.22),
   },
   {
     // Washed-out and milky. Lowered contrast, lifted blacks, a green-ward hue
     // nudge and a near-white soft-light veil that drains the colour.
-    name: 'Gingham',
+    name: 'Copenhagen',
     matrix: compose(brightness(1.05), hueRotate(-10), contrast(0.9), saturate(0.85), fade(0.04)),
     overlay: solid('#E6E6E6FF', 'softLight', 0.5),
   },
   {
-    // Heavy saturation over a warm sepia base, then cooled back at the top end
-    // by the blue overlay — reds stay hot, skies go teal.
-    name: 'Juno',
-    matrix: compose(sepia(0.3), contrast(1.15), brightness(1.08), saturate(1.5)),
-    overlay: solid('#7FBBE3FF', 'overlay', 0.2),
+    // Loud and warm: reds and oranges pushed hot, a coral overlay instead of
+    // Oslo's blue one so the two don't read as the same recipe re-tinted.
+    name: 'Manila',
+    matrix: compose(sepia(0.25), contrast(1.12), brightness(1.05), saturate(1.5), hueRotate(10)),
+    overlay: solid('#FF8B6BFF', 'overlay', 0.16),
   },
   {
-    // Bright and airy, cooled slightly. Lark lifts everything and desaturates
-    // nothing; no overlay, so it stays clean.
-    name: 'Lark',
-    matrix: compose(sepia(0.18), contrast(1.1), brightness(1.14), saturate(1.2), temperature(-0.04)),
+    // Bright, cool and clean. No sepia base at all (unlike most of this
+    // roster), a touch less saturated than real life, no overlay — the
+    // "minimal, barely-there" option rather than another warm/punchy variant.
+    name: 'Wellington',
+    matrix: compose(contrast(1.05), brightness(1.18), saturate(1.05), temperature(-0.06)),
   },
   {
-    // Gentle hand, very high saturation. A whisper of olive over the top keeps
-    // it from looking digital.
-    name: 'Ludwig',
-    matrix: compose(sepia(0.22), contrast(1.05), brightness(1.05), saturate(1.6)),
-    overlay: solid('#7D6918FF', 'overlay', 0.1),
+    // Muted, brown-vintage. Contrast and saturation both pulled *down* (most
+    // of this roster pushes them up), with a visible multiplied brown wash —
+    // reads as an old print rather than a boosted photo.
+    name: 'Vienna',
+    matrix: compose(sepia(0.35), contrast(0.95), brightness(1.02), saturate(0.8), fade(0.08)),
+    overlay: solid('#8B5E34FF', 'multiply', 0.15),
   },
   {
     // Pastel. Hue-rotated toward pink, desaturated, brightened, blacks lifted —
     // the flattest, most "faded polaroid" of the set.
-    name: 'Aden',
+    name: 'Muscat',
     matrix: compose(hueRotate(-20), contrast(0.9), saturate(0.85), brightness(1.15), fade(0.06)),
     overlay: solid('#7D6918FF', 'multiply', 0.08),
   },
   {
-    // Bright with lifted shadows and a warm cast — Lark's warmer sibling.
-    name: 'Amaro',
-    matrix: compose(sepia(0.3), contrast(1.1), brightness(1.12), saturate(1.3), fade(0.08)),
-    overlay: solid('#7D6918FF', 'overlay', 0.18),
+    // Even golden-warm glow with lifted shadows — a screened gold wash across
+    // the whole frame, distinct from Cairo's centre-weighted radial bloom.
+    name: 'Nairobi',
+    matrix: compose(sepia(0.22), contrast(1.0), brightness(1.15), saturate(1.1), fade(0.12)),
+    overlay: solid('#F2C879FF', 'screen', 0.18),
   },
   {
-    // Warm pink centre glow falling off to a dark edge. Most of Mayfair's
+    // Warm pink centre glow falling off to a dark edge. Most of this filter's
     // character is the radial overlay, not the matrix.
-    name: 'Mayfair',
+    name: 'Valletta',
     matrix: compose(contrast(1.1), saturate(1.15), brightness(1.03), temperature(0.03)),
     overlay: radial(['#FFFFFF8C', '#FFC8C899', '#111111D9'], 'overlay', 0.4),
   },
   {
     // Golden-hour haze: warm, slightly desaturated, with a soft amber bloom
     // screened over the middle of the frame.
-    name: 'Rise',
+    name: 'Cairo',
     matrix: compose(
       sepia(0.2),
       contrast(1.05),
@@ -308,64 +311,66 @@ export const FILTERS: Filter[] = [
     overlay: radial(['#E6C13D73', '#E6C13D33', '#00000000'], 'screen', 0.4),
   },
   {
-    // Warm, faded, yellow-brown. The screened gold lifts the whole image
-    // rather than just the centre, which is what makes it look sun-bleached.
-    name: 'Valencia',
-    matrix: compose(sepia(0.22), contrast(1.08), brightness(1.08), saturate(1.1), fade(0.06)),
-    overlay: solid('#E6C13DFF', 'screen', 0.12),
+    // Sun-bleached: heavy fade lifts the blacks hard, contrast pulled *below*
+    // 1, a sandy overlay in soft-light rather than screen -- a genuinely
+    // washed-out look, not just Nairobi's glow with a different tint.
+    name: 'Lima',
+    matrix: compose(sepia(0.3), contrast(0.92), brightness(1.05), saturate(0.95), fade(0.18)),
+    overlay: solid('#E8B65CFF', 'softLight', 0.3),
   },
   {
     // The loudest filter here: hard contrast, cyan-blue shift, and a heavy
     // multiplied vignette that goes almost black in the corners.
-    name: 'X-Pro II',
+    name: 'Reykjavik',
     matrix: compose(sepia(0.28), contrast(1.3), brightness(1.05), saturate(1.35), hueRotate(-5)),
     overlay: radial(['#E6E7E033', '#005B9A59', '#000000A6'], 'multiply', 0.6),
   },
   {
     // Saturated, very high contrast, and a tight dark vignette. No colour cast
-    // at all — Lo-Fi is about density.
-    name: 'Lo-Fi',
+    // at all — this one is about density.
+    name: 'Ulaanbaatar',
     matrix: compose(saturate(1.15), contrast(1.5), brightness(0.98)),
     overlay: radial(['#22222200', '#22222259', '#222222E6'], 'multiply', 0.7),
   },
   {
     // Warm pink highlights over teal-lifted shadows — hence the uneven
-    // `fade` triple. The multiplied salmon does the highlight tinting.
-    name: 'Nashville',
+    // `fade` triple, pushed further than the rest for a genuine duotone split.
+    // The multiplied salmon does the highlight tinting.
+    name: 'Havana',
     matrix: compose(
-      sepia(0.2),
-      contrast(1.2),
+      sepia(0.15),
+      contrast(1.15),
       brightness(1.05),
-      saturate(1.2),
+      saturate(1.15),
       temperature(0.05),
-      fade([0.02, 0.03, 0.07]),
+      fade([0.02, 0.04, 0.12]),
     ),
-    overlay: solid('#F7B099FF', 'multiply', 0.35),
+    overlay: solid('#FF9E85FF', 'multiply', 0.3),
   },
   {
     // Faded, magenta-washed 70s print stock. The screened pink is the whole
     // look; the matrix just softens the blacks and warms it a touch.
-    name: '1977',
+    name: 'Bangkok',
     matrix: compose(sepia(0.15), contrast(1.1), brightness(1.1), saturate(1.3), fade(0.06)),
-    overlay: solid('#F36ABCFF', 'screen', 0.28),
+    overlay: solid('#F36ABCFF', 'screen', 0.32),
   },
   {
-    // Burnt orange centre, purple-black edges, hard contrast. Toaster is
-    // Nashville pushed until it looks like a light leak.
-    name: 'Toaster',
+    // Burnt orange centre, purple-black edges, hard contrast — pushed until
+    // it looks like a light leak.
+    name: 'Santiago',
     matrix: compose(contrast(1.4), brightness(0.95), saturate(1.1), temperature(0.05)),
     overlay: radial(['#804E0FFF', '#5A1E3CE6', '#3B003BCC'], 'screen', 0.45),
   },
   {
     // Soft monochrome with a mauve cast — not a true B&W, which is exactly why
-    // Willow reads as "old photograph" rather than "greyscale".
-    name: 'Willow',
+    // this reads as "old photograph" rather than "greyscale".
+    name: 'Budapest',
     matrix: compose(saturate(0.05), sepia(0.2), contrast(0.9), brightness(1.12), fade(0.05)),
     overlay: solid('#C9B6BEFF', 'softLight', 0.2),
   },
   {
     // Straight, contrasty black and white. Fully desaturated, no overlay.
-    name: 'Inkwell',
+    name: 'Berlin',
     matrix: compose(grayscale(1), brightness(1.05), contrast(1.15)),
   },
 ];
