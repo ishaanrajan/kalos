@@ -249,9 +249,13 @@ export const FILTERS: Filter[] = [
   {
     // Washed-out and milky. Lowered contrast, lifted blacks, a green-ward hue
     // nudge and a near-white soft-light veil that drains the colour.
+    //
+    // Retired from the picker (see PICKER_FILTERS below) -- kept here, not
+    // deleted, purely so a post shot under this name still renders correctly.
     name: 'Copenhagen',
     matrix: compose(brightness(1.05), hueRotate(-10), contrast(0.9), saturate(0.85), fade(0.04)),
     overlay: solid('#E6E6E6FF', 'softLight', 0.5),
+    legacy: true,
   },
   {
     // Loud and warm: reds and oranges pushed hot, a coral overlay instead of
@@ -278,16 +282,22 @@ export const FILTERS: Filter[] = [
   {
     // Pastel. Hue-rotated toward pink, desaturated, brightened, blacks lifted —
     // the flattest, most "faded polaroid" of the set.
+    //
+    // Retired from the picker -- kept for existing posts, see Copenhagen above.
     name: 'Muscat',
     matrix: compose(hueRotate(-20), contrast(0.9), saturate(0.85), brightness(1.15), fade(0.06)),
     overlay: solid('#7D6918FF', 'multiply', 0.08),
+    legacy: true,
   },
   {
     // Even golden-warm glow with lifted shadows — a screened gold wash across
     // the whole frame, distinct from Cairo's centre-weighted radial bloom.
+    //
+    // Retired from the picker -- kept for existing posts, see Copenhagen above.
     name: 'Nairobi',
     matrix: compose(sepia(0.22), contrast(1.0), brightness(1.15), saturate(1.1), fade(0.12)),
     overlay: solid('#F2C879FF', 'screen', 0.18),
+    legacy: true,
   },
   {
     // Warm pink centre glow falling off to a dark edge. Most of this filter's
@@ -299,6 +309,8 @@ export const FILTERS: Filter[] = [
   {
     // Golden-hour haze: warm, slightly desaturated, with a soft amber bloom
     // screened over the middle of the frame.
+    //
+    // Retired from the picker -- kept for existing posts, see Copenhagen above.
     name: 'Cairo',
     matrix: compose(
       sepia(0.2),
@@ -309,21 +321,28 @@ export const FILTERS: Filter[] = [
       fade(0.05),
     ),
     overlay: radial(['#E6C13D73', '#E6C13D33', '#00000000'], 'screen', 0.4),
+    legacy: true,
   },
   {
     // Sun-bleached: heavy fade lifts the blacks hard, contrast pulled *below*
     // 1, a sandy overlay in soft-light rather than screen -- a genuinely
     // washed-out look, not just Nairobi's glow with a different tint.
+    //
+    // Retired from the picker -- kept for existing posts, see Copenhagen above.
     name: 'Lima',
     matrix: compose(sepia(0.3), contrast(0.92), brightness(1.05), saturate(0.95), fade(0.18)),
     overlay: solid('#E8B65CFF', 'softLight', 0.3),
+    legacy: true,
   },
   {
     // The loudest filter here: hard contrast, cyan-blue shift, and a heavy
     // multiplied vignette that goes almost black in the corners.
+    //
+    // Retired from the picker -- kept for existing posts, see Copenhagen above.
     name: 'Reykjavik',
     matrix: compose(sepia(0.28), contrast(1.3), brightness(1.05), saturate(1.35), hueRotate(-5)),
     overlay: radial(['#E6E7E033', '#005B9A59', '#000000A6'], 'multiply', 0.6),
+    legacy: true,
   },
   {
     // Saturated, very high contrast, and a tight dark vignette. No colour cast
@@ -375,8 +394,18 @@ export const FILTERS: Filter[] = [
   },
 ];
 
-/** Every filter name, in strip order. */
-export const FILTER_NAMES: string[] = FILTERS.map((f) => f.name);
+/**
+ * What the picker (FilterStrip, the composer) actually offers: Normal plus
+ * the 11 filters carrying their own weight, in roster order. The other six --
+ * Copenhagen, Muscat, Nairobi, Cairo, Lima, Reykjavik -- had the least (in
+ * two cases zero) real usage and stay in `FILTERS` only so `getFilter` can
+ * still resolve a post that already used one of them; see each entry's
+ * `legacy` flag above.
+ */
+export const PICKER_FILTERS: Filter[] = FILTERS.filter((f) => !f.legacy);
+
+/** Every picker-visible filter name, in strip order. */
+export const FILTER_NAMES: string[] = PICKER_FILTERS.map((f) => f.name);
 
 const BY_NAME: ReadonlyMap<string, Filter> = new Map(FILTERS.map((f) => [f.name, f]));
 

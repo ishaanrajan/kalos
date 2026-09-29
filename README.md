@@ -18,7 +18,7 @@ This is the whole point, so it's worth being explicit about:
 ## What is here
 
 - Email/password accounts
-- Square photos, 18 filters recreated from the 2015 set and named after capital cities — Oslo, Lima, Reykjavik, Ulaanbaatar, Havana, Bangkok, Berlin and the rest — with a strength slider
+- Square photos, 11 filters recreated from the 2015 set and named after capital cities — Oslo, Manila, Havana, Bangkok, Santiago, Berlin and the rest — with a strength slider
 - A chronological feed of the people you follow
 - Explore, sourced purely from your social graph — a post someone you follow liked, or a post by someone they follow
 - Double-tap to like, comments, profile grids, follow/unfollow

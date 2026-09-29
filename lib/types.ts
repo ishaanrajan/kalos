@@ -257,6 +257,12 @@ export interface Filter {
    */
   matrix: number[];
   overlay?: FilterOverlay;
+  /**
+   * Retired from the picker (PICKER_FILTERS excludes it) but still resolvable
+   * by `getFilter` -- a post captured under this name before it was retired
+   * still needs to render exactly as it did, not fall back to Normal.
+   */
+  legacy?: boolean;
 }
 
 /** Image dimensions used when baking and when laying out a post. */

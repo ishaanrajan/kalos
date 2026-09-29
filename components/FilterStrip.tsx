@@ -3,7 +3,7 @@
  *
  * Every thumbnail is a real `FilterPreview` of the user's own photo, because
  * that is the whole point — you pick a filter by seeing it on your picture.
- * To make 18 live canvases affordable the strip renders them all against a
+ * To make 12 live canvases affordable the strip renders them all against a
  * single ~150px copy of the source, never the full-resolution bitmap.
  */
 
@@ -21,7 +21,7 @@ import {
 } from 'react-native';
 
 import { downscaleForPreview } from '../lib/bake';
-import { FILTERS } from '../lib/filters';
+import { PICKER_FILTERS } from '../lib/filters';
 import { useTheme } from '../lib/theme';
 import type { Filter } from '../lib/types';
 import { FilterPreview, type FilterPreviewSource } from './FilterPreview';
@@ -166,7 +166,7 @@ export function FilterStrip({
   return (
     <FlatList
       horizontal
-      data={FILTERS}
+      data={PICKER_FILTERS}
       extraData={selectedFilterName}
       renderItem={renderItem}
       keyExtractor={keyExtractor}

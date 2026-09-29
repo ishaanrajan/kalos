@@ -30,7 +30,7 @@ import { LibraryPicker } from '../../components/LibraryPicker';
 import { CropAdjust } from '../../components/CropAdjust';
 import type { CropAdjustHandle } from '../../components/CropAdjust';
 import { displayAspectRatio } from '../../components/PostCard';
-import { FILTERS, getFilter } from '../../lib/filters';
+import { getFilter, NORMAL_FILTER } from '../../lib/filters';
 import type { CropRect, ImageSize, PostTag } from '../../lib/types';
 import { downscaleForPreview, prepareSource } from '../../lib/bake';
 import { getPostUploadState, startPost } from '../../lib/postUpload';
@@ -158,7 +158,7 @@ export default function NewPost() {
   const [libraryReady, setLibraryReady] = useState(false);
   const [rawPicked, setRawPicked] = useState<RawPick | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
-  const [filterName, setFilterName] = useState(FILTERS[0].name);
+  const [filterName, setFilterName] = useState(NORMAL_FILTER.name);
   const [caption, setCaption] = useState('');
   const [musicTrack, setMusicTrack] = useState<Track | null>(null);
   const [musicStartMs, setMusicStartMs] = useState(0);
@@ -188,7 +188,7 @@ export default function NewPost() {
   const cropRef = useRef<CropAdjustHandle>(null);
   const postingRef = useRef(false);
 
-  const filter = getFilter(filterName) ?? FILTERS[0];
+  const filter = getFilter(filterName) ?? NORMAL_FILTER;
   const isNormal = filter.name === 'Normal';
 
   // One decode per session for each of the two preview copies. Both are
@@ -379,7 +379,7 @@ export default function NewPost() {
       setLibraryReady(false);
       setRawPicked(null);
       setPicked(null);
-      setFilterName(FILTERS[0].name);
+      setFilterName(NORMAL_FILTER.name);
       setCaption('');
       setMusicTrack(null);
       setMusicStartMs(0);
@@ -439,7 +439,7 @@ export default function NewPost() {
         const previous = pickedRef.current;
         if (previous) {
           deleteQuietly([previous.uri, previous.previewUri, previous.thumbUri]);
-          if (previous.assetId !== assetId) setFilterName(FILTERS[0].name);
+          if (previous.assetId !== assetId) setFilterName(NORMAL_FILTER.name);
         }
         setPicked({
           uri: source.uri,
