@@ -90,6 +90,14 @@ const GUTTER = 1.5;
 const PAGE_SIZE = 120;
 
 /**
+ * Past this many loaded assets, a library-change notification stops refreshing
+ * the grid (see the MediaLibrary listener). Metadata is cheap, but not so
+ * cheap that re-reading an unbounded number of rows to surface one new photo
+ * is worth doing mid-scroll.
+ */
+const REFRESH_LIMIT = 2000;
+
+/**
  * How much of the screen the preview is allowed to take. A square preview
  * (`width` tall) is the shape Instagram uses, but on a short phone that
  * leaves barely a row and a half of grid, so it gives way on height first.
@@ -163,26 +171,34 @@ export interface LibraryPickerProps {
 }
 
 // ---------------------------------------------------------------------------
-// TEMP DEBUG INSTRUMENTATION -- fast-scroll/pause/gentle-scroll jank
-// investigation. Not for commit. Logs unconditionally (no Metro/dev-client
-// available to view __DEV__-gated output against the installed TestFlight
-// build) so it can be captured via `xcrun devicectl ... --console` instead.
-// Remove once the repro's been captured.
+// Scroll diagnostics HUD
+//
+// Off unless you long-press the "New post" title, and when off it costs
+// nothing: no timers, no counters, no render. It exists because this screen
+// can only really be judged on a release build on a real phone, where there is
+// no Metro and no console to read -- every previous attempt at instrumenting
+// it (console.log, `devicectl --console`, buffering lines up to Supabase
+// Storage) foundered on having nowhere to send the output. Drawing the numbers
+// on the screen sidesteps the transport problem entirely: reproduce the
+// stutter, screenshot it, and the screenshot *is* the log.
+//
+// What the numbers mean:
+//   stall  worst gap between animation frames, in ms. >32 means the JS thread
+//          missed at least one frame; a big number here is work blocking the
+//          thread (typically a burst of cell mounts).
+//   mount  most cells mounted in one 100ms window. The post-fling catch-up
+//          burst shows up here.
+//   Δh     measured content height minus the height implied by
+//          rows x (cellSize + GUTTER). Anything but ~0 means the list's layout
+//          model disagrees with reality, which is what getItemLayout returning
+//          wrong offsets looks like from the outside.
 // ---------------------------------------------------------------------------
-const PERF_TAG = '[picker-perf]';
-let mountBurst: { id: string; t: number }[] = [];
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
-function logCellMount(id: string) {
-  mountBurst.push({ id: id.slice(0, 8), t: Date.now() });
-  if (flushTimer) clearTimeout(flushTimer);
-  flushTimer = setTimeout(() => {
-    const batch = mountBurst;
-    mountBurst = [];
-    flushTimer = null;
-    const span = batch.length > 1 ? batch[batch.length - 1].t - batch[0].t : 0;
-    console.log(`${PERF_TAG} mounted ${batch.length} cells over ${span}ms, ending @${batch[batch.length - 1]?.t}`);
-  }, 80);
-}
+type Diagnostics = { stallMs: number; mountBurst: number; heightDelta: number };
+
+const NO_DIAGNOSTICS: Diagnostics = { stallMs: 0, mountBurst: 0, heightDelta: 0 };
+
+/** One frame at 60fps is 16.7ms; this is "missed at least one frame". */
+const STALL_THRESHOLD_MS = 32;
 
 export function LibraryPicker({
   onCancel,
@@ -193,28 +209,48 @@ export function LibraryPicker({
   const { colors, typography } = useTheme();
   const { width, height } = useWindowDimensions();
 
-  // TEMP: JS-thread stall detector -- a gap meaningfully bigger than one
-  // frame (16.7ms @60fps) between rAF ticks means the JS thread was busy
-  // doing something else (e.g. mounting a catch-up burst of grid cells)
-  // instead of servicing this loop.
+  const [diagnosticsOn, setDiagnosticsOn] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<Diagnostics>(NO_DIAGNOSTICS);
+  // Counts mounts between samples. A ref, not state: a grid cell mounting must
+  // not re-render the screen that is mounting it.
+  const mountTickRef = useRef(0);
+  const noteCellMount = useCallback(() => {
+    mountTickRef.current += 1;
+  }, []);
+
+  // The stall detector and the sampler both only exist while the HUD is up.
   useEffect(() => {
+    if (!diagnosticsOn) return;
     let raf = 0;
-    let last = Date.now();
     let alive = true;
+    let last = Date.now();
+    let worstStall = 0;
+    let worstBurst = 0;
     const tick = () => {
       if (!alive) return;
       const now = Date.now();
       const gap = now - last;
       last = now;
-      if (gap > 32) console.log(`${PERF_TAG} JS-thread stall: ${gap}ms`);
+      if (gap > STALL_THRESHOLD_MS && gap > worstStall) worstStall = gap;
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
+    const sampler = setInterval(() => {
+      const mounts = mountTickRef.current;
+      mountTickRef.current = 0;
+      if (mounts > worstBurst) worstBurst = mounts;
+      setDiagnostics((prev) => ({
+        stallMs: worstStall,
+        mountBurst: worstBurst,
+        heightDelta: prev.heightDelta,
+      }));
+    }, 100);
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      clearInterval(sampler);
     };
-  }, []);
+  }, [diagnosticsOn]);
 
   const [source, setSource] = useState<PhotoSource>({ kind: 'all' });
   const [assets, setAssets] = useState<MediaLibrary.Asset[]>([]);
@@ -243,15 +279,21 @@ export function LibraryPicker({
    * double-invoke guard: StrictMode's extra mount just bumps it again.
    */
   const versionRef = useRef(0);
+  /** How many assets are loaded, readable from the library-change listener
+   * without making that subscription depend on `assets`. */
+  const assetCountRef = useRef(0);
+  useEffect(() => {
+    assetCountRef.current = assets.length;
+  }, [assets.length]);
 
   const loadPage = useCallback(
-    async (after: string | undefined) => {
+    async (after: string | undefined, count: number = PAGE_SIZE) => {
       if (loadingRef.current) return;
       loadingRef.current = true;
       const version = versionRef.current;
       try {
         const page = await MediaLibrary.getAssetsAsync({
-          first: PAGE_SIZE,
+          first: count,
           after,
           album: source.kind === 'album' ? source.id : undefined,
           mediaType: [MediaLibrary.MediaType.photo],
@@ -309,17 +351,40 @@ export function LibraryPicker({
     };
   }, []);
 
-  // A photo taken from the camera button, or added through the limited-access
-  // picker, should appear without having to leave and come back.
+  /**
+   * A photo taken from the camera button, or added through the limited-access
+   * picker, should appear without having to leave and come back.
+   *
+   * Refetches *as many assets as are already loaded*, not just the first page.
+   * A plain `loadPage(undefined)` replaces the whole array with PAGE_SIZE
+   * items, so a notification arriving while you were scrolled past item 120
+   * collapsed the content out from under your scroll position -- and on iOS
+   * these fire for background iCloud and metadata activity, not only for a
+   * photo you just took, so it read as the grid spontaneously jumping.
+   *
+   * Debounced because a single library operation can emit a burst of them, and
+   * skipped entirely past REFRESH_LIMIT: re-reading tens of thousands of rows
+   * to surface one new photo isn't worth it, and truncating instead would be
+   * the very bug this is fixing.
+   */
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const subscription = MediaLibrary.addListener(() => {
-      versionRef.current += 1;
-      loadingRef.current = false;
-      setCursor(undefined);
-      setHasNextPage(true);
-      void loadPage(undefined);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        const loaded = assetCountRef.current;
+        if (loaded > REFRESH_LIMIT) return;
+        versionRef.current += 1;
+        loadingRef.current = false;
+        setHasNextPage(true);
+        void loadPage(undefined, Math.max(loaded, PAGE_SIZE));
+      }, 150);
     });
-    return () => subscription.remove();
+    return () => {
+      if (timer) clearTimeout(timer);
+      subscription.remove();
+    };
   }, [loadPage]);
 
   const onEndReached = useCallback(() => {
@@ -404,21 +469,7 @@ export function LibraryPicker({
   // un-freezes the pane, easing control back to the plain scrollY-driven
   // collapse (see paneWrapStyle) from wherever the real offset already is.
   const onScrollBeginDrag = useCallback(() => {
-    console.log(`${PERF_TAG} scrollBeginDrag @${Date.now()}`);
     revealBoost.value = withTiming(0, { duration: 200 });
-  }, []);
-
-  // TEMP: the rest of the scroll lifecycle, so a captured log can tell fling
-  // (momentum) apart from a hand-driven drag, and pinpoint exactly when a
-  // fling's momentum stopped vs. when the next drag actually began.
-  const onScrollEndDrag = useCallback(() => {
-    console.log(`${PERF_TAG} scrollEndDrag @${Date.now()}`);
-  }, []);
-  const onMomentumScrollBegin = useCallback(() => {
-    console.log(`${PERF_TAG} momentumBegin @${Date.now()}`);
-  }, []);
-  const onMomentumScrollEnd = useCallback(() => {
-    console.log(`${PERF_TAG} momentumEnd @${Date.now()}`);
   }, []);
 
   /** Corrects a ratio the library's metadata got wrong (see Selection). */
@@ -538,12 +589,44 @@ export function LibraryPicker({
 
   const cellSize = (width - GUTTER * (COLUMNS - 1)) / COLUMNS;
 
-  // Fixed-size cells in fixed-height rows. Telling FlatList the geometry up
-  // front means a fling never has to measure a row before it can scroll to it.
+  // Measured content height vs. the height the row geometry implies. These
+  // should agree; a non-zero delta means the list is laying rows out somewhere
+  // other than where getItemLayout claims they are, which is the failure this
+  // screen spent a long time chasing by other means.
+  const onContentSizeChange = useCallback(
+    (_w: number, measuredHeight: number) => {
+      if (!diagnosticsOn) return;
+      const rows = Math.ceil(assets.length / COLUMNS);
+      // `gap` spaces rows apart without a trailing gap after the last one.
+      const expected = rows > 0 ? rows * (cellSize + GUTTER) - GUTTER : 0;
+      setDiagnostics((prev) => ({ ...prev, heightDelta: Math.round(measuredHeight - expected) }));
+    },
+    [diagnosticsOn, cellSize, assets.length]
+  );
+
+  /**
+   * Fixed-height rows, so a fling never has to measure a row before it can
+   * scroll to it.
+   *
+   * `index` here is a **row** index, not an asset index. With `numColumns > 1`
+   * FlatList virtualises rows: `getItemCount` is `ceil(data.length /
+   * numColumns)` and `getItemLayout` is handed straight to VirtualizedList
+   * unwrapped, so VirtualizedList calls this with its own (row) index.
+   *
+   * This used to divide by COLUMNS again, which made every group of four rows
+   * claim the same offset and compressed the list's whole picture of the
+   * content to a quarter of its real height. Cells that had actually been
+   * mounted were unaffected -- ListMetricsAggregator prefers a measured frame
+   * and only falls back to this for rows it has never laid out -- which is why
+   * it only showed up after a fling: a fast scroll is exactly the thing that
+   * lands you in never-measured territory, and from there every row that
+   * scrolled in got positioned by a bogus offset and then yanked straight
+   * again the moment it measured.
+   */
   const getItemLayout = useCallback(
-    (_data: ArrayLike<MediaLibrary.Asset> | null | undefined, index: number) => {
+    (_data: ArrayLike<MediaLibrary.Asset> | null | undefined, rowIndex: number) => {
       const length = cellSize + GUTTER;
-      return { length, offset: length * Math.floor(index / COLUMNS), index };
+      return { length, offset: length * rowIndex, index: rowIndex };
     },
     [cellSize]
   );
@@ -560,9 +643,10 @@ export function LibraryPicker({
         selected={item.id === selectedId}
         placeholderColor={colors.imagePlaceholder}
         onPress={handleSelect}
+        onMount={diagnosticsOn ? noteCellMount : undefined}
       />
     ),
-    [cellSize, selectedId, colors.imagePlaceholder, handleSelect]
+    [cellSize, selectedId, colors.imagePlaceholder, handleSelect, diagnosticsOn, noteCellMount]
   );
 
   const keyExtractor = useCallback((item: MediaLibrary.Asset) => item.id, []);
@@ -585,7 +669,18 @@ export function LibraryPicker({
         ) : (
           <View style={styles.headerSpacer} />
         )}
-        <Text style={[styles.title, { color: colors.text }]}>New post</Text>
+        {/* Long-press is the only way in or out of the diagnostics HUD --
+            deliberately undiscoverable, since this ships. */}
+        <Pressable
+          onLongPress={() => {
+            setDiagnostics(NO_DIAGNOSTICS);
+            setDiagnosticsOn((on) => !on);
+          }}
+          delayLongPress={800}
+          accessibilityRole="header"
+        >
+          <Text style={[styles.title, { color: colors.text }]}>New post</Text>
+        </Pressable>
         <Pressable
           onPress={handleNext}
           hitSlop={12}
@@ -706,23 +801,24 @@ export function LibraryPicker({
         style={styles.list}
         onScroll={onScroll}
         onScrollBeginDrag={onScrollBeginDrag}
-        onScrollEndDrag={onScrollEndDrag}
-        onMomentumScrollBegin={onMomentumScrollBegin}
-        onMomentumScrollEnd={onMomentumScrollEnd}
+        onContentSizeChange={onContentSizeChange}
         scrollEventThrottle={16}
         onEndReached={onEndReached}
         onEndReachedThreshold={1.5}
         showsVerticalScrollIndicator={false}
         getItemLayout={getItemLayout}
-        initialNumToRender={COLUMNS * 8}
-        // Reverted: narrowing this to 5/COLUMNS*3 (to shrink the post-fling
-        // image-decode burst) instead produced a worse failure -- a fast
-        // fling can outrun a narrow window's pre-rendered content entirely,
-        // landing on a patch of grid nothing has rendered yet, which shows
-        // as a blank white screen rather than a stutter. Back to the
-        // original values; this was a guess made without being able to
-        // profile the actual device, and it was the wrong one.
-        maxToRenderPerBatch={COLUMNS * 6}
+        // These two are counted in **rows**, for the same reason getItemLayout
+        // is (see above) -- multiplying by COLUMNS was quadrupling both. The
+        // old `COLUMNS * 6` meant 24 rows, i.e. 96 cells, inside a single 30ms
+        // batch: that is the post-fling mount burst, not a mystery.
+        //
+        // Narrowing them was tried before and reverted because it produced
+        // blank grid instead of stutter -- but that was a narrow window being
+        // aimed by the broken offsets above, so it landed nowhere. With the
+        // offsets right, a fling lands where the list thinks it does and these
+        // can be the sane row counts they were always meant to be.
+        initialNumToRender={8}
+        maxToRenderPerBatch={4}
         updateCellsBatchingPeriod={30}
         windowSize={9}
         // Android only. On iOS this has a long history of clipping cells that
@@ -740,6 +836,14 @@ export function LibraryPicker({
           )
         }
       />
+
+      {diagnosticsOn ? (
+        <View style={styles.hud} pointerEvents="none">
+          <Text style={styles.hudText}>
+            {`stall ${diagnostics.stallMs}ms   mount ${diagnostics.mountBurst}/100ms   Δh ${diagnostics.heightDelta}px   n=${assets.length}`}
+          </Text>
+        </View>
+      ) : null}
 
       <Modal
         visible={albumsOpen}
@@ -799,22 +903,23 @@ const GridCell = memo(function GridCell({
   selected,
   placeholderColor,
   onPress,
+  onMount,
 }: {
   asset: MediaLibrary.Asset;
   size: number;
   selected: boolean;
   placeholderColor: string;
   onPress: (asset: MediaLibrary.Asset) => void;
+  /** Counts toward the HUD's mount-burst figure. Undefined when it's off. */
+  onMount?: () => void;
 }) {
   // Normally just `asset.uri`. See the fallback below for when it isn't.
   const [uri, setUri] = useState(asset.uri);
   useEffect(() => setUri(asset.uri), [asset.uri]);
 
-  // TEMP: see the instrumentation block above -- logs this cell's mount, to
-  // size and time the catch-up burst after a fast fling.
   useEffect(() => {
-    logCellMount(asset.id);
-  }, [asset.id]);
+    onMount?.();
+  }, [asset.id, onMount]);
 
   return (
     <Pressable
@@ -1055,6 +1160,18 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
+  // Deliberately not themed: this is an instrument, not part of the product,
+  // and it has to stay legible over whatever photos are behind it.
+  hud: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+  },
+  hudText: { color: '#0F0', fontSize: 11, fontVariant: ['tabular-nums'] },
   listSpinner: { paddingVertical: spacing.xxl },
   emptyState: { paddingVertical: spacing.xxl, alignItems: 'center' },
   backdrop: { ...StyleSheet.absoluteFill },
