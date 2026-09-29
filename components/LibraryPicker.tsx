@@ -67,6 +67,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import Feather from '@expo/vector-icons/Feather';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -119,8 +120,17 @@ function sameSource(a: PhotoSource, b: PhotoSource): boolean {
  * CropAdjust's `onImageLoad`) -- its *ratio* is what shapes the frame, and
  * Android's MediaStore reports pre-rotation dimensions for EXIF-rotated
  * photos, which would otherwise frame a portrait shot as a landscape one.
+ *
+ * `library` is a grid tap -- resolved through `MediaLibrary` in `handleNext`,
+ * same as always. `external` is an Android-only import from outside the
+ * on-device media store (Google Photos' cloud-only originals, which never
+ * appear in `MediaLibrary.getAssetsAsync` because they have no local
+ * MediaStore row) -- the system picker that produced it already hands back a
+ * usable local uri and dimensions, so there's nothing further to resolve.
  */
-type Selection = { asset: MediaLibrary.Asset; natural: ImageSize };
+type Selection =
+  | { kind: 'library'; asset: MediaLibrary.Asset; natural: ImageSize }
+  | { kind: 'external'; uri: string; assetId: string; natural: ImageSize };
 
 /** Instagram's two framings: the photo's own shape, or a hard square. */
 type AspectMode = 'original' | 'square';
@@ -281,7 +291,7 @@ export function LibraryPicker({
   useEffect(() => {
     if (selection || assets.length === 0) return;
     const first = assets[0];
-    setSelection({ asset: first, natural: { width: first.width, height: first.height } });
+    setSelection({ kind: 'library', asset: first, natural: { width: first.width, height: first.height } });
   }, [assets, selection]);
 
   // iOS 14+/Android 14+ can grant access to a hand-picked subset of the
@@ -362,7 +372,31 @@ export function LibraryPicker({
     // Tapping another photo while "Next" is mid-flight would swap the framed
     // photo out from under a prepare that's already reading the old one.
     if (advancingRef.current) return;
-    setSelection({ asset, natural: { width: asset.width, height: asset.height } });
+    setSelection({ kind: 'library', asset, natural: { width: asset.width, height: asset.height } });
+    revealBoost.value = withTiming(1, { duration: 160 });
+  }, []);
+
+  // Android only: the grid above is strictly the on-device media store, so a
+  // photo that lives only in Google Photos' cloud (never downloaded, so it
+  // has no local MediaStore row) can't appear in it at all -- there's no
+  // predicate that would surface it. The system Photo Picker is the one
+  // thing that can, since it's backed by every installed photo provider, not
+  // just MediaStore, and unlike the older SAF "choose an app" dialog it goes
+  // straight into a Photos-style UI with no picker permission required.
+  const handleImportFromGooglePhotos = useCallback(async () => {
+    if (advancingRef.current) return;
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+    if (result.canceled || !result.assets[0]) return;
+    const picked = result.assets[0];
+    setSelection({
+      kind: 'external',
+      uri: picked.uri,
+      // Falls back to the uri itself when the picked item has no MediaStore
+      // id (the common case for a cloud-only original) -- same fallback
+      // new.tsx already uses for a camera capture that isn't saved yet.
+      assetId: picked.assetId ?? picked.uri,
+      natural: { width: picked.width, height: picked.height },
+    });
     revealBoost.value = withTiming(1, { duration: 160 });
   }, []);
 
@@ -398,7 +432,7 @@ export function LibraryPicker({
       // crop surface, and doing that on every load would throw away a zoom
       // the user had already set.
       if (Math.abs(was - is) < 0.01) return prev;
-      return { asset: prev.asset, natural: size };
+      return { ...prev, natural: size };
     });
   }, []);
 
@@ -413,16 +447,29 @@ export function LibraryPicker({
     advancingRef.current = true;
     setAdvancing(true);
     try {
-      // The one place the full-size file is resolved. `localUri` is a real
-      // `file://` path that ImageManipulator can open, and its width/height
-      // are the original's true pixel count -- which is what the crop has to
-      // be expressed against, since the preview was showing a screen-sized
-      // copy PhotoKit rendered on the fly. For an iCloud-optimized photo this
-      // is the download, which is why the button holds a spinner.
-      const info = await MediaLibrary.getAssetInfoAsync(selection.asset);
-      const uri = info.localUri ?? info.uri;
-      const natural = { width: info.width, height: info.height };
-      await onNext({ uri, natural, crop: cropHandle.getCrop(natural), assetId: selection.asset.id });
+      let uri: string;
+      let natural: ImageSize;
+      let assetId: string;
+      if (selection.kind === 'library') {
+        // The one place the full-size file is resolved. `localUri` is a real
+        // `file://` path that ImageManipulator can open, and its width/height
+        // are the original's true pixel count -- which is what the crop has
+        // to be expressed against, since the preview was showing a
+        // screen-sized copy PhotoKit rendered on the fly. For an
+        // iCloud-optimized photo this is the download, which is why the
+        // button holds a spinner.
+        const info = await MediaLibrary.getAssetInfoAsync(selection.asset);
+        uri = info.localUri ?? info.uri;
+        natural = { width: info.width, height: info.height };
+        assetId = selection.asset.id;
+      } else {
+        // Already a real local uri and real dimensions -- the system picker
+        // that produced this did the download, there's nothing left to await.
+        uri = selection.uri;
+        natural = selection.natural;
+        assetId = selection.assetId;
+      }
+      await onNext({ uri, natural, crop: cropHandle.getCrop(natural), assetId });
     } catch (e) {
       // getAssetInfoAsync is the iCloud download for an optimized photo, so
       // the likeliest cause is no connection -- say so rather than leaving a
@@ -501,7 +548,9 @@ export function LibraryPicker({
     [cellSize]
   );
 
-  const selectedId = selection?.asset.id ?? null;
+  // An external (Google Photos) selection has no corresponding grid cell to
+  // ring -- it isn't in `assets` at all.
+  const selectedId = selection?.kind === 'library' ? selection.asset.id : null;
 
   const renderItem = useCallback(
     ({ item }: ListRenderItemInfo<MediaLibrary.Asset>) => (
@@ -569,9 +618,9 @@ export function LibraryPicker({
                 // zoom/pan. The shared values that hold the gesture state are
                 // seeded once, so without this the second photo you tapped
                 // would inherit the first one's zoom.
-                key={`${selection.asset.id}:${aspectMode}:${frame.width}x${frame.height}`}
+                key={`${selection.kind === 'library' ? selection.asset.id : selection.assetId}:${aspectMode}:${frame.width}x${frame.height}`}
                 ref={cropRef}
-                uri={selection.asset.uri}
+                uri={selection.kind === 'library' ? selection.asset.uri : selection.uri}
                 natural={selection.natural}
                 frame={frame}
                 onImageLoad={handleImageLoad}
@@ -608,15 +657,28 @@ export function LibraryPicker({
           </Text>
           <Feather name="chevron-down" size={15} color={colors.text} style={styles.sourceChevron} />
         </Pressable>
-        <Pressable
-          onPress={onOpenCamera}
-          hitSlop={12}
-          accessibilityRole="button"
-          accessibilityLabel="Take photo"
-          style={[styles.cameraButton, { backgroundColor: colors.surfaceAlt }]}
-        >
-          <Ionicons name="camera-outline" size={19} color={colors.text} />
-        </Pressable>
+        <View style={styles.toolbarActions}>
+          {Platform.OS === 'android' ? (
+            <Pressable
+              onPress={handleImportFromGooglePhotos}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel="Import from Google Photos"
+              style={[styles.cameraButton, { backgroundColor: colors.surfaceAlt }]}
+            >
+              <Ionicons name="cloud-outline" size={19} color={colors.text} />
+            </Pressable>
+          ) : null}
+          <Pressable
+            onPress={onOpenCamera}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel="Take photo"
+            style={[styles.cameraButton, { backgroundColor: colors.surfaceAlt }]}
+          >
+            <Ionicons name="camera-outline" size={19} color={colors.text} />
+          </Pressable>
+        </View>
       </View>
 
       {limitedAccess ? (
@@ -967,6 +1029,7 @@ const styles = StyleSheet.create({
   },
   sourceButton: { flexDirection: 'row', alignItems: 'center', flexShrink: 1 },
   sourceChevron: { marginLeft: spacing.xs },
+  toolbarActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   cameraButton: {
     width: 32,
     height: 32,
