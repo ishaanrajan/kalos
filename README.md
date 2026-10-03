@@ -18,7 +18,7 @@ This is the whole point, so it's worth being explicit about:
 ## What is here
 
 - Email/password accounts
-- Square photos, Instagram's 10 place-named October 2015 filters — Skyline, Brooklyn, Ginza, Vesper, Charmes, Stinson, Maven, Helena, Ashby, Dogpatch — with a strength slider
+- Square photos, Instagram's 10 place-named October 2015 filters — Skyline, Brooklyn, Ginza, Vesper, Charmes, Stinson, Maven, Helena, Ashby, Dogpatch — plus Inkwell and Moon in black and white, with a strength slider
 - A chronological feed of the people you follow
 - Explore, sourced purely from your social graph — a post someone you follow liked, or a post by someone they follow
 - Double-tap to like, comments, profile grids, follow/unfollow

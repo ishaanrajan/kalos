@@ -3,7 +3,7 @@
  *
  * Every thumbnail is a real `FilterPreview` of the user's own photo, because
  * that is the whole point — you pick a filter by seeing it on your picture.
- * To make 11 live canvases affordable the strip renders them all against a
+ * To make 13 live canvases affordable the strip renders them all against a
  * single ~150px copy of the source, never the full-resolution bitmap.
  */
 

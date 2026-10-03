@@ -8,7 +8,7 @@
  * `hue-rotate`, `grayscale`) in the same order the CSS recreations apply them,
  * so each recipe below reads like the stylesheet it descends from.
  *
- * The ten filters the picker offers are ported verbatim from instagram.css
+ * The twelve filters the picker offers are ported verbatim from instagram.css
  * (picturepan2) -- its `filter:` chain becomes the compose() call, its
  * `::before` background and mix-blend-mode become the overlay. They are not
  * tempered: for these recipes every step moves in the same direction, so a
@@ -337,6 +337,24 @@ export const FILTERS: Filter[] = [
     matrix: compose(sepia(0.35), saturate(1.1), contrast(1.5)),
   },
 
+  // The two monochromes. Not from the October-2015 place-named batch -- that
+  // batch has no black and white in it at all -- but both are genuine filters
+  // from the same app in the same era, with recipes from the same source.
+  {
+    // True neutral black and white: grayscale comes *last*, so the brightness
+    // lift and the softened contrast shape the tones before all the colour is
+    // taken out.
+    name: 'Inkwell',
+    matrix: compose(brightness(1.25), contrast(0.85), grayscale(1)),
+  },
+  {
+    // Desaturates fully and *then* sepia-tones the grey, which is why this
+    // reads as warm mono rather than neutral -- and it sits a good deal
+    // brighter than Inkwell.
+    name: 'Moon',
+    matrix: compose(brightness(1.4), contrast(0.95), saturate(0), sepia(0.35)),
+  },
+
   // -------------------------------------------------------------------------
   // Retired, and kept only so already-posted photos keep rendering the way
   // they did the day they were posted. `getFilter` still resolves these;
@@ -453,8 +471,8 @@ export const FILTERS: Filter[] = [
 ];
 
 /**
- * What the picker (FilterStrip, the composer) actually offers: Normal plus the
- * ten October-2015 filters. Everything flagged `legacy` is excluded -- those
+ * What the picker (FilterStrip, the composer) actually offers: Normal, the ten
+ * October-2015 place-named filters, and the two monochromes. Everything flagged `legacy` is excluded -- those
  * exist only so `getFilter` can still resolve a post that was captured under
  * one of them.
  */
