@@ -133,7 +133,7 @@ for (const f of FILTERS) {
 }
 
 console.log('\nLookup falls back rather than throwing');
-check('getFilter("Lima") resolves', getFilter('Lima').name === 'Lima');
+check('getFilter("Ginza") resolves', getFilter('Ginza').name === 'Ginza');
 check('getFilter(null) falls back to Normal', getFilter(null).name === 'Normal');
 check('getFilter("nonsense") falls back to Normal', getFilter('nonsense').name === 'Normal');
 check('Normal is a true no-op', matrixClose(getFilter('Normal').matrix, identity()));

@@ -70,6 +70,8 @@ const BLEND_MODES: Record<FilterOverlay['blend'], BlendMode> = {
   screen: BlendMode.Screen,
   color: BlendMode.Color,
   luminosity: BlendMode.Luminosity,
+  darken: BlendMode.Darken,
+  lighten: BlendMode.Lighten,
 };
 
 /**

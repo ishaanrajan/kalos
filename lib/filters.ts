@@ -8,10 +8,19 @@
  * `hue-rotate`, `grayscale`) in the same order the CSS recreations apply them,
  * so each recipe below reads like the stylesheet it descends from.
  *
- * Reference recipes: the CSSgram / instagram.css projects, tempered where the
- * raw CSS values blow out on a real photo (their `brightness(1.75)`-style
- * values assume a browser's per-step clamping, which a single composed matrix
- * does not reproduce).
+ * The ten filters the picker offers are ported verbatim from instagram.css
+ * (picturepan2) -- its `filter:` chain becomes the compose() call, its
+ * `::before` background and mix-blend-mode become the overlay. They are not
+ * tempered: for these recipes every step moves in the same direction, so a
+ * browser's per-step clamping and our single composed matrix agree, and the
+ * only value that overshoots is pure white (which clips to white either way).
+ * Temper only against scripts/verify-filters.ts, never by eye.
+ *
+ * What this engine cannot reproduce: Instagram's real filters were GLSL plus
+ * LUTs plus *texture* assets -- one open-source reimplementation had to extend
+ * GPUImage from 2 to 5 textures per filter, and Hudson's texture is a
+ * photograph of its author's chalkboard. Grain, scratches, light leaks and
+ * linear gradients are all out of reach of matrix-plus-one-overlay.
  *
  * Matrix layout:
  *
@@ -239,78 +248,148 @@ export const FILTERS: Filter[] = [
     name: 'Normal',
     matrix: identity(),
   },
+
+  // -------------------------------------------------------------------------
+  // The roster the picker offers: Instagram's place-named batch from October
+  // 2015, which is the era this app rebuilds. Values are ported from
+  // instagram.css (picturepan2), which is the only published recreation that
+  // covers this batch -- CSSgram and pilgram both stop at the older set. Each
+  // recipe below is that project's `filter:` chain in the same order, plus its
+  // `::before` overlay colour and mix-blend-mode.
+  // -------------------------------------------------------------------------
   {
-    // Punchy and cold: crushed contrast, boosted saturation, icy highlights
-    // from the pale-blue overlay. The default-looking "make it pop".
+    // Bright and clean, the lightest touch here. No overlay.
+    name: 'Skyline',
+    matrix: compose(sepia(0.15), contrast(1.25), brightness(1.25), saturate(1.2)),
+  },
+  {
+    // Bright with a cool blue veil -- the only cool-cast filter in the batch.
+    name: 'Brooklyn',
+    matrix: compose(sepia(0.25), contrast(1.25), brightness(1.25), hueRotate(5)),
+    overlay: solid('#7FBBE3FF', 'overlay', 0.2),
+  },
+  {
+    // Warm and bright, olive held back by a light `darken` pass so the
+    // highlights don't go chalky.
+    name: 'Ginza',
+    matrix: compose(
+      sepia(0.25),
+      contrast(1.15),
+      brightness(1.2),
+      saturate(1.35),
+      hueRotate(-5),
+    ),
+    overlay: solid('#7D6918FF', 'darken', 0.15),
+  },
+  {
+    // Ginza's heavier sibling: more sepia in the base, and the olive goes on
+    // in `overlay` rather than `darken`, so it tints mid-tones instead of
+    // only pulling the brights down.
+    name: 'Vesper',
+    matrix: compose(sepia(0.35), contrast(1.15), brightness(1.2), saturate(1.3)),
+    overlay: solid('#7D6918FF', 'overlay', 0.25),
+  },
+  {
+    // The most saturated of the bright ones, with the olive darkened harder.
+    name: 'Charmes',
+    matrix: compose(
+      sepia(0.25),
+      contrast(1.25),
+      brightness(1.25),
+      saturate(1.35),
+      hueRotate(-5),
+    ),
+    overlay: solid('#7D6918FF', 'darken', 0.25),
+  },
+  {
+    // `lighten` at 0.45 is the strongest overlay in the batch -- it lifts
+    // anything darker than the olive toward it, which is what gives this its
+    // hazy, washed-up-film look rather than a tint.
+    name: 'Stinson',
+    matrix: compose(sepia(0.35), contrast(1.25), brightness(1.1), saturate(1.25)),
+    overlay: solid('#7D6918FF', 'lighten', 0.45),
+  },
+  {
+    // Very high saturation over a gentle tone curve, then a yellow-green
+    // `darken`. The loudest colour in the set.
+    name: 'Maven',
+    matrix: compose(sepia(0.35), contrast(1.05), brightness(1.05), saturate(1.75)),
+    overlay: solid('#9EAF1EFF', 'darken', 0.25),
+  },
+  {
+    // Heavy sepia base, soft contrast, same yellow-green as Maven but blended
+    // as `overlay` -- warmer and flatter, less acid.
+    name: 'Helena',
+    matrix: compose(sepia(0.5), contrast(1.05), brightness(1.05), saturate(1.35)),
+    overlay: solid('#9EAF1EFF', 'overlay', 0.25),
+  },
+  {
+    // Heaviest sepia and the highest saturation, with no brightness lift at
+    // all -- dense and golden.
+    name: 'Ashby',
+    matrix: compose(sepia(0.5), contrast(1.2), saturate(1.8)),
+    overlay: solid('#7D6918FF', 'lighten', 0.35),
+  },
+  {
+    // Hard contrast, no brightness lift, no overlay. The one filter here that
+    // works by crushing rather than lifting.
+    name: 'Dogpatch',
+    matrix: compose(sepia(0.35), saturate(1.1), contrast(1.5)),
+  },
+
+  // -------------------------------------------------------------------------
+  // Retired, and kept only so already-posted photos keep rendering the way
+  // they did the day they were posted. `getFilter` still resolves these;
+  // PICKER_FILTERS does not offer them. Do not delete one while any post
+  // still carries its name -- `filter_name` is free text with no FK, and an
+  // unrecognised name silently falls back to Normal.
+  //
+  // These are the capital-city roster that preceded the October-2015 batch
+  // above. Two of them (Nairobi, Lima) were dropped outright rather than kept,
+  // because no post had ever used either.
+  // -------------------------------------------------------------------------
+  {
     name: 'Oslo',
     matrix: compose(sepia(0.1), contrast(1.22), brightness(1.05), saturate(1.4), hueRotate(6)),
     overlay: solid('#5FA8D3FF', 'overlay', 0.22),
+    legacy: true,
   },
   {
-    // Washed-out and milky. Lowered contrast, lifted blacks, a green-ward hue
-    // nudge and a near-white soft-light veil that drains the colour.
-    //
-    // Retired from the picker (see PICKER_FILTERS below) -- kept here, not
-    // deleted, purely so a post shot under this name still renders correctly.
     name: 'Copenhagen',
     matrix: compose(brightness(1.05), hueRotate(-10), contrast(0.9), saturate(0.85), fade(0.04)),
     overlay: solid('#E6E6E6FF', 'softLight', 0.5),
     legacy: true,
   },
   {
-    // Loud and warm: reds and oranges pushed hot, a coral overlay instead of
-    // Oslo's blue one so the two don't read as the same recipe re-tinted.
     name: 'Manila',
     matrix: compose(sepia(0.25), contrast(1.12), brightness(1.05), saturate(1.5), hueRotate(10)),
     overlay: solid('#FF8B6BFF', 'overlay', 0.16),
+    legacy: true,
   },
   {
-    // Bright, cool and clean. No sepia base at all (unlike most of this
-    // roster), a touch less saturated than real life, no overlay — the
-    // "minimal, barely-there" option rather than another warm/punchy variant.
     name: 'Wellington',
     matrix: compose(contrast(1.05), brightness(1.18), saturate(1.05), temperature(-0.06)),
+    legacy: true,
   },
   {
-    // Muted, brown-vintage. Contrast and saturation both pulled *down* (most
-    // of this roster pushes them up), with a visible multiplied brown wash —
-    // reads as an old print rather than a boosted photo.
     name: 'Vienna',
     matrix: compose(sepia(0.35), contrast(0.95), brightness(1.02), saturate(0.8), fade(0.08)),
     overlay: solid('#8B5E34FF', 'multiply', 0.15),
+    legacy: true,
   },
   {
-    // Pastel. Hue-rotated toward pink, desaturated, brightened, blacks lifted —
-    // the flattest, most "faded polaroid" of the set.
-    //
-    // Retired from the picker -- kept for existing posts, see Copenhagen above.
     name: 'Muscat',
     matrix: compose(hueRotate(-20), contrast(0.9), saturate(0.85), brightness(1.15), fade(0.06)),
     overlay: solid('#7D6918FF', 'multiply', 0.08),
     legacy: true,
   },
   {
-    // Even golden-warm glow with lifted shadows — a screened gold wash across
-    // the whole frame, distinct from Cairo's centre-weighted radial bloom.
-    //
-    // Retired from the picker -- kept for existing posts, see Copenhagen above.
-    name: 'Nairobi',
-    matrix: compose(sepia(0.22), contrast(1.0), brightness(1.15), saturate(1.1), fade(0.12)),
-    overlay: solid('#F2C879FF', 'screen', 0.18),
-    legacy: true,
-  },
-  {
-    // Warm pink centre glow falling off to a dark edge. Most of this filter's
-    // character is the radial overlay, not the matrix.
     name: 'Valletta',
     matrix: compose(contrast(1.1), saturate(1.15), brightness(1.03), temperature(0.03)),
     overlay: radial(['#FFFFFF8C', '#FFC8C899', '#111111D9'], 'overlay', 0.4),
+    legacy: true,
   },
   {
-    // Golden-hour haze: warm, slightly desaturated, with a soft amber bloom
-    // screened over the middle of the frame.
-    //
-    // Retired from the picker -- kept for existing posts, see Copenhagen above.
     name: 'Cairo',
     matrix: compose(
       sepia(0.2),
@@ -324,37 +403,18 @@ export const FILTERS: Filter[] = [
     legacy: true,
   },
   {
-    // Sun-bleached: heavy fade lifts the blacks hard, contrast pulled *below*
-    // 1, a sandy overlay in soft-light rather than screen -- a genuinely
-    // washed-out look, not just Nairobi's glow with a different tint.
-    //
-    // Retired from the picker -- kept for existing posts, see Copenhagen above.
-    name: 'Lima',
-    matrix: compose(sepia(0.3), contrast(0.92), brightness(1.05), saturate(0.95), fade(0.18)),
-    overlay: solid('#E8B65CFF', 'softLight', 0.3),
-    legacy: true,
-  },
-  {
-    // The loudest filter here: hard contrast, cyan-blue shift, and a heavy
-    // multiplied vignette that goes almost black in the corners.
-    //
-    // Retired from the picker -- kept for existing posts, see Copenhagen above.
     name: 'Reykjavik',
     matrix: compose(sepia(0.28), contrast(1.3), brightness(1.05), saturate(1.35), hueRotate(-5)),
     overlay: radial(['#E6E7E033', '#005B9A59', '#000000A6'], 'multiply', 0.6),
     legacy: true,
   },
   {
-    // Saturated, very high contrast, and a tight dark vignette. No colour cast
-    // at all — this one is about density.
     name: 'Ulaanbaatar',
     matrix: compose(saturate(1.15), contrast(1.5), brightness(0.98)),
     overlay: radial(['#22222200', '#22222259', '#222222E6'], 'multiply', 0.7),
+    legacy: true,
   },
   {
-    // Warm pink highlights over teal-lifted shadows — hence the uneven
-    // `fade` triple, pushed further than the rest for a genuine duotone split.
-    // The multiplied salmon does the highlight tinting.
     name: 'Havana',
     matrix: compose(
       sepia(0.15),
@@ -365,42 +425,38 @@ export const FILTERS: Filter[] = [
       fade([0.02, 0.04, 0.12]),
     ),
     overlay: solid('#FF9E85FF', 'multiply', 0.3),
+    legacy: true,
   },
   {
-    // Faded, magenta-washed 70s print stock. The screened pink is the whole
-    // look; the matrix just softens the blacks and warms it a touch.
     name: 'Bangkok',
     matrix: compose(sepia(0.15), contrast(1.1), brightness(1.1), saturate(1.3), fade(0.06)),
     overlay: solid('#F36ABCFF', 'screen', 0.32),
+    legacy: true,
   },
   {
-    // Burnt orange centre, purple-black edges, hard contrast — pushed until
-    // it looks like a light leak.
     name: 'Santiago',
     matrix: compose(contrast(1.4), brightness(0.95), saturate(1.1), temperature(0.05)),
     overlay: radial(['#804E0FFF', '#5A1E3CE6', '#3B003BCC'], 'screen', 0.45),
+    legacy: true,
   },
   {
-    // Soft monochrome with a mauve cast — not a true B&W, which is exactly why
-    // this reads as "old photograph" rather than "greyscale".
     name: 'Budapest',
     matrix: compose(saturate(0.05), sepia(0.2), contrast(0.9), brightness(1.12), fade(0.05)),
     overlay: solid('#C9B6BEFF', 'softLight', 0.2),
+    legacy: true,
   },
   {
-    // Straight, contrasty black and white. Fully desaturated, no overlay.
     name: 'Berlin',
     matrix: compose(grayscale(1), brightness(1.05), contrast(1.15)),
+    legacy: true,
   },
 ];
 
 /**
- * What the picker (FilterStrip, the composer) actually offers: Normal plus
- * the 11 filters carrying their own weight, in roster order. The other six --
- * Copenhagen, Muscat, Nairobi, Cairo, Lima, Reykjavik -- had the least (in
- * two cases zero) real usage and stay in `FILTERS` only so `getFilter` can
- * still resolve a post that already used one of them; see each entry's
- * `legacy` flag above.
+ * What the picker (FilterStrip, the composer) actually offers: Normal plus the
+ * ten October-2015 filters. Everything flagged `legacy` is excluded -- those
+ * exist only so `getFilter` can still resolve a post that was captured under
+ * one of them.
  */
 export const PICKER_FILTERS: Filter[] = FILTERS.filter((f) => !f.legacy);
 

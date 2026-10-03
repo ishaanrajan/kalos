@@ -42,7 +42,7 @@ export interface Post {
   width: number;
   height: number;
   caption: string | null;
-  /** Name of the filter applied at capture time, e.g. "Lima". */
+  /** Name of the filter applied at capture time, e.g. "Ginza". */
   filter_name: string | null;
   /** Track attached at capture time, or null. Chosen once, like the filter. */
   music: PostMusic | null;
@@ -237,7 +237,15 @@ export interface DMThreadSummary {
  * importing from @shopify/react-native-skia so that pure-logic modules (and
  * tests) can use this contract without pulling in native code.
  */
-export type OverlayBlend = 'overlay' | 'softLight' | 'multiply' | 'screen' | 'color' | 'luminosity';
+export type OverlayBlend =
+  | 'overlay'
+  | 'softLight'
+  | 'multiply'
+  | 'screen'
+  | 'color'
+  | 'luminosity'
+  | 'darken'
+  | 'lighten';
 
 export interface FilterOverlay {
   kind: 'solid' | 'radial';
@@ -249,7 +257,7 @@ export interface FilterOverlay {
 }
 
 export interface Filter {
-  /** Display name, e.g. "Reykjavik". */
+  /** Display name, e.g. "Ginza". */
   name: string;
   /**
    * 4x5 row-major colour matrix (20 numbers), the same layout Skia's
