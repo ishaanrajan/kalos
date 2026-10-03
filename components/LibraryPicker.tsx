@@ -170,36 +170,6 @@ export interface LibraryPickerProps {
   }) => Promise<void> | void;
 }
 
-// ---------------------------------------------------------------------------
-// Scroll diagnostics HUD
-//
-// Off unless you long-press the "New post" title, and when off it costs
-// nothing: no timers, no counters, no render. It exists because this screen
-// can only really be judged on a release build on a real phone, where there is
-// no Metro and no console to read -- every previous attempt at instrumenting
-// it (console.log, `devicectl --console`, buffering lines up to Supabase
-// Storage) foundered on having nowhere to send the output. Drawing the numbers
-// on the screen sidesteps the transport problem entirely: reproduce the
-// stutter, screenshot it, and the screenshot *is* the log.
-//
-// What the numbers mean:
-//   stall  worst gap between animation frames, in ms. >32 means the JS thread
-//          missed at least one frame; a big number here is work blocking the
-//          thread (typically a burst of cell mounts).
-//   mount  most cells mounted in one 100ms window. The post-fling catch-up
-//          burst shows up here.
-//   Δh     measured content height minus the height implied by
-//          rows x (cellSize + GUTTER). Anything but ~0 means the list's layout
-//          model disagrees with reality, which is what getItemLayout returning
-//          wrong offsets looks like from the outside.
-// ---------------------------------------------------------------------------
-type Diagnostics = { stallMs: number; mountBurst: number; heightDelta: number };
-
-const NO_DIAGNOSTICS: Diagnostics = { stallMs: 0, mountBurst: 0, heightDelta: 0 };
-
-/** One frame at 60fps is 16.7ms; this is "missed at least one frame". */
-const STALL_THRESHOLD_MS = 32;
-
 export function LibraryPicker({
   onCancel,
   canCancel = true,
@@ -208,49 +178,6 @@ export function LibraryPicker({
 }: LibraryPickerProps) {
   const { colors, typography } = useTheme();
   const { width, height } = useWindowDimensions();
-
-  const [diagnosticsOn, setDiagnosticsOn] = useState(false);
-  const [diagnostics, setDiagnostics] = useState<Diagnostics>(NO_DIAGNOSTICS);
-  // Counts mounts between samples. A ref, not state: a grid cell mounting must
-  // not re-render the screen that is mounting it.
-  const mountTickRef = useRef(0);
-  const noteCellMount = useCallback(() => {
-    mountTickRef.current += 1;
-  }, []);
-
-  // The stall detector and the sampler both only exist while the HUD is up.
-  useEffect(() => {
-    if (!diagnosticsOn) return;
-    let raf = 0;
-    let alive = true;
-    let last = Date.now();
-    let worstStall = 0;
-    let worstBurst = 0;
-    const tick = () => {
-      if (!alive) return;
-      const now = Date.now();
-      const gap = now - last;
-      last = now;
-      if (gap > STALL_THRESHOLD_MS && gap > worstStall) worstStall = gap;
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    const sampler = setInterval(() => {
-      const mounts = mountTickRef.current;
-      mountTickRef.current = 0;
-      if (mounts > worstBurst) worstBurst = mounts;
-      setDiagnostics((prev) => ({
-        stallMs: worstStall,
-        mountBurst: worstBurst,
-        heightDelta: prev.heightDelta,
-      }));
-    }, 100);
-    return () => {
-      alive = false;
-      cancelAnimationFrame(raf);
-      clearInterval(sampler);
-    };
-  }, [diagnosticsOn]);
 
   const [source, setSource] = useState<PhotoSource>({ kind: 'all' });
   const [assets, setAssets] = useState<MediaLibrary.Asset[]>([]);
@@ -589,21 +516,6 @@ export function LibraryPicker({
 
   const cellSize = (width - GUTTER * (COLUMNS - 1)) / COLUMNS;
 
-  // Measured content height vs. the height the row geometry implies. These
-  // should agree; a non-zero delta means the list is laying rows out somewhere
-  // other than where getItemLayout claims they are, which is the failure this
-  // screen spent a long time chasing by other means.
-  const onContentSizeChange = useCallback(
-    (_w: number, measuredHeight: number) => {
-      if (!diagnosticsOn) return;
-      const rows = Math.ceil(assets.length / COLUMNS);
-      // `gap` spaces rows apart without a trailing gap after the last one.
-      const expected = rows > 0 ? rows * (cellSize + GUTTER) - GUTTER : 0;
-      setDiagnostics((prev) => ({ ...prev, heightDelta: Math.round(measuredHeight - expected) }));
-    },
-    [diagnosticsOn, cellSize, assets.length]
-  );
-
   /**
    * Fixed-height rows, so a fling never has to measure a row before it can
    * scroll to it.
@@ -643,10 +555,9 @@ export function LibraryPicker({
         selected={item.id === selectedId}
         placeholderColor={colors.imagePlaceholder}
         onPress={handleSelect}
-        onMount={diagnosticsOn ? noteCellMount : undefined}
       />
     ),
-    [cellSize, selectedId, colors.imagePlaceholder, handleSelect, diagnosticsOn, noteCellMount]
+    [cellSize, selectedId, colors.imagePlaceholder, handleSelect]
   );
 
   const keyExtractor = useCallback((item: MediaLibrary.Asset) => item.id, []);
@@ -669,18 +580,7 @@ export function LibraryPicker({
         ) : (
           <View style={styles.headerSpacer} />
         )}
-        {/* Long-press is the only way in or out of the diagnostics HUD --
-            deliberately undiscoverable, since this ships. */}
-        <Pressable
-          onLongPress={() => {
-            setDiagnostics(NO_DIAGNOSTICS);
-            setDiagnosticsOn((on) => !on);
-          }}
-          delayLongPress={800}
-          accessibilityRole="header"
-        >
-          <Text style={[styles.title, { color: colors.text }]}>New post</Text>
-        </Pressable>
+        <Text style={[styles.title, { color: colors.text }]}>New post</Text>
         <Pressable
           onPress={handleNext}
           hitSlop={12}
@@ -801,7 +701,6 @@ export function LibraryPicker({
         style={styles.list}
         onScroll={onScroll}
         onScrollBeginDrag={onScrollBeginDrag}
-        onContentSizeChange={onContentSizeChange}
         scrollEventThrottle={16}
         onEndReached={onEndReached}
         onEndReachedThreshold={1.5}
@@ -836,14 +735,6 @@ export function LibraryPicker({
           )
         }
       />
-
-      {diagnosticsOn ? (
-        <View style={styles.hud} pointerEvents="none">
-          <Text style={styles.hudText}>
-            {`stall ${diagnostics.stallMs}ms   mount ${diagnostics.mountBurst}/100ms   Δh ${diagnostics.heightDelta}px   n=${assets.length}`}
-          </Text>
-        </View>
-      ) : null}
 
       <Modal
         visible={albumsOpen}
@@ -903,23 +794,16 @@ const GridCell = memo(function GridCell({
   selected,
   placeholderColor,
   onPress,
-  onMount,
 }: {
   asset: MediaLibrary.Asset;
   size: number;
   selected: boolean;
   placeholderColor: string;
   onPress: (asset: MediaLibrary.Asset) => void;
-  /** Counts toward the HUD's mount-burst figure. Undefined when it's off. */
-  onMount?: () => void;
 }) {
   // Normally just `asset.uri`. See the fallback below for when it isn't.
   const [uri, setUri] = useState(asset.uri);
   useEffect(() => setUri(asset.uri), [asset.uri]);
-
-  useEffect(() => {
-    onMount?.();
-  }, [asset.id, onMount]);
 
   return (
     <Pressable
@@ -1160,18 +1044,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
-  // Deliberately not themed: this is an instrument, not part of the product,
-  // and it has to stay legible over whatever photos are behind it.
-  hud: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    backgroundColor: 'rgba(0,0,0,0.75)',
-  },
-  hudText: { color: '#0F0', fontSize: 11, fontVariant: ['tabular-nums'] },
   listSpinner: { paddingVertical: spacing.xxl },
   emptyState: { paddingVertical: spacing.xxl, alignItems: 'center' },
   backdrop: { ...StyleSheet.absoluteFill },
