@@ -63,7 +63,7 @@ so re-applying a file after a tweak is safe.
 | `0009_notifications.sql` | `push_tokens`, `dm_messages.read_at`, `profiles.activity_read_at` — see [Push notifications](#5-push-notifications) below for the Edge Function + webhooks this depends on |
 | `0011_drake_bot.sql` | `pg_cron` schedule that calls the `daily-drake` Edge Function (originally twice a day, now once — see `0039_drake_daily_once.sql`) — see [Drake bot](#6-drake-bot) below |
 | `0012_drake_bot_photo_log.sql` | `drake_bot_photo_log` — tracks which photos `daily-drake` has already posted, so it cycles through the pool instead of repeating |
-| `0013_drake_dm.sql` | `pg_cron` schedule that calls the `drake-dm` Edge Function every 4 hours — see [Drake DMs](#drake-dms) below |
+| `0013_drake_dm.sql` | `pg_cron` schedule that calls the `drake-dm` Edge Function (originally every 4 hours, now once a day and gated on human activity — see `0042_drake_cadence.sql`) — see [Drake DMs](#drake-dms) below |
 | `0014_dm_multi_thread.sql` | `dm_messages.thread_with_id` — a thread's real identity is now (thread_user_id, thread_with_id), so a Drake DM no longer lands mixed into the ishaan thread |
 | `0015_home_feed_comment_preview.sql` | `home_feed()` gains `preview_comments` — the 2 most recent comments per post, for `PostCard`'s inline preview |
 | `0016_welcome_email_log.sql` | `profiles.welcome_emailed_at` — lets `welcome-email` skip an account it's already emailed |
@@ -336,9 +336,16 @@ whenever called -- so any cron cadence works without touching
 
 `@prosecco_daddy` also DMs a random account (never `ishaan` — he sees every
 thread via his own inbox regardless, so excluding him just avoids a "thread
-with yourself" row) every 4 hours, with a joke/lyric-flavored one-liner from
+with yourself" row) once a day, with a joke/lyric-flavored one-liner from
 a fixed list in `supabase/functions/drake-dm/index.ts`. Same shape as the
 photo bot: an Edge Function on a `pg_cron` timer.
+
+The cron job only fires if a human posted something in the last 24 hours (see
+`0042_drake_cadence.sql`). It used to run every 4 hours unconditionally, which
+had the bot sending 6 DMs a day against a human baseline of ~2.7 posts a day —
+the bot was the loudest thing on the app. The rule now is that Drake never
+out-talks the people: 1 DM/day plus the comment job's 1/day ceiling, and
+nothing at all on a day when nobody posted.
 
 This is the one thing in the app that writes into someone else's DM thread
 other than `ishaan` — it works because the function runs on the service-role
@@ -358,9 +365,10 @@ labeled instead of looking like it came from `ishaan`.
    — then check that some account (not `ishaan`) got a new DM from
    `@prosecco_daddy`.
 
-To change the cadence, edit the cron expression in `0013_drake_dm.sql` and
-re-run it. To change what it says, edit the `MESSAGES` array in
-`supabase/functions/drake-dm/index.ts` and redeploy the function.
+To change the cadence, edit the cron expression in `0042_drake_cadence.sql`
+(the current one — `0013` is superseded) and re-run it. To change what it says,
+edit the `MESSAGES` array in `supabase/functions/drake-dm/index.ts` and
+redeploy the function.
 
 ### Drake replies
 
