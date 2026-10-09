@@ -61,7 +61,7 @@ so re-applying a file after a tweak is safe.
 | `0007_revoke_default_grants.sql` | closes the default-privilege gap that let a client forge `like_count` |
 | `0008_dm.sql` | `dm_messages`, `dm_inbox()` — every thread is with "ishaan" |
 | `0009_notifications.sql` | `push_tokens`, `dm_messages.read_at`, `profiles.activity_read_at` — see [Push notifications](#5-push-notifications) below for the Edge Function + webhooks this depends on |
-| `0011_drake_bot.sql` | `pg_cron` schedule that calls the `daily-drake` Edge Function (originally twice a day, now once — see `0039_drake_daily_once.sql`) — see [Drake bot](#6-drake-bot) below |
+| `0011_drake_bot.sql` | `pg_cron` schedule that calls the `daily-drake` Edge Function (originally twice a day, then once — `0039_drake_daily_once.sql` — now 3x/week at random, `0043_drake_post_random.sql`) — see [Drake bot](#6-drake-bot) below |
 | `0012_drake_bot_photo_log.sql` | `drake_bot_photo_log` — tracks which photos `daily-drake` has already posted, so it cycles through the pool instead of repeating |
 | `0013_drake_dm.sql` | `pg_cron` schedule that calls the `drake-dm` Edge Function (originally every 4 hours, now once a day and gated on human activity — see `0042_drake_cadence.sql`) — see [Drake DMs](#drake-dms) below |
 | `0014_dm_multi_thread.sql` | `dm_messages.thread_with_id` — a thread's real identity is now (thread_user_id, thread_with_id), so a Drake DM no longer lands mixed into the ishaan thread |
@@ -80,7 +80,7 @@ so re-applying a file after a tweak is safe.
 | `0031_post_blocks.sql` | `post_blocks` — lets one account hide their posts from a specific other account (post visibility only, not a general block). Admin-managed, no client UI yet; add a row with a plain insert |
 | `0034_post_tags.sql` | `post_tags` — tagging people on a photo, positioned as fractions of the displayed frame. `home_feed`/`explore_feed` gain a `tags` column; `activity_feed` gains a `'tag'` kind. Needs a fifth `notify` webhook — see [Push notifications](#5-push-notifications) |
 | `0038_comment_likes.sql` | `comment_likes` — a heart on an individual comment, separate from liking the post. Adds `comments.like_count`. Needs a sixth `notify` webhook — see [Push notifications](#5-push-notifications) |
-| `0039_drake_daily_once.sql` | Reschedules `daily-drake-post` from twice a day down to once, at 15:30 UTC — see [Drake bot](#6-drake-bot) below |
+| `0039_drake_daily_once.sql` | Reschedules `daily-drake-post` from twice a day down to once, at 15:30 UTC — superseded by `0043_drake_post_random.sql` — see [Drake bot](#6-drake-bot) below |
 | `0040_cron_health.sql` | Re-registers `drake-comment-reply-flush-every-minute` (second silent death, after 0030) and adds `cron_health()`, a service-role-only RPC exposing `cron.job`, recent `cron.job_run_details` and recent `pg_net` responses over REST — re-run whenever any `pg_cron` job goes quiet. See [Drake comments](#drake-comments) |
 
 ### Option A — SQL editor (no tooling required)
@@ -282,9 +282,10 @@ created a webhook through the UI before.
 
 ## 6. Drake bot
 
-A joke account, `@prosecco_daddy`, that posts a Drake photo once a day and
-swaps its own avatar once every 3 posts (once every 3 days, at the current
-once-a-day posting cadence), both picked from a pool of 59 curated photos
+A joke account, `@prosecco_daddy`, that posts a Drake photo about three times
+a week on unpredictable days (see `0043_drake_post_random.sql`) and swaps its
+own avatar once every 3 posts (so roughly weekly, at the current posting
+cadence), both picked from a pool of 59 curated photos
 pre-uploaded to
 the `photos` storage bucket under the bot's own user folder
 (`photos/<bot_id>/source-N.jpg`) -- originally a pool of 22 Wikimedia Commons
@@ -325,12 +326,16 @@ via `expo-image`'s `contentFit="cover"`, which centers by default.
    — then check `@prosecco_daddy`'s profile in the app for a new post and a
    changed avatar.
 
-To change the cadence or time, edit the cron expression in
-`0011_drake_bot.sql` and re-run the file — `cron.schedule` upserts by job
-name, so this updates the existing schedule rather than creating a second
-one. The function itself has no notion of "once a day" -- it just posts once
-whenever called -- so any cron cadence works without touching
-`daily-drake/index.ts`.
+To change the cadence, edit `0043_drake_post_random.sql` (the current
+schedule — `0011` and `0039` are superseded) and re-run it. That job ticks
+hourly and decides whether to post in SQL: an 8% coin flip, a hard floor of
+48 hours since his last post, and a ceiling of 3 posts per rolling 7 days.
+Simulated, that lands 2-3 posts a week with a median gap of 2.5 days and no
+two consecutive days, ever.
+
+All of the cadence lives in the cron expression because the function itself
+has no notion of "once a day" -- it just posts once whenever called -- so any
+cadence works without touching `daily-drake/index.ts`.
 
 ### Drake DMs
 
