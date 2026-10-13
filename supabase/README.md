@@ -80,7 +80,7 @@ so re-applying a file after a tweak is safe.
 | `0031_post_blocks.sql` | `post_blocks` — lets one account hide their posts from a specific other account (post visibility only, not a general block). Admin-managed, no client UI yet; add a row with a plain insert |
 | `0034_post_tags.sql` | `post_tags` — tagging people on a photo, positioned as fractions of the displayed frame. `home_feed`/`explore_feed` gain a `tags` column; `activity_feed` gains a `'tag'` kind. Needs a fifth `notify` webhook — see [Push notifications](#5-push-notifications) |
 | `0038_comment_likes.sql` | `comment_likes` — a heart on an individual comment, separate from liking the post. Adds `comments.like_count`. Needs a sixth `notify` webhook — see [Push notifications](#5-push-notifications) |
-| `0039_drake_daily_once.sql` | Reschedules `daily-drake-post` from twice a day down to once, at 15:30 UTC — superseded by `0043_drake_post_random.sql` — see [Drake bot](#6-drake-bot) below |
+| `0039_drake_daily_once.sql` | Reschedules `daily-drake-post` from twice a day down to once, at 15:30 UTC — superseded by `0043`/`0044` — see [Drake bot](#6-drake-bot) below |
 | `0040_cron_health.sql` | Re-registers `drake-comment-reply-flush-every-minute` (second silent death, after 0030) and adds `cron_health()`, a service-role-only RPC exposing `cron.job`, recent `cron.job_run_details` and recent `pg_net` responses over REST — re-run whenever any `pg_cron` job goes quiet. See [Drake comments](#drake-comments) |
 
 ### Option A — SQL editor (no tooling required)
@@ -326,12 +326,15 @@ via `expo-image`'s `contentFit="cover"`, which centers by default.
    — then check `@prosecco_daddy`'s profile in the app for a new post and a
    changed avatar.
 
-To change the cadence, edit `0043_drake_post_random.sql` (the current
-schedule — `0011` and `0039` are superseded) and re-run it. That job ticks
-hourly and decides whether to post in SQL: an 8% coin flip, a hard floor of
-48 hours since his last post, and a ceiling of 3 posts per rolling 7 days.
-Simulated, that lands 2-3 posts a week with a median gap of 2.5 days and no
-two consecutive days, ever.
+To change the cadence, edit `0044_drake_proportional.sql` (the current
+schedule — `0011`, `0039` and `0043` are superseded) and re-run it. That job
+ticks hourly and decides whether to post in SQL: an 8% coin flip, a hard floor
+of 48 hours since his last post, and a ceiling of `least(3, human posts in the
+last 7 days)`. Simulated against a healthy app that lands 2-3 posts a week
+with a median gap of 2.5 days and no two consecutive days, ever — but the
+ceiling tracks real activity, so on a quiet week he posts less, and on a dead
+week he posts nothing. He can never have posted more in the trailing week than
+the people did.
 
 All of the cadence lives in the cron expression because the function itself
 has no notion of "once a day" -- it just posts once whenever called -- so any
@@ -345,8 +348,11 @@ with yourself" row) once a day, with a joke/lyric-flavored one-liner from
 a fixed list in `supabase/functions/drake-dm/index.ts`. Same shape as the
 photo bot: an Edge Function on a `pg_cron` timer.
 
-The cron job only fires if a human posted something in the last 24 hours (see
-`0042_drake_cadence.sql`). It used to run every 4 hours unconditionally, which
+The cron job only fires if a human posted in the last 24 hours *and* the
+humans have posted at least 3 times in the last 7 days (see
+`0042_drake_cadence.sql`, tightened by `0044_drake_proportional.sql`) — the
+first condition stops him talking into a dead day, the second stops him
+cold-DMing an app that's barely in use. It used to run every 4 hours unconditionally, which
 had the bot sending 6 DMs a day against a human baseline of ~2.7 posts a day —
 the bot was the loudest thing on the app. The rule now is that Drake never
 out-talks the people: 1 DM/day plus the comment job's 1/day ceiling, and
