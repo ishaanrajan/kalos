@@ -41,6 +41,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FILTER_NAMES } from '../lib/filters';
 import { searchTracks } from '../lib/music';
 
 // ---------------------------------------------------------------------------
@@ -205,11 +206,18 @@ const FOLLOW_GRAPH: Record<string, string[]> = {
   'viral_stranger': [],
 };
 
-const FILTERS = [
-  'Normal', 'Valencia', 'X-Pro II', 'Nashville', 'Amaro', 'Rise', 'Hudson',
-  'Lo-Fi', 'Earlybird', 'Sutro', 'Toaster', 'Brannan', 'Inkwell', 'Willow',
-  'Mayfair', 'Sierra', 'Kelvin', 'Hefe', '1977', 'Walden',
-];
+/**
+ * Derived from the real roster, never hand-listed. The hardcoded copy this
+ * replaces had drifted until 18 of its 20 names no longer existed in
+ * lib/filters.ts -- and because getFilter() silently falls back to Normal for
+ * a name it doesn't recognise, seeded posts claimed a filter and then rendered
+ * unfiltered, with nothing anywhere reporting a problem.
+ *
+ * 'Normal' is dropped because postUpload.ts stores it as null rather than the
+ * literal string, so including it here would seed rows in a shape the app
+ * itself never writes.
+ */
+const FILTERS = FILTER_NAMES.filter((name) => name !== 'Normal');
 
 /**
  * Tracks for seeded posts, fetched live from the catalog at seed time rather

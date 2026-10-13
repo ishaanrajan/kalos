@@ -1375,7 +1375,9 @@ export function useHasPostedToday() {
 /** The device's local calendar day, e.g. "2026-09-14". */
 function localDayKey(): string {
   const d = new Date();
-  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${month}-${day}`;
 }
 
 /** Posts of your own required before Explore's daily gate even applies. */

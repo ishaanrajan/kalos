@@ -176,11 +176,14 @@ Deno.serve(async () => {
 
   const postUrl = await pickUnusedPhoto();
 
-  // Avatar changes once every 3 posts rather than every run -- since
-  // daily-drake now fires once a day (0039_drake_daily_once.sql), that's
-  // once every 3 days. Gated on how many posts the bot has made so far
-  // (not a date), so a missed or extra cron fire just shifts the count
-  // instead of ever skipping two swaps in a row.
+  // Avatar changes once every 3 posts rather than every run. That used to
+  // mean once every 3 days, back when the cron fired daily; since
+  // 0043/0044 cut posting to ~3x a week and tied it to how much the humans
+  // are posting, it now means roughly once a week, and less than that on a
+  // quiet week. Gated on how many posts the bot has made so far (not a
+  // date), so a missed or extra cron fire just shifts the count instead of
+  // ever skipping two swaps in a row -- which is exactly why a variable
+  // posting cadence doesn't break it.
   const { count: postCount, error: countErr } = await db
     .from('posts')
     .select('id', { count: 'exact', head: true })
