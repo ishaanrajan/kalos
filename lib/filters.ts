@@ -251,90 +251,101 @@ export const FILTERS: Filter[] = [
 
   // -------------------------------------------------------------------------
   // The roster the picker offers: Instagram's place-named batch from October
-  // 2015, which is the era this app rebuilds. Values are ported from
-  // instagram.css (picturepan2), which is the only published recreation that
-  // covers this batch -- CSSgram and pilgram both stop at the older set. Each
-  // recipe below is that project's `filter:` chain in the same order, plus its
-  // `::before` overlay colour and mix-blend-mode.
+  // 2015, which is the era this app rebuilds.
+  //
+  // The NAMES are Instagram's. The VALUES are not, and deliberately so. They
+  // were ported verbatim from instagram.css at first, on the theory that
+  // published numbers beat invented ones -- but that project's recreations of
+  // this particular batch are near-duplicates of each other: eight of the ten
+  // are the same sepia + contrast + brightness + saturate shape, and six of
+  // them use the identical olive overlay #7D6918 or its near-twin #9EAF1E.
+  // Measured, the closest pair sat at mean dE 5.9 and every single colour
+  // filter had a neighbour under 11, which is precisely the "they all look the
+  // same" complaint this roster exists to answer. Those numbers were never
+  // Instagram's real LUTs anyway, just one person's CSS approximation, so
+  // fidelity to them bought nothing and cost the thing that matters.
+  //
+  // So each filter below is aimed at its own axis -- cool-clean, cool-matte,
+  // vivid-warm, deep-brown, magenta, washed, green, split-tone, dark-amber,
+  // neutral-crush -- and the separation is enforced, not eyeballed:
+  // scripts/verify-filter-distinctness.ts fails the build if any two filters
+  // land closer than a threshold in CIELAB across realistic probe colours.
+  // Change a recipe, run that script. Don't tune these by eye.
   // -------------------------------------------------------------------------
   {
-    // Bright and clean, the lightest touch here. No overlay.
+    // The lightest touch here: a touch cooler and brighter, nothing else.
+    // Deliberately the one that sits closest to Normal.
     name: 'Skyline',
-    matrix: compose(sepia(0.15), contrast(1.25), brightness(1.25), saturate(1.2)),
+    matrix: compose(contrast(1.12), brightness(1.12), saturate(1.05), temperature(-0.05)),
   },
   {
-    // Bright with a cool blue veil -- the only cool-cast filter in the batch.
+    // Cool blue with lifted blacks -- the matte one. The only cool cast in the
+    // set besides Skyline's much subtler one.
     name: 'Brooklyn',
-    matrix: compose(sepia(0.25), contrast(1.25), brightness(1.25), hueRotate(5)),
-    overlay: solid('#7FBBE3FF', 'overlay', 0.2),
+    matrix: compose(sepia(0.1), contrast(1.0), brightness(1.05), saturate(0.9), fade(0.1)),
+    overlay: solid('#5B8CB8FF', 'overlay', 0.28),
   },
   {
-    // Warm and bright, olive held back by a light `darken` pass so the
-    // highlights don't go chalky.
+    // Vivid warm gold, punchy. Screened rather than multiplied, so it lifts
+    // instead of weighing the frame down the way Ashby does.
     name: 'Ginza',
-    matrix: compose(
-      sepia(0.25),
-      contrast(1.15),
-      brightness(1.2),
-      saturate(1.35),
-      hueRotate(-5),
-    ),
-    overlay: solid('#7D6918FF', 'darken', 0.15),
+    matrix: compose(sepia(0.2), contrast(1.22), brightness(1.06), saturate(1.5)),
+    overlay: solid('#E8A33DFF', 'screen', 0.14),
   },
   {
-    // Ginza's heavier sibling: more sepia in the base, and the olive goes on
-    // in `overlay` rather than `darken`, so it tints mid-tones instead of
-    // only pulling the brights down.
+    // Deep brown vintage print: contrast and saturation both pulled *below* 1,
+    // which nothing else here does.
     name: 'Vesper',
-    matrix: compose(sepia(0.35), contrast(1.15), brightness(1.2), saturate(1.3)),
-    overlay: solid('#7D6918FF', 'overlay', 0.25),
+    matrix: compose(sepia(0.45), contrast(0.92), brightness(1.0), saturate(0.75), fade(0.1)),
+    overlay: solid('#7A5230FF', 'multiply', 0.2),
   },
   {
-    // The most saturated of the bright ones, with the olive darkened harder.
+    // The pink one. Hue rotated toward magenta and screened pink over the top;
+    // nothing else in the roster goes anywhere near this part of the wheel.
     name: 'Charmes',
-    matrix: compose(
-      sepia(0.25),
-      contrast(1.25),
-      brightness(1.25),
-      saturate(1.35),
-      hueRotate(-5),
-    ),
-    overlay: solid('#7D6918FF', 'darken', 0.25),
+    matrix: compose(sepia(0.1), contrast(1.1), brightness(1.08), saturate(1.2), hueRotate(-12)),
+    overlay: solid('#E86AA8FF', 'screen', 0.2),
   },
   {
-    // `lighten` at 0.45 is the strongest overlay in the batch -- it lifts
-    // anything darker than the olive toward it, which is what gives this its
-    // hazy, washed-up-film look rather than a tint.
+    // Washed-out hazy film: the heaviest fade in the set over the softest
+    // contrast, with a pale `lighten` that flattens the shadows further.
     name: 'Stinson',
-    matrix: compose(sepia(0.35), contrast(1.25), brightness(1.1), saturate(1.25)),
-    overlay: solid('#7D6918FF', 'lighten', 0.45),
+    matrix: compose(sepia(0.25), contrast(0.85), brightness(1.1), saturate(0.95), fade(0.22)),
+    overlay: solid('#EDE0C8FF', 'lighten', 0.3),
   },
   {
-    // Very high saturation over a gentle tone curve, then a yellow-green
-    // `darken`. The loudest colour in the set.
+    // The green one -- hue pushed the opposite way from Charmes, over a
+    // yellow-green overlay.
     name: 'Maven',
-    matrix: compose(sepia(0.35), contrast(1.05), brightness(1.05), saturate(1.75)),
-    overlay: solid('#9EAF1EFF', 'darken', 0.25),
+    matrix: compose(sepia(0.12), contrast(1.15), brightness(1.02), saturate(1.5), hueRotate(20)),
+    overlay: solid('#9EAF1EFF', 'overlay', 0.26),
   },
   {
-    // Heavy sepia base, soft contrast, same yellow-green as Maven but blended
-    // as `overlay` -- warmer and flatter, less acid.
+    // Split tone: teal shadows from the uneven `fade` triple, warm highlights
+    // from the multiplied peach. The only filter here that pulls the two ends
+    // of the tonal range in opposite directions.
     name: 'Helena',
-    matrix: compose(sepia(0.5), contrast(1.05), brightness(1.05), saturate(1.35)),
-    overlay: solid('#9EAF1EFF', 'overlay', 0.25),
+    matrix: compose(
+      sepia(0.2),
+      contrast(1.15),
+      brightness(1.04),
+      saturate(1.15),
+      fade([0.0, 0.07, 0.2]),
+    ),
+    overlay: solid('#FFB38AFF', 'multiply', 0.34),
   },
   {
-    // Heaviest sepia and the highest saturation, with no brightness lift at
-    // all -- dense and golden.
+    // Dense and dark: the only one that takes brightness *below* 1 and then
+    // multiplies a deep amber over it.
     name: 'Ashby',
-    matrix: compose(sepia(0.5), contrast(1.2), saturate(1.8)),
-    overlay: solid('#7D6918FF', 'lighten', 0.35),
+    matrix: compose(sepia(0.35), contrast(1.3), brightness(0.92), saturate(1.3)),
+    overlay: solid('#8A4B12FF', 'multiply', 0.22),
   },
   {
-    // Hard contrast, no brightness lift, no overlay. The one filter here that
-    // works by crushing rather than lifting.
+    // Hard neutral crush: the most contrast in the set, slightly darkened, and
+    // no colour cast at all. Works by crushing rather than tinting.
     name: 'Dogpatch',
-    matrix: compose(sepia(0.35), saturate(1.1), contrast(1.5)),
+    matrix: compose(contrast(1.55), brightness(0.93), saturate(1.0)),
   },
 
   // The two monochromes. Not from the October-2015 place-named batch -- that
