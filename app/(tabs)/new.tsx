@@ -27,12 +27,14 @@ import { FilterStrip } from '../../components/FilterStrip';
 import { FilterPreview } from '../../components/FilterPreview';
 import { EmptyState } from '../../components/EmptyState';
 import { LibraryPicker } from '../../components/LibraryPicker';
+import { BoomerangCapture } from '../../components/BoomerangCapture';
 import { CropAdjust } from '../../components/CropAdjust';
 import type { CropAdjustHandle } from '../../components/CropAdjust';
 import { displayAspectRatio } from '../../components/PostCard';
 import { getFilter, NORMAL_FILTER } from '../../lib/filters';
-import type { CropRect, ImageSize, PostTag } from '../../lib/types';
-import { downscaleForPreview, prepareSource } from '../../lib/bake';
+import type { CropRect, ImageSize, PostBoomerang, PostTag } from '../../lib/types';
+import { bakeFilteredImage, downscaleForPreview, prepareSource, stitchBoomerangSheet } from '../../lib/bake';
+import { BOOMERANG_LAYOUT, frameRect } from '../../lib/boomerang';
 import { getPostUploadState, startPost } from '../../lib/postUpload';
 import { useFollowList, useUpdateProfile } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
@@ -98,7 +100,7 @@ type Picked = {
  * scroll position were gone. Now Back returns you to exactly the framing you
  * left. `libraryReady` is that session flag.
  */
-type Step = 'library' | 'adjust' | 'filter' | 'share' | 'music' | 'tag';
+type Step = 'library' | 'adjust' | 'boomerang' | 'filter' | 'share' | 'music' | 'tag';
 
 /**
  * Requests a permission, then re-checks it once if the request came back
@@ -154,6 +156,12 @@ export default function NewPost() {
   // library permission. 'filter' is safe as a placeholder: its branch sits
   // behind the `!picked` guard, which is true until a crop is confirmed.
   const [step, setStep] = useState<Step>('filter');
+  /**
+   * Set only for a boomerang session. Carries through to the posted row, and
+   * is what makes `picked.uri` a sprite sheet rather than a still -- see
+   * PostBoomerang in lib/types.
+   */
+  const [boomerang, setBoomerang] = useState<PostBoomerang | null>(null);
   /** True from the moment the library is allowed to show until the session ends. */
   const [libraryReady, setLibraryReady] = useState(false);
   const [rawPicked, setRawPicked] = useState<RawPick | null>(null);
@@ -291,6 +299,75 @@ export default function NewPost() {
    * error would be throwing away a working screen over a detour that didn't
    * work out.
    */
+  const openBoomerang = useCallback(() => {
+    setStep('boomerang');
+  }, []);
+
+  /**
+   * Burst -> sheet -> straight to the filter step.
+   *
+   * A boomerang skips 'adjust' deliberately. CropAdjust exists to give a
+   * freshly shot photo a framing, but these frames were captured square and
+   * stitched square -- there is no framing left to choose, and offering a crop
+   * surface over a sprite sheet would let someone crop the grid itself.
+   *
+   * The preview and thumb are frame 0, cut out of the sheet, so every existing
+   * preview surface (FilterPreview, FilterStrip) keeps working on a single
+   * still. You pick the filter against the frame it opens on, and because the
+   * whole sheet gets one colour matrix at bake time, the filter you chose is
+   * the filter every frame ends up with.
+   */
+  const handleBoomerangCaptured = useCallback(
+    async (frameUris: string[]) => {
+      try {
+        const sheet = await stitchBoomerangSheet(frameUris);
+        const layout: PostBoomerang = { ...BOOMERANG_LAYOUT, frames: sheet.frames };
+        // frameRect wants the sheet's real size; `sheet` reports one frame.
+        const sheetSize = {
+          width: sheet.width * layout.cols,
+          height: sheet.height * layout.rows,
+        };
+        const cut = frameRect(0, layout, sheetSize);
+        const [preview, thumb] = await Promise.all([
+          bakeFilteredImage({
+            uri: sheet.uri,
+            filter: NORMAL_FILTER,
+            strength: 1,
+            crop: cut,
+            maxEdge: PREVIEW_MAX_EDGE,
+            preNormalized: true,
+          }),
+          bakeFilteredImage({
+            uri: sheet.uri,
+            filter: NORMAL_FILTER,
+            strength: 1,
+            crop: cut,
+            maxEdge: THUMB_SOURCE_EDGE,
+            preNormalized: true,
+          }),
+        ]);
+        setBoomerang(layout);
+        setPicked({
+          uri: sheet.uri,
+          width: sheet.width,
+          height: sheet.height,
+          previewUri: preview.uri,
+          thumbUri: thumb.uri,
+          assetId: sheet.uri,
+        });
+        setFilterName(NORMAL_FILTER.name);
+        setStep('filter');
+      } catch (e) {
+        Alert.alert(
+          'Could not make that boomerang',
+          e instanceof Error ? e.message : 'The frames could not be stitched together.'
+        );
+        setStep('library');
+      }
+    },
+    []
+  );
+
   const openCamera = useCallback(async () => {
     if (picking.current) return;
     picking.current = true;
@@ -379,6 +456,7 @@ export default function NewPost() {
       setLibraryReady(false);
       setRawPicked(null);
       setPicked(null);
+      setBoomerang(null);
       setFilterName(NORMAL_FILTER.name);
       setCaption('');
       setMusicTrack(null);
@@ -503,6 +581,7 @@ export default function NewPost() {
       filter,
       caption: caption.trim() || null,
       music: musicTrack ? trackToPostMusic(musicTrack, musicStartMs) : null,
+      boomerang,
       tags,
       tempFiles: [picked.uri, picked.previewUri, picked.thumbUri],
       onSuccess: async () => {
@@ -609,6 +688,7 @@ export default function NewPost() {
         onCancel={discard}
         canCancel={!isForcedFirstPost}
         onOpenCamera={openCamera}
+        onOpenBoomerang={openBoomerang}
         onNext={prepareFramed}
       />
     </View>
@@ -618,6 +698,13 @@ export default function NewPost() {
 
   if (step === 'library') {
     screen = null;
+  } else if (step === 'boomerang') {
+    screen = (
+      <BoomerangCapture
+        onCaptured={handleBoomerangCaptured}
+        onCancel={() => setStep('library')}
+      />
+    );
   } else if (step === 'adjust' && rawPicked) {
     const frame = { width: SCREEN, height: SCREEN / frameAspectRatio };
     screen = (

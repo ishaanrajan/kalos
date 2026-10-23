@@ -18,6 +18,7 @@ This is the whole point, so it's worth being explicit about:
 ## What is here
 
 - Email/password accounts
+- Boomerangs — a twelve-frame burst stitched into one sprite sheet and looped forward-and-back, the way Instagram's own October 2015 release worked
 - Square photos, 12 filters named for Instagram's October 2015 batch — Skyline, Brooklyn, Ginza, Vesper, Charmes, Stinson, Maven, Helena, Ashby, Dogpatch, plus Inkwell and Moon in black and white — each aimed at a different axis and held apart by a measured minimum distance in CIELAB (`scripts/verify-filter-distinctness.ts`), with a strength slider
 - A chronological feed of the people you follow
 - Explore, sourced purely from your social graph — a post someone you follow liked, or a post by someone they follow

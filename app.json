@@ -2,7 +2,7 @@
   "expo": {
     "name": "Kalos",
     "slug": "kalos",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "kalos",
@@ -47,6 +47,13 @@
           "photosPermission": "Kalos needs access to your photos so you can post them.",
           "savePhotosPermission": false,
           "isAccessMediaLocationEnabled": true
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Kalos uses the camera to take photos and record boomerangs for your posts.",
+          "recordAudioAndroid": false
         }
       ],
       "expo-notifications",

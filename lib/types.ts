@@ -46,6 +46,9 @@ export interface Post {
   filter_name: string | null;
   /** Track attached at capture time, or null. Chosen once, like the filter. */
   music: PostMusic | null;
+  /** Set only if this post is a boomerang; see PostBoomerang for what
+   * image_path then contains. Null for every ordinary still. */
+  boomerang: PostBoomerang | null;
   like_count: number;
   comment_count: number;
   created_at: Timestamp;
@@ -77,6 +80,29 @@ export interface PostMusic {
 
 /** How much of a track's preview plays on a post. */
 export const MUSIC_CLIP_SECONDS = 15;
+
+/**
+ * How to read a boomerang post's image (see 0046_post_boomerang.sql).
+ *
+ * The post's `image_path` is a single JPEG sprite sheet holding `frames`
+ * frames in a `cols` x `rows` grid, row-major from the top left. This object
+ * is the only thing that distinguishes it from an ordinary still -- null here
+ * means the image is exactly what it looks like.
+ *
+ * Note that `Post.width`/`height` describe ONE FRAME, not the sheet. Every
+ * layout path in the app derives a post's aspect ratio from those two numbers,
+ * and what the viewer sees is a frame, so storing the sheet's dimensions there
+ * would lay every boomerang out as a wide 4:3 block with eleven extra frames
+ * visible in it. Multiply by cols/rows to get the file's real size.
+ */
+export interface PostBoomerang {
+  /** How many frames are actually used. May be less than cols * rows. */
+  frames: number;
+  cols: number;
+  rows: number;
+  /** Playback rate of the forward pass. The reverse pass uses the same rate. */
+  fps: number;
+}
 
 /**
  * A GIF attached to a comment, from GIPHY (see lib/giphy.ts).

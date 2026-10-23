@@ -26,9 +26,11 @@ import { randomUUID } from 'expo-crypto';
 import { File } from 'expo-file-system';
 
 import { bakeFilteredImage, downscaleForPreview } from './bake';
+import { frameRect } from './boomerang';
+import { NORMAL_FILTER } from './filters';
 import { PHOTOS_BUCKET, supabase } from './supabase';
 import { setUpdatePromptSuppressed } from './updates';
-import type { Filter, PostMusic, PostTag } from './types';
+import type { Filter, PostBoomerang, PostMusic, PostTag } from './types';
 
 export interface PostJob {
   userId: string;
@@ -39,6 +41,13 @@ export interface PostJob {
   filter: Filter;
   caption: string | null;
   music: PostMusic | null;
+  /**
+   * Set when `sourceUri` is a boomerang sprite sheet rather than a single
+   * still. Changes two things below -- which dimensions get stored, and what
+   * the grid thumbnail is cropped from -- and nothing else: the sheet is an
+   * ordinary JPEG, so bake, storage and RLS are all unchanged.
+   */
+  boomerang: PostBoomerang | null;
   /**
    * People tagged on the photo. Written after the post row exists; a failure
    * there is logged, never surfaced -- see runPipeline for why.
@@ -143,8 +152,22 @@ async function runPipeline(job: PostJob): Promise<PostResult> {
     // A small derivative for grid contexts (Explore, profile grids) --
     // generated from the already-filtered bake output so it matches what
     // actually got posted, not the unfiltered original.
+    // For a boomerang the bake output is the whole sprite sheet, so a plain
+    // downscale would make the grid thumbnail a tiny 4x3 contact sheet. Crop
+    // frame 0 out of it instead, which is also what makes profile grids and
+    // Explore show a boomerang as the still it opens on.
     stage = 'thumbnail';
-    const thumb = await downscaleForPreview(baked.uri, 400);
+    const thumb = job.boomerang
+      ? await bakeFilteredImage({
+          uri: baked.uri,
+          // Already filtered by the bake above -- this pass is purely a crop.
+          filter: NORMAL_FILTER,
+          strength: 1,
+          crop: frameRect(0, job.boomerang, { width: baked.width, height: baked.height }),
+          maxEdge: 400,
+          preNormalized: true,
+        })
+      : await downscaleForPreview(baked.uri, 400);
     job.tempFiles.push(thumb.uri);
     const [bytes, thumbBytes] = await Promise.all([
       new File(baked.uri).bytes(),
@@ -180,11 +203,15 @@ async function runPipeline(job: PostJob): Promise<PostResult> {
         author_id: job.userId,
         image_path: path,
         thumb_path: thumbPath,
-        width: baked.width,
-        height: baked.height,
+        // One frame, not the sheet: every layout path derives a post's aspect
+        // ratio from these, and what a viewer sees is a frame. See
+        // PostBoomerang in lib/types.
+        width: job.boomerang ? Math.round(baked.width / job.boomerang.cols) : baked.width,
+        height: job.boomerang ? Math.round(baked.height / job.boomerang.rows) : baked.height,
         caption: job.caption,
         filter_name: job.filter.name === 'Normal' ? null : job.filter.name,
         music: job.music,
+        boomerang: job.boomerang,
       })
       .select('id')
       .single();

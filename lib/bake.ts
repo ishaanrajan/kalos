@@ -24,6 +24,7 @@ import {
 import { File, Paths } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
+import { BOOMERANG_FRAME_EDGE, BOOMERANG_LAYOUT } from './boomerang';
 import { effectiveOverlay, lerpMatrix } from './filters';
 import type { CropRect, Filter, FilterOverlay, ImageSize } from './types';
 
@@ -299,6 +300,91 @@ export async function bakeFilteredImage({
   file.write(bytes);
 
   return { uri: file.uri, width: size.width, height: size.height };
+}
+
+/**
+ * Stitches a captured burst into one boomerang sprite sheet.
+ *
+ * Takes the frames in capture order and draws them into a
+ * BOOMERANG_COLS x BOOMERANG_ROWS grid, row-major, each cell a square of
+ * BOOMERANG_FRAME_EDGE. The result is an ordinary JPEG, so it travels through
+ * the existing upload path, storage bucket and RLS policies untouched -- the
+ * `boomerang` column on the post is the only thing that says it should be read
+ * as a grid rather than hung on a wall (see 0046_post_boomerang.sql).
+ *
+ * Each frame is centre-cropped to a square on the way in rather than squashed:
+ * the camera hands back whatever its sensor aspect is, and a boomerang that
+ * stretches faces horizontally is worse than one that trims the edges.
+ *
+ * Frames are decoded and disposed one at a time, which matters more here than
+ * anywhere else in this file -- holding twelve decoded bitmaps at once is how
+ * you get an out-of-memory on the device, and the whole point of the sheet is
+ * that only one image ever has to exist afterwards.
+ *
+ * Fewer frames than the layout expects is allowed: the capture can come up
+ * short if the shutter is slow, and the returned layout reports what was
+ * actually written so playback stops at the last real frame instead of
+ * flashing however much empty grid is left.
+ */
+export async function stitchBoomerangSheet(
+  frameUris: string[],
+  quality = 0.8
+): Promise<BakedImage & { frames: number }> {
+  if (frameUris.length < 2) {
+    throw new Error(`stitchBoomerangSheet: need at least 2 frames, got ${frameUris.length}`);
+  }
+  const { cols, rows } = BOOMERANG_LAYOUT;
+  const frames = Math.min(frameUris.length, cols * rows);
+  const edge = BOOMERANG_FRAME_EDGE;
+  const size: ImageSize = { width: cols * edge, height: rows * edge };
+
+  let surface: SkSurface | undefined;
+  let snapshot: SkImage | undefined;
+  let bytes: Uint8Array;
+
+  try {
+    surface = makeSurface(size);
+    const canvas = surface.getCanvas();
+    canvas.clear(Skia.Color('#000000FF'));
+
+    for (let i = 0; i < frames; i++) {
+      const { image, data } = await decode(await normalizeForSkia(frameUris[i]));
+      try {
+        // Centre square of whatever the camera gave us.
+        const srcEdge = Math.min(image.width(), image.height());
+        const src = Skia.XYWHRect(
+          (image.width() - srcEdge) / 2,
+          (image.height() - srcEdge) / 2,
+          srcEdge,
+          srcEdge
+        );
+        const dst = Skia.XYWHRect((i % cols) * edge, Math.floor(i / cols) * edge, edge, edge);
+        canvas.drawImageRectCubic(image, src, dst, 1 / 3, 1 / 3);
+      } finally {
+        image.dispose();
+        data.dispose();
+      }
+    }
+
+    surface.flush();
+    snapshot = surface.makeImageSnapshot();
+    bytes = snapshot.encodeToBytes(ImageFormat.JPEG, quality);
+    if (!bytes || bytes.length === 0) {
+      throw new Error('stitchBoomerangSheet: JPEG encoding produced no bytes');
+    }
+  } finally {
+    snapshot?.dispose();
+    surface?.dispose();
+  }
+
+  bakeCounter += 1;
+  const file = new File(Paths.cache, `kalos-boomerang-${Date.now()}-${bakeCounter}.jpg`);
+  file.create({ overwrite: true, intermediates: true });
+  file.write(bytes);
+
+  // width/height are ONE FRAME, not the sheet -- see PostBoomerang's note on
+  // why every layout path in the app depends on that.
+  return { uri: file.uri, width: edge, height: edge, frames };
 }
 
 /**

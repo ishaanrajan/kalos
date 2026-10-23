@@ -149,6 +149,16 @@ export default function Feed() {
   // you scrolled far enough to change what was on screen.
   const currentMusicPost = useRef<FeedPost | null>(null);
 
+  /**
+   * Which cards are on screen, so boomerangs only loop while they're visible.
+   * Can't piggy-back on `activePostId` -- that's only ever set for a post with
+   * music, and most boomerangs won't have any.
+   *
+   * `setVisibleIds` is a useState setter, so it's stable and safe to capture in
+   * the one-identity viewability callback below.
+   */
+  const [visibleIds, setVisibleIds] = useState<ReadonlySet<string>>(() => new Set());
+
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: Array<{ item: FeedPost; isViewable: boolean }> }) => {
       // The topmost qualifying post wins, not the most-visible one: scrolling
@@ -161,6 +171,26 @@ export default function Feed() {
       } else {
         musicRef.current.stop();
       }
+
+      // Replaced only when the set genuinely differs: FlatList fires this on
+      // every viewability change, and handing back a fresh Set each time would
+      // re-render the list for nothing.
+      const next = new Set(
+        viewableItems.filter((entry) => entry.isViewable && entry.item).map((entry) => entry.item.id),
+      );
+      setVisibleIds((prev) => {
+        if (prev.size === next.size) {
+          let same = true;
+          for (const id of next) {
+            if (!prev.has(id)) {
+              same = false;
+              break;
+            }
+          }
+          if (same) return prev;
+        }
+        return next;
+      });
     },
   ).current;
 
@@ -194,6 +224,7 @@ export default function Feed() {
         onPressOptions={item.author_id === userId ? showPostOptions : undefined}
         onPressMention={openMention}
         previewComments={item.preview_comments}
+        isOnScreen={visibleIds.has(item.id)}
         isMusicActive={item.id === activePostId}
         isMusicMuted={muted}
         onToggleMusicMuted={toggleMuted}
@@ -212,6 +243,7 @@ export default function Feed() {
       muted,
       toggleMuted,
       openTrackStore,
+      visibleIds,
     ]
   );
 

@@ -12,7 +12,7 @@
  */
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import type {
   LayoutChangeEvent,
   NativeSyntheticEvent,
@@ -36,7 +36,9 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 
 import { hairlineWidth, spacing, useTheme } from '../lib/theme';
 import type { CommentPreview, FeedPost, Timestamp } from '../lib/types';
+import { isBoomerang } from '../lib/boomerang';
 import { Avatar } from './Avatar';
+import { BoomerangView } from './BoomerangView';
 import { LikeButton } from './LikeButton';
 import { MentionText } from './MentionText';
 import { TagBubble } from './TagBubble';
@@ -94,6 +96,13 @@ export interface PostCardProps {
    */
   onPressMusic?: (post: FeedPost) => void;
 
+  /**
+   * Whether this card is currently on screen. Only consulted for boomerangs,
+   * which stop looping when it's false -- a long scroll shouldn't be driving
+   * animations for cards nobody can see. Defaults to true so a one-off card
+   * outside a list (a post's own screen) plays without having to opt in.
+   */
+  isOnScreen?: boolean;
   /** Shows the "View all N comments" line. Defaults to true. */
   showCommentPreview?: boolean;
   /** Comments rendered inline between the caption and the timestamp. */
@@ -240,6 +249,7 @@ function useBoundToPost(
 function PostCardImpl({
   post,
   imageUrl,
+  isOnScreen = true,
   avatarUrl,
   onLike,
   onPressAuthor,
@@ -273,8 +283,10 @@ function PostCardImpl({
     reason_username: reasonUsername,
     music,
     tags,
+    boomerang,
   } = post;
   const hasTags = !!tags && tags.length > 0;
+  const { width: windowWidth } = useWindowDimensions();
 
   const aspectRatio = useMemo(
     () => displayAspectRatio(post.width, post.height),
@@ -478,15 +490,29 @@ function PostCardImpl({
             accessibilityRole="image"
             accessibilityLabel={caption ?? `Photo by ${authorUsername}`}
           >
-            <Image
-              source={imageUrl}
-              style={styles.photoImage}
-              contentFit="cover"
-              transition={180}
-              cachePolicy="memory-disk"
-              recyclingKey={postId}
-              accessible={false}
-            />
+            {isBoomerang(boomerang) ? (
+              /* A boomerang's image_path is a sprite sheet, so handing it to
+                 <Image> would show the whole grid at once. BoomerangView
+                 slices one frame out of it and loops. Sized off the window
+                 width because the feed photo is full-bleed and Skia needs
+                 real pixels, not a percentage. */
+              <BoomerangView
+                image={imageUrl}
+                boomerang={boomerang}
+                size={windowWidth}
+                playing={isOnScreen}
+              />
+            ) : (
+              <Image
+                source={imageUrl}
+                style={styles.photoImage}
+                contentFit="cover"
+                transition={180}
+                cachePolicy="memory-disk"
+                recyclingKey={postId}
+                accessible={false}
+              />
+            )}
 
             <Animated.View style={[styles.burst, burstStyle]} pointerEvents="none">
               <Ionicons name="heart" size={BURST_SIZE} color="#ffffff" style={styles.burstIcon} />
