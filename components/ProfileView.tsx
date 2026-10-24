@@ -41,7 +41,6 @@ interface Props {
   profile: Profile;
   /** True when this is the signed-in user's own profile. */
   isSelf: boolean;
-  onSignOut?: () => void;
   /**
    * Re-fetches the profile row itself on pull-to-refresh; the grid's own
    * posts query is always refetched. The row comes from a different place on
@@ -51,7 +50,7 @@ interface Props {
   onRefreshProfile?: () => Promise<unknown> | void;
 }
 
-export function ProfileView({ profile, isSelf, onSignOut, onRefreshProfile }: Props) {
+export function ProfileView({ profile, isSelf, onRefreshProfile }: Props) {
   const router = useRouter();
   const { profile: me } = useAuth();
   const [tab, setTab] = useState<GridTab>('posts');
@@ -134,20 +133,12 @@ export function ProfileView({ profile, isSelf, onSignOut, onRefreshProfile }: Pr
 
       <View style={styles.actions}>
         {isSelf ? (
-          <>
-            <Button
-              variant="outline"
-              label="Edit profile"
-              onPress={() => router.push('/edit-profile')}
-              style={styles.action}
-            />
-            {/* Reached via the profile tab, which supplies onSignOut. Viewing
-                your own profile through a username link has nothing to log
-                out of. */}
-            {onSignOut && (
-              <Button variant="outline" label="Log out" onPress={onSignOut} style={styles.action} />
-            )}
-          </>
+          <Button
+            variant="outline"
+            label="Edit profile"
+            onPress={() => router.push('/edit-profile')}
+            style={styles.action}
+          />
         ) : (
           <>
             <Button
