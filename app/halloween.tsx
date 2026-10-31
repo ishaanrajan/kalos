@@ -29,7 +29,9 @@ import { HALLOWEEN_CHAT_ICON } from '../lib/halloween';
 import { nativeHeaderHeight, useTheme } from '../lib/theme';
 import type { GroupChatMessage } from '../lib/types';
 
+// The two accounts that appear as themselves; everyone else is a random alias.
 const DRAKE = 'prosecco_daddy';
+const ISHAAN = 'ishaan';
 
 /** One room, everyone in it, Halloween only (0047_halloween_chat.sql). */
 export default function HalloweenChat() {
@@ -45,6 +47,7 @@ export default function HalloweenChat() {
   const send = useSendGroupChat();
   const { data: myAlias } = useGroupChatAlias();
   const { data: drake } = useProfile(DRAKE);
+  const { data: ishaan } = useProfile(ISHAAN);
   const { data: inChat } = useHalloweenChatAccess();
 
   function submit() {
@@ -117,7 +120,9 @@ export default function HalloweenChat() {
             <Image source={HALLOWEEN_CHAT_ICON} style={styles.introIcon} contentFit="cover" />
             {myAlias ? (
               <Text style={[styles.youAre, { color: colors.textSecondary }]}>
-                Everyone's anonymous tonight. You are {myAlias}.
+                {myAlias === ISHAAN
+                  ? "Everyone's anonymous tonight. Except you."
+                  : `Everyone's anonymous tonight. You are ${myAlias}.`}
               </Text>
             ) : null}
           </View>
@@ -133,20 +138,20 @@ export default function HalloweenChat() {
         }
         renderItem={({ item, index }) => {
           const mine = !!myAlias && item.alias === myAlias;
-          const isDrake = item.alias === DRAKE;
+          const revealed = item.alias === DRAKE ? drake : item.alias === ISHAAN ? ishaan : undefined;
           const showSender = !mine && item.alias !== messages?.[index - 1]?.alias;
           return (
             <View style={[styles.row, mine && styles.rowMine]}>
               {showSender ? (
-                isDrake && drake ? (
-                  // The one un-anonymised voice in the room.
+                revealed ? (
+                  // The un-anonymised voices in the room.
                   <Pressable
                     style={styles.senderRow}
-                    onPress={() => router.push(`/profile/${drake.username}`)}
+                    onPress={() => router.push(`/profile/${revealed.username}`)}
                     hitSlop={6}
                   >
-                    <Avatar url={avatarUrl(drake.avatar_path)} username={drake.username} size={16} />
-                    <Text style={[styles.senderName, { color: colors.textSecondary }]}>{drake.username}</Text>
+                    <Avatar url={avatarUrl(revealed.avatar_path)} username={revealed.username} size={16} />
+                    <Text style={[styles.senderName, { color: colors.textSecondary }]}>{revealed.username}</Text>
                   </Pressable>
                 ) : (
                   <Text style={[styles.senderName, styles.senderRow, { color: colors.textSecondary }]}>

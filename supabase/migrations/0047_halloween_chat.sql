@@ -132,6 +132,14 @@ begin
     return null;
   end if;
 
+  -- The owner appears as himself. The generator only makes "Adjective Noun"
+  -- pairs, so 'ishaan' can never collide with a random alias.
+  if exists (select 1 from public.profiles where id = uid and lower(username) = 'ishaan') then
+    insert into public.group_chat_aliases (user_id, alias) values (uid, 'ishaan')
+    on conflict (user_id) do update set alias = 'ishaan';
+    return 'ishaan';
+  end if;
+
   select alias into a from public.group_chat_aliases where user_id = uid;
   if a is not null then
     return a;
