@@ -153,6 +153,8 @@ export interface LibraryPickerProps {
    * nothing. Defaults to true.
    */
   canCancel?: boolean;
+  /** Top padding to use instead of the safe-area edge; for hosts inside a <Modal>, where the native inset reads 0. */
+  topInset?: number;
   /** The camera button in the toolbar -- the picker itself never opens it. */
   onOpenCamera?: () => void;
   /** The boomerang button, same deal: this component only reports the tap. */
@@ -175,6 +177,7 @@ export interface LibraryPickerProps {
 export function LibraryPicker({
   onCancel,
   canCancel = true,
+  topInset,
   onOpenCamera,
   onOpenBoomerang,
   onNext,
@@ -566,7 +569,10 @@ export function LibraryPicker({
   const keyExtractor = useCallback((item: MediaLibrary.Asset) => item.id, []);
 
   return (
-    <SafeAreaView style={[styles.root, { backgroundColor: colors.surface }]} edges={['top']}>
+    <SafeAreaView
+      style={[styles.root, { backgroundColor: colors.surface }, topInset !== undefined && { paddingTop: topInset }]}
+      edges={topInset === undefined ? ['top'] : []}
+    >
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
         {canCancel ? (
           <Pressable

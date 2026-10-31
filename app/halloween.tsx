@@ -15,7 +15,7 @@ import {
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { Redirect, Stack, useRouter } from 'expo-router';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Avatar } from '../components/Avatar';
 import { LibraryPicker } from '../components/LibraryPicker';
@@ -202,6 +202,7 @@ export default function HalloweenChat() {
 
       <Modal visible={picking} animationType="slide" onRequestClose={() => setPicking(false)}>
         <LibraryPicker
+          topInset={insets.top}
           onCancel={() => setPicking(false)}
           onNext={async (pick) => {
             try {
@@ -215,7 +216,7 @@ export default function HalloweenChat() {
       </Modal>
 
       <Modal visible={!!staged} animationType="fade" onRequestClose={cancelStaged}>
-        <SafeAreaView style={styles.stage}>
+        <View style={[styles.stage, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
           <View style={styles.stageBar}>
             <Pressable onPress={cancelStaged} disabled={sendingPhoto} hitSlop={12}>
               <Text style={[styles.stageAction, { color: '#fff', opacity: sendingPhoto ? 0.4 : 1 }]}>Cancel</Text>
@@ -229,7 +230,7 @@ export default function HalloweenChat() {
             </Pressable>
           </View>
           {staged ? <Image source={staged.uri} style={styles.stageImage} contentFit="contain" /> : null}
-        </SafeAreaView>
+        </View>
       </Modal>
     </KeyboardAvoidingView>
   );
