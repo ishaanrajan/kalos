@@ -4,7 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { EmptyState } from '../../components/EmptyState';
 import { UserRow } from '../../components/UserRow';
 import { formatCommentAge } from '../../components/CommentRow';
-import { useDMInbox, useDMPeers, useMyDMThreads, useProfile, type ProfileSummary } from '../../lib/queries';
+import { useHalloweenChatAccess, useDMInbox, useDMPeers, useMyDMThreads, useProfile, type ProfileSummary } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
 import { HALLOWEEN_ACTIVE } from '../../lib/halloween';
 import { hairlineWidth, useTheme } from '../../lib/theme';
@@ -22,8 +22,15 @@ import { hairlineWidth, useTheme } from '../../lib/theme';
  */
 export default function DMInbox() {
   // Halloween: the group chat is the only conversation anyone can see.
-  if (HALLOWEEN_ACTIVE) return <Redirect href="/halloween" />;
+  if (HALLOWEEN_ACTIVE) return <HalloweenInboxGate />;
   return <RealDMInbox />;
+}
+
+function HalloweenInboxGate() {
+  const { data: inChat, isLoading } = useHalloweenChatAccess();
+  if (isLoading) return <ActivityIndicator style={{ marginTop: 40 }} />;
+  // Excluded accounts fall through to their ordinary inbox.
+  return inChat === false ? <RealDMInbox /> : <Redirect href="/halloween" />;
 }
 
 function RealDMInbox() {

@@ -10,7 +10,7 @@ import { PHOTOS_BUCKET, supabase } from './supabase';
 import { searchTracks } from './music';
 import { searchGifs } from './giphy';
 import { useAuth, useUserId } from './auth';
-import { HALLOWEEN_ROOM } from './halloween';
+import { HALLOWEEN_ACTIVE, HALLOWEEN_ROOM } from './halloween';
 import {
   PAGE_SIZE,
   type ActivityEvent,
@@ -1069,12 +1069,27 @@ export function useGroupChat() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('group_chat_messages')
-        .select('id, room, alias, body, created_at')
+        .select('id, room, alias, body, created_at, image_path, image_w, image_h')
         .eq('room', HALLOWEEN_ROOM)
         .order('created_at', { ascending: false })
         .limit(300);
       if (error) throw error;
       return (data as GroupChatMessage[]).reverse();
+    },
+  });
+}
+
+/** False for the few accounts kept out of the Halloween room; they keep their normal DMs. */
+export function useHalloweenChatAccess() {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: ['halloween-chat-access', userId],
+    enabled: !!userId && HALLOWEEN_ACTIVE,
+    staleTime: Infinity,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('halloween_in_chat');
+      if (error) throw error;
+      return data as boolean;
     },
   });
 }
@@ -1089,7 +1104,7 @@ export function useGroupChatAlias() {
     queryFn: async () => {
       const { data, error } = await supabase.rpc('halloween_my_alias');
       if (error) throw error;
-      return data as string;
+      return data as string | null;
     },
   });
 }
@@ -1097,8 +1112,19 @@ export function useGroupChatAlias() {
 export function useSendGroupChat() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (body: string) => {
-      const { error } = await supabase.rpc('halloween_send', { msg: body });
+    mutationFn: async ({
+      body,
+      photo,
+    }: {
+      body: string;
+      photo?: { path: string; width: number; height: number };
+    }) => {
+      const { error } = await supabase.rpc('halloween_send', {
+        msg: body,
+        img: photo?.path ?? null,
+        img_w: photo?.width ?? null,
+        img_h: photo?.height ?? null,
+      });
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['group-chat'] }),

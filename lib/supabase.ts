@@ -64,6 +64,11 @@ export function photoThumbUrl(post: { image_path: string; thumb_path: string | n
   return photoUrl(post.thumb_path ?? post.image_path);
 }
 
+/** Public URL for a Halloween chat photo (bucket object name, e.g. "<uuid>.jpg"). */
+export function chatPhotoUrl(path: string): string {
+  return supabase.storage.from('halloween-chat').getPublicUrl(path).data.publicUrl;
+}
+
 export function avatarUrl(path: string | null): string | null {
   if (!path) return null;
   return supabase.storage.from(AVATARS_BUCKET).getPublicUrl(path).data.publicUrl;

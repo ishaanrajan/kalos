@@ -12,3 +12,8 @@ export const HALLOWEEN_ACTIVE: boolean = isHalloween();
 
 /** The only room the group chat table accepts (see 0047_halloween_chat.sql). */
 export const HALLOWEEN_ROOM = 'halloween-2026';
+
+/** Public bucket for chat photos. Object names are random uuids, never user ids. */
+export const HALLOWEEN_BUCKET = 'halloween-chat';
+
+export const HALLOWEEN_CHAT_ICON = require('../assets/halloween-chat-icon.png');

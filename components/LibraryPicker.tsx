@@ -154,9 +154,9 @@ export interface LibraryPickerProps {
    */
   canCancel?: boolean;
   /** The camera button in the toolbar -- the picker itself never opens it. */
-  onOpenCamera: () => void;
+  onOpenCamera?: () => void;
   /** The boomerang button, same deal: this component only reports the tap. */
-  onOpenBoomerang: () => void;
+  onOpenBoomerang?: () => void;
   /**
    * A photo, resolved to a real on-disk file, plus the region the user
    * framed in that file's own pixel space, plus which asset it was (so the
@@ -667,6 +667,7 @@ export function LibraryPicker({
               <Ionicons name="cloud-outline" size={19} color={colors.text} />
             </Pressable>
           ) : null}
+          {onOpenBoomerang ? (
           <Pressable
             onPress={onOpenBoomerang}
             hitSlop={12}
@@ -676,6 +677,8 @@ export function LibraryPicker({
           >
             <Ionicons name="infinite" size={19} color={colors.text} />
           </Pressable>
+          ) : null}
+          {onOpenCamera ? (
           <Pressable
             onPress={onOpenCamera}
             hitSlop={12}
@@ -685,6 +688,7 @@ export function LibraryPicker({
           >
             <Ionicons name="camera-outline" size={19} color={colors.text} />
           </Pressable>
+          ) : null}
         </View>
       </View>
 

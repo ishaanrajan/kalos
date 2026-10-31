@@ -322,4 +322,8 @@ export interface GroupChatMessage {
   alias: string;
   body: string;
   created_at: Timestamp;
+  /** Object name in the halloween-chat bucket, when the message is a photo. */
+  image_path: string | null;
+  image_w: number | null;
+  image_h: number | null;
 }

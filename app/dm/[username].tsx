@@ -26,6 +26,7 @@ import {
   useSendDM,
   useToggleMessageLike,
   useTypingIndicator,
+  useHalloweenChatAccess,
 } from '../../lib/queries';
 import { avatarUrl } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
@@ -67,7 +68,11 @@ const BIG_HEART = '❤️​';
  */
 export default function DMThreadGate() {
   // Halloween: the group chat is the only conversation anyone can see.
-  if (HALLOWEEN_ACTIVE) return <Redirect href="/halloween" />;
+  const { data: inChat, isLoading } = useHalloweenChatAccess();
+  if (HALLOWEEN_ACTIVE) {
+    if (isLoading) return <ActivityIndicator style={{ marginTop: 40 }} />;
+    if (inChat !== false) return <Redirect href="/halloween" />;
+  }
   return <DMThread />;
 }
 
