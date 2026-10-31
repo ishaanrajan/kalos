@@ -297,6 +297,8 @@ export interface Filter {
    * still needs to render exactly as it did, not fall back to Normal.
    */
   legacy?: boolean;
+  /** Offered in the picker only while HALLOWEEN_ACTIVE; resolves forever. */
+  seasonal?: boolean;
 }
 
 /** Image dimensions used when baking and when laying out a post. */
@@ -311,4 +313,13 @@ export interface CropRect {
   y: number;
   width: number;
   height: number;
+}
+
+export interface GroupChatMessage {
+  id: UUID;
+  room: string;
+  /** Random Halloween alias, or 'prosecco_daddy' for the bot. Never a user id. */
+  alias: string;
+  body: string;
+  created_at: Timestamp;
 }

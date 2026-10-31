@@ -1,11 +1,12 @@
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Redirect, Stack, useRouter } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { EmptyState } from '../../components/EmptyState';
 import { UserRow } from '../../components/UserRow';
 import { formatCommentAge } from '../../components/CommentRow';
 import { useDMInbox, useDMPeers, useMyDMThreads, useProfile, type ProfileSummary } from '../../lib/queries';
 import { useAuth } from '../../lib/auth';
+import { HALLOWEEN_ACTIVE } from '../../lib/halloween';
 import { hairlineWidth, useTheme } from '../../lib/theme';
 
 /**
@@ -20,6 +21,12 @@ import { hairlineWidth, useTheme } from '../../lib/theme';
  * (the other row MyThreads shows everyone else) isn't a real thing for him.
  */
 export default function DMInbox() {
+  // Halloween: the group chat is the only conversation anyone can see.
+  if (HALLOWEEN_ACTIVE) return <Redirect href="/halloween" />;
+  return <RealDMInbox />;
+}
+
+function RealDMInbox() {
   const { profile: me } = useAuth();
   return me?.username === 'ishaan' ? <IshaanInbox /> : <MyThreads />;
 }

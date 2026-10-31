@@ -19,6 +19,7 @@ import {
 import { photoUrl, avatarUrl } from '../../lib/supabase';
 import { useUserId } from '../../lib/auth';
 import { confirmDestructive, showActionSheet } from '../../lib/actionSheet';
+import { HALLOWEEN_ACTIVE } from '../../lib/halloween';
 import { palette, useTheme } from '../../lib/theme';
 import * as Linking from 'expo-linking';
 import { useMusic } from '../../lib/audio';
@@ -43,7 +44,8 @@ export default function Feed() {
   const router = useRouter();
   const userId = useUserId();
   const { colors, wordmarkFontFamily } = useTheme();
-  const { data: hasUnreadDMs } = useHasUnreadDMs();
+  const { data: unreadDMs } = useHasUnreadDMs();
+  const hasUnreadDMs = unreadDMs && !HALLOWEEN_ACTIVE;
   const { needsMorePosts } = useExploreLockState();
   const {
     data,

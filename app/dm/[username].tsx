@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { Redirect, Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -29,6 +29,7 @@ import {
 } from '../../lib/queries';
 import { avatarUrl } from '../../lib/supabase';
 import { useAuth } from '../../lib/auth';
+import { HALLOWEEN_ACTIVE } from '../../lib/halloween';
 import { nativeHeaderHeight, useTheme } from '../../lib/theme';
 import type { DMMessage } from '../../lib/types';
 
@@ -64,7 +65,13 @@ const BIG_HEART = '❤️​';
  * with `?own=1` on the route -- present only when ishaan opened his own bot
  * row, never when opening an admin thread.
  */
-export default function DMThread() {
+export default function DMThreadGate() {
+  // Halloween: the group chat is the only conversation anyone can see.
+  if (HALLOWEEN_ACTIVE) return <Redirect href="/halloween" />;
+  return <DMThread />;
+}
+
+function DMThread() {
   const { username, own } = useLocalSearchParams<{ username: string; own?: string }>();
   const router = useRouter();
   const { profile: me } = useAuth();

@@ -30,6 +30,7 @@
  *     m15 m16 m17 m18 m19 ]   out.a = ...
  */
 
+import { HALLOWEEN_ACTIVE } from './halloween';
 import type { Filter, FilterOverlay } from './types';
 
 /** A 4x5 row-major colour matrix: exactly 20 numbers. */
@@ -366,6 +367,14 @@ export const FILTERS: Filter[] = [
     matrix: compose(brightness(1.4), contrast(0.95), saturate(0), sepia(0.35)),
   },
 
+  {
+    // Halloween only (seasonal): crushed blacks, pumpkin cast through the mids.
+    name: 'Samhain',
+    matrix: compose(contrast(1.45), brightness(0.88), saturate(1.2), sepia(0.5), hueRotate(-18)),
+    overlay: solid('#FF6A00FF', 'overlay', 0.5),
+    seasonal: true,
+  },
+
   // -------------------------------------------------------------------------
   // Retired, and kept only so already-posted photos keep rendering the way
   // they did the day they were posted. `getFilter` still resolves these;
@@ -487,10 +496,15 @@ export const FILTERS: Filter[] = [
  * exist only so `getFilter` can still resolve a post that was captured under
  * one of them.
  */
-export const PICKER_FILTERS: Filter[] = FILTERS.filter((f) => !f.legacy);
+export const PICKER_FILTERS: Filter[] = HALLOWEEN_ACTIVE
+  ? FILTERS.filter((f) => f.seasonal)
+  : FILTERS.filter((f) => !f.legacy && !f.seasonal);
+
+/** What the composer starts on: Samhain is the only choice on Halloween. */
+export const DEFAULT_FILTER_NAME: string = HALLOWEEN_ACTIVE ? 'Samhain' : 'Normal';
 
 /** Every picker-visible filter name, in strip order. */
-export const FILTER_NAMES: string[] = PICKER_FILTERS.map((f) => f.name);
+export const FILTER_NAMES: string[] = FILTERS.filter((f) => !f.legacy && !f.seasonal).map((f) => f.name);
 
 const BY_NAME: ReadonlyMap<string, Filter> = new Map(FILTERS.map((f) => [f.name, f]));
 

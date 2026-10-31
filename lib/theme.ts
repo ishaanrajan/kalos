@@ -10,8 +10,19 @@
  * the app, so components and screens can both depend on it freely.
  */
 
-import { Platform, StyleSheet, useColorScheme } from 'react-native';
+import { Appearance, Platform, StyleSheet, useColorScheme } from 'react-native';
 import type { TextStyle, ViewStyle } from 'react-native';
+
+import { HALLOWEEN_ACTIVE } from './halloween';
+
+const H = HALLOWEEN_ACTIVE;
+
+// Halloween is dark mode for everyone, native chrome (keyboard, alerts) included.
+if (H) {
+  try {
+    Appearance.setColorScheme('dark');
+  } catch {}
+}
 
 // ---------------------------------------------------------------------------
 // Raw palette
@@ -37,11 +48,11 @@ export const palette = {
    *  screenshot (both the header bar and the camera badge are this exact
    *  pixel value, rgb(18, 85, 136)), not eyeballed. Two earlier guesses
    *  here were both too light. */
-  blue: '#125588',
-  bluePressed: '#0c3d63',
+  blue: H ? '#ff7518' : '#125588',
+  bluePressed: H ? '#c75300' : '#0c3d63',
   /** Light blue -- @mentions specifically, deliberately paler/more cyan
    * than the primary accent so a mention doesn't read as a button/link. */
-  lightBlue: '#5AC8FA',
+  lightBlue: H ? '#ffa94d' : '#5AC8FA',
   /** Heart red. */
   red: '#ed4956',
   black: '#000000',
@@ -61,13 +72,13 @@ export const palette = {
    *  system appearance. Deliberately NOT part of ThemeColors -- this one
    *  bar doesn't participate in light/dark mode at all. */
   tabBarBackground: '#000000',
-  tabBarIconActive: '#ffffff',
+  tabBarIconActive: H ? '#ff7518' : '#ffffff',
   tabBarIconInactive: '#8e8e8e',
   /** Fixed header chrome, same "always this color, regardless of theme"
    *  reasoning as the tab bar tokens above -- 2015 Instagram's top bar was
    *  the same blue as its camera button, not a whited-out theme surface. */
-  headerBackground: '#125588',
-  headerIcon: '#ffffff',
+  headerBackground: H ? '#2a0b3f' : '#125588',
+  headerIcon: H ? '#ff9a3c' : '#ffffff',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -344,5 +355,5 @@ export const darkTheme: Theme = {
  */
 export function useTheme(): Theme {
   const scheme = useColorScheme();
-  return scheme === 'dark' ? darkTheme : lightTheme;
+  return H || scheme === 'dark' ? darkTheme : lightTheme;
 }

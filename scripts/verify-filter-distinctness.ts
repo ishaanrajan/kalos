@@ -19,7 +19,7 @@
  *
  *   npx tsx scripts/verify-filter-distinctness.ts
  */
-import { PICKER_FILTERS } from '../lib/filters';
+import { FILTERS } from '../lib/filters';
 import type { Filter } from '../lib/types';
 
 /**
@@ -134,7 +134,7 @@ function distance(f1: Filter, f2: Filter): number {
   return sum / PROBES.length;
 }
 
-const filters = PICKER_FILTERS.filter((f) => f.name !== BASELINE);
+const filters = FILTERS.filter((f) => !f.legacy && f.name !== BASELINE);
 const pairs: Array<[string, string, number]> = [];
 for (let i = 0; i < filters.length; i++) {
   for (let j = i + 1; j < filters.length; j++) {

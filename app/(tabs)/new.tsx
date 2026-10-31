@@ -31,7 +31,7 @@ import { BoomerangCapture } from '../../components/BoomerangCapture';
 import { CropAdjust } from '../../components/CropAdjust';
 import type { CropAdjustHandle } from '../../components/CropAdjust';
 import { displayAspectRatio } from '../../components/PostCard';
-import { getFilter, NORMAL_FILTER } from '../../lib/filters';
+import { DEFAULT_FILTER_NAME, getFilter, NORMAL_FILTER } from '../../lib/filters';
 import type { CropRect, ImageSize, PostBoomerang, PostTag } from '../../lib/types';
 import { bakeFilteredImage, downscaleForPreview, prepareSource, stitchBoomerangSheet } from '../../lib/bake';
 import { BOOMERANG_LAYOUT, frameRect } from '../../lib/boomerang';
@@ -166,7 +166,7 @@ export default function NewPost() {
   const [libraryReady, setLibraryReady] = useState(false);
   const [rawPicked, setRawPicked] = useState<RawPick | null>(null);
   const [picked, setPicked] = useState<Picked | null>(null);
-  const [filterName, setFilterName] = useState(NORMAL_FILTER.name);
+  const [filterName, setFilterName] = useState(DEFAULT_FILTER_NAME);
   const [caption, setCaption] = useState('');
   const [musicTrack, setMusicTrack] = useState<Track | null>(null);
   const [musicStartMs, setMusicStartMs] = useState(0);
@@ -355,7 +355,7 @@ export default function NewPost() {
           thumbUri: thumb.uri,
           assetId: sheet.uri,
         });
-        setFilterName(NORMAL_FILTER.name);
+        setFilterName(DEFAULT_FILTER_NAME);
         setStep('filter');
       } catch (e) {
         Alert.alert(
@@ -457,7 +457,7 @@ export default function NewPost() {
       setRawPicked(null);
       setPicked(null);
       setBoomerang(null);
-      setFilterName(NORMAL_FILTER.name);
+      setFilterName(DEFAULT_FILTER_NAME);
       setCaption('');
       setMusicTrack(null);
       setMusicStartMs(0);
@@ -517,7 +517,7 @@ export default function NewPost() {
         const previous = pickedRef.current;
         if (previous) {
           deleteQuietly([previous.uri, previous.previewUri, previous.thumbUri]);
-          if (previous.assetId !== assetId) setFilterName(NORMAL_FILTER.name);
+          if (previous.assetId !== assetId) setFilterName(DEFAULT_FILTER_NAME);
         }
         setPicked({
           uri: source.uri,

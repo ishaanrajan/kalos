@@ -10,12 +10,14 @@ import { PHOTOS_BUCKET, supabase } from './supabase';
 import { searchTracks } from './music';
 import { searchGifs } from './giphy';
 import { useAuth, useUserId } from './auth';
+import { HALLOWEEN_ROOM } from './halloween';
 import {
   PAGE_SIZE,
   type ActivityEvent,
   type Comment,
   type CommentGif,
   type DMMessage,
+  type GroupChatMessage,
   type DMThreadSummary,
   type FeedPost,
   type PostMusic,
@@ -1041,6 +1043,65 @@ export function useDMThread(threadUserId: string | undefined, threadWithId: stri
       if (error) throw error;
       return data as unknown as DMMessage[];
     },
+  });
+}
+
+/** The Halloween group chat: last 300 messages, oldest first, live via Realtime. */
+export function useGroupChat() {
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`group-chat:${HALLOWEEN_ROOM}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'group_chat_messages', filter: `room=eq.${HALLOWEEN_ROOM}` },
+        () => qc.invalidateQueries({ queryKey: ['group-chat'] }),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc]);
+
+  return useQuery({
+    queryKey: ['group-chat'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('group_chat_messages')
+        .select('id, room, alias, body, created_at')
+        .eq('room', HALLOWEEN_ROOM)
+        .order('created_at', { ascending: false })
+        .limit(300);
+      if (error) throw error;
+      return (data as GroupChatMessage[]).reverse();
+    },
+  });
+}
+
+/** The caller's own random alias -- the only way the client can tell which messages are its own. */
+export function useGroupChatAlias() {
+  const userId = useUserId();
+  return useQuery({
+    queryKey: ['group-chat-alias', userId],
+    enabled: !!userId,
+    staleTime: Infinity,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('halloween_my_alias');
+      if (error) throw error;
+      return data as string;
+    },
+  });
+}
+
+export function useSendGroupChat() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: string) => {
+      const { error } = await supabase.rpc('halloween_send', { msg: body });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['group-chat'] }),
   });
 }
 
